@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RuoMing PaaS — 系统架构图</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #070b14;
+    --surface: #0d1526;
+    --surface2: #111c33;
+    --border: rgba(99, 179, 237, 0.15);
+    --border-bright: rgba(99, 179, 237, 0.4);
+    --blue: #3b82f6;
+    --cyan: #06b6d4;
+    --purple: #8b5cf6;
+    --green: #10b981;
+    --orange: #f59e0b;
+    --red: #ef4444;
+    --pink: #ec4899;
+    --text: #e2e8f0;
+    --text-muted: #64748b;
+    --glow-blue: rgba(59, 130, 246, 0.3);
+    --glow-cyan: rgba(6, 182, 212, 0.3);
+    --glow-purple: rgba(139, 92, 246, 0.3);
+    --glow-green: rgba(16, 185, 129, 0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── 背景网格 ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(59,130,246,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59,130,246,.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── 动态光晕背景 ── */
+  .bg-glow {
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.12;
+    pointer-events: none;
+    animation: floatGlow 8s ease-in-out infinite;
+    z-index: 0;
+  }
+  .bg-glow-1 { width: 600px; height: 600px; background: var(--blue); top: -200px; left: -100px; animation-delay: 0s; }
+  .bg-glow-2 { width: 500px; height: 500px; background: var(--purple); top: 30%; right: -150px; animation-delay: -3s; }
+  .bg-glow-3 { width: 400px; height: 400px; background: var(--cyan); bottom: 0; left: 30%; animation-delay: -5s; }
+
+  @keyframes floatGlow {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(30px, -30px) scale(1.1); }
+  }
+
+  /* ── 顶部 Header ── */
+  header {
+    position: relative;
+    z-index: 10;
+    text-align: center;
+    padding: 48px 24px 32px;
+  }
+  .logo-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, rgba(59,130,246,.15), rgba(139,92,246,.15));
+    border: 1px solid rgba(99,179,237,.2);
+    border-radius: 100px;
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--cyan);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  .logo-badge::before { content: '◈'; color: var(--blue); }
+  h1 {
+    font-size: clamp(28px, 5vw, 52px);
+    font-weight: 700;
+    background: linear-gradient(135deg, #e2e8f0 0%, #93c5fd 50%, #c4b5fd 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.2;
+    margin-bottom: 12px;
+  }
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 15px;
+    font-weight: 400;
+  }
+  .subtitle span { color: var(--cyan); font-weight: 500; }
+
+  /* ── 主画布 ── */
+  .canvas {
+    position: relative;
+    z-index: 10;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 24px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* ── 连接线容器 ── */
+  .connector {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 40px;
+    position: relative;
+  }
+  .connector-line {
+    width: 2px;
+    height: 100%;
+    background: linear-gradient(to bottom, rgba(59,130,246,.5), rgba(59,130,246,.1));
+    position: relative;
+  }
+  .connector-arrow {
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 8px solid rgba(59,130,246,.6);
+  }
+  .connector-label {
+    position: absolute;
+    left: calc(50% + 12px);
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  /* ── 通用层块 ── */
+  .layer {
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 20px 24px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .3s, box-shadow .3s;
+  }
+  .layer::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    opacity: 0;
+    transition: opacity .3s;
+  }
+  .layer:hover { border-color: var(--border-bright); }
+  .layer:hover::before { opacity: 1; }
+
+  .layer-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .layer-icon {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .layer-title {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: .5px;
+  }
+  .layer-badge {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    font-weight: 500;
+  }
+
+  /* ── 卡片网格 ── */
+  .cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .card {
+    flex: 1;
+    min-width: 130px;
+    border-radius: 10px;
+    padding: 12px 14px;
+    border: 1px solid transparent;
+    position: relative;
+    cursor: default;
+    transition: transform .2s, box-shadow .2s;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+  }
+  .card-icon { font-size: 18px; margin-bottom: 6px; display: block; }
+  .card-name {
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 3px;
+    white-space: nowrap;
+  }
+  .card-desc {
+    font-size: 10px;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+
+  /* ── 颜色主题 ── */
+  /* 客户端 — blue */
+  .theme-blue .layer { box-shadow: 0 0 40px var(--glow-blue) inset; }
+  .theme-blue .layer-icon { background: rgba(59,130,246,.15); }
+  .theme-blue .layer-title { color: #93c5fd; }
+  .theme-blue .layer-badge { background: rgba(59,130,246,.15); color: var(--blue); border: 1px solid rgba(59,130,246,.3); }
+  .theme-blue .card { background: rgba(59,130,246,.07); border-color: rgba(59,130,246,.2); }
+  .theme-blue .card:hover { box-shadow: 0 4px 20px rgba(59,130,246,.2); border-color: rgba(59,130,246,.5); }
+  .theme-blue .card-name { color: #93c5fd; }
+
+  /* 网关 — cyan */
+  .theme-cyan .layer { box-shadow: 0 0 40px var(--glow-cyan) inset; }
+  .theme-cyan .layer-icon { background: rgba(6,182,212,.15); }
+  .theme-cyan .layer-title { color: #67e8f9; }
+  .theme-cyan .layer-badge { background: rgba(6,182,212,.15); color: var(--cyan); border: 1px solid rgba(6,182,212,.3); }
+  .theme-cyan .card { background: rgba(6,182,212,.07); border-color: rgba(6,182,212,.2); }
+  .theme-cyan .card:hover { box-shadow: 0 4px 20px rgba(6,182,212,.2); border-color: rgba(6,182,212,.5); }
+  .theme-cyan .card-name { color: #67e8f9; }
+
+  /* 应用 — purple */
+  .theme-purple .layer { box-shadow: 0 0 40px var(--glow-purple) inset; }
+  .theme-purple .layer-icon { background: rgba(139,92,246,.15); }
+  .theme-purple .layer-title { color: #c4b5fd; }
+  .theme-purple .layer-badge { background: rgba(139,92,246,.15); color: var(--purple); border: 1px solid rgba(139,92,246,.3); }
+  .theme-purple .card { background: rgba(139,92,246,.07); border-color: rgba(139,92,246,.2); }
+  .theme-purple .card:hover { box-shadow: 0 4px 20px rgba(139,92,246,.2); border-color: rgba(139,92,246,.5); }
+  .theme-purple .card-name { color: #c4b5fd; }
+
+  /* AI — green */
+  .theme-green .layer { box-shadow: 0 0 40px var(--glow-green) inset; }
+  .theme-green .layer-icon { background: rgba(16,185,129,.15); }
+  .theme-green .layer-title { color: #6ee7b7; }
+  .theme-green .layer-badge { background: rgba(16,185,129,.15); color: var(--green); border: 1px solid rgba(16,185,129,.3); }
+  .theme-green .card { background: rgba(16,185,129,.07); border-color: rgba(16,185,129,.2); }
+  .theme-green .card:hover { box-shadow: 0 4px 20px rgba(16,185,129,.2); border-color: rgba(16,185,129,.5); }
+  .theme-green .card-name { color: #6ee7b7; }
+
+  /* 存储 — orange */
+  .theme-orange .layer { box-shadow: 0 0 30px rgba(245,158,11,.1) inset; }
+  .theme-orange .layer-icon { background: rgba(245,158,11,.15); }
+  .theme-orange .layer-title { color: #fcd34d; }
+  .theme-orange .layer-badge { background: rgba(245,158,11,.15); color: var(--orange); border: 1px solid rgba(245,158,11,.3); }
+  .theme-orange .card { background: rgba(245,158,11,.07); border-color: rgba(245,158,11,.2); }
+  .theme-orange .card:hover { box-shadow: 0 4px 20px rgba(245,158,11,.2); border-color: rgba(245,158,11,.5); }
+  .theme-orange .card-name { color: #fcd34d; }
+
+  /* ── 三列中间层布局 ── */
+  .mid-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+
+  /* ── 模块分组（L0-L4）── */
+  .module-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 8px;
+  }
+  .module-chip {
+    border-radius: 8px;
+    padding: 8px 10px;
+    border: 1px solid;
+    font-size: 11px;
+    font-weight: 500;
+    text-align: center;
+    transition: transform .2s, box-shadow .2s;
+    cursor: default;
+  }
+  .module-chip:hover { transform: scale(1.04); }
+  .chip-l0 { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.25); color: #fca5a5; }
+  .chip-l1 { background: rgba(59,130,246,.08); border-color: rgba(59,130,246,.25); color: #93c5fd; }
+  .chip-l2 { background: rgba(139,92,246,.08); border-color: rgba(139,92,246,.25); color: #c4b5fd; }
+  .chip-l3 { background: rgba(6,182,212,.08); border-color: rgba(6,182,212,.25); color: #67e8f9; }
+  .chip-l4 { background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.25); color: #6ee7b7; }
+  .chip-ai { background: rgba(245,158,11,.08); border-color: rgba(245,158,11,.25); color: #fcd34d; }
+
+  /* ── 分组 label ── */
+  .group-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 12px 0 6px;
+    padding-left: 2px;
+  }
+
+  /* ── AI 子系统特殊布局 ── */
+  .ai-inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+  }
+  .ai-block {
+    border-radius: 12px;
+    padding: 14px;
+    border: 1px solid rgba(16,185,129,.2);
+    background: rgba(16,185,129,.05);
+  }
+  .ai-block-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #6ee7b7;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ai-block-title::before {
+    content: '';
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+  }
+  .ai-tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    margin: 2px 2px 2px 0;
+    background: rgba(16,185,129,.1);
+    color: #a7f3d0;
+    border: 1px solid rgba(16,185,129,.2);
+  }
+
+  /* ── 存储层横向 ── */
+  .storage-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+  }
+  .storage-card {
+    border-radius: 12px;
+    padding: 16px 12px;
+    border: 1px solid rgba(245,158,11,.2);
+    background: rgba(245,158,11,.04);
+    text-align: center;
+    transition: transform .2s, box-shadow .2s;
+    cursor: default;
+  }
+  .storage-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(245,158,11,.15);
+    border-color: rgba(245,158,11,.4);
+  }
+  .storage-card-icon { font-size: 24px; margin-bottom: 8px; display: block; }
+  .storage-card-name { font-size: 12px; font-weight: 600; color: #fcd34d; margin-bottom: 4px; }
+  .storage-card-desc { font-size: 10px; color: var(--text-muted); line-height: 1.4; }
+
+  /* ── 基础设施层 ── */
+  .infra-row {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 8px;
+  }
+  .infra-chip {
+    border-radius: 8px;
+    padding: 10px 8px;
+    text-align: center;
+    border: 1px solid rgba(100,116,139,.25);
+    background: rgba(100,116,139,.06);
+    transition: transform .2s;
+    cursor: default;
+  }
+  .infra-chip:hover { transform: scale(1.04); border-color: rgba(100,116,139,.5); }
+  .infra-chip-icon { font-size: 16px; margin-bottom: 4px; display: block; }
+  .infra-chip-name { font-size: 11px; font-weight: 500; color: #94a3b8; }
+
+  /* ── 多环境 badge ── */
+  .env-badges {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  .env-badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 12px;
+    border-radius: 100px;
+    border: 1px solid;
+  }
+  .env-dev { background: rgba(16,185,129,.1); border-color: rgba(16,185,129,.3); color: #6ee7b7; }
+  .env-test { background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.3); color: #fcd34d; }
+  .env-prod { background: rgba(239,68,68,.1); border-color: rgba(239,68,68,.3); color: #fca5a5; }
+
+  /* ── 场景路由 pill ── */
+  .scene-pills {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .scene-pill {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 100px;
+    border: 1px solid;
+  }
+  .sp-chitchat { background: rgba(6,182,212,.1); border-color: rgba(6,182,212,.3); color: #67e8f9; }
+  .sp-professional { background: rgba(59,130,246,.1); border-color: rgba(59,130,246,.3); color: #93c5fd; }
+  .sp-task { background: rgba(139,92,246,.1); border-color: rgba(139,92,246,.3); color: #c4b5fd; }
+  .sp-rag { background: rgba(16,185,129,.1); border-color: rgba(16,185,129,.3); color: #6ee7b7; }
+  .sp-creative { background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.3); color: #fcd34d; }
+
+  /* ── 优先级箭头说明 ── */
+  .priority-chain {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .pc-step {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    color: #94a3b8;
+    white-space: nowrap;
+  }
+  .pc-arrow { color: rgba(99,179,237,.4); font-size: 12px; }
+
+  /* ── 版本/状态 footer ── */
+  footer {
+    position: relative;
+    z-index: 10;
+    text-align: center;
+    padding: 24px;
+    color: var(--text-muted);
+    font-size: 12px;
+    border-top: 1px solid rgba(255,255,255,.04);
+  }
+  footer span { color: var(--cyan); margin: 0 4px; }
+
+  /* ── 动画 ── */
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .5; }
+  }
+  .pulse { animation: pulse 2s infinite; }
+
+  @keyframes scanline {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100vh); }
+  }
+
+  /* ── 数据流动效果 ── */
+  .flow-line {
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--cyan), transparent);
+    width: 60%;
+    margin: 0 auto;
+    animation: pulse 3s infinite;
+  }
+
+  /* ── 响应式 ── */
+  @media (max-width: 900px) {
+    .mid-row { grid-template-columns: 1fr; }
+    .ai-inner { grid-template-columns: 1fr 1fr; }
+    .storage-row { grid-template-columns: repeat(3, 1fr); }
+    .infra-row { grid-template-columns: repeat(4, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .infra-row { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-glow bg-glow-1"></div>
+<div class="bg-glow bg-glow-2"></div>
+<div class="bg-glow bg-glow-3"></div>
+
+<header>
+  <div class="logo-badge">Enterprise PaaS Architecture</div>
+  <h1>若茗 PaaS 系统架构</h1>
+  <p class="subtitle">企业级 · AI 驱动 · 多租户底座 &nbsp;|&nbsp; <span>v3.0</span> &nbsp;|&nbsp; FastAPI + Vue3 + LLM Gateway</p>
+</header>
+
+<div class="canvas">
+
+  <!-- ════════════════════ 客户端层 ════════════════════ -->
+  <div class="layer theme-blue">
+    <div class="layer-header">
+      <div class="layer-icon">🖥️</div>
+      <div class="layer-title">客户端层</div>
+      <div class="layer-badge">Client</div>
+    </div>
+    <div class="cards">
+      <div class="card theme-blue">
+        <span class="card-icon">⚡</span>
+        <div class="card-name">Vue 3 + TypeScript</div>
+        <div class="card-desc">Composition API · Pinia · Vue Router 4</div>
+      </div>
+      <div class="card theme-blue">
+        <span class="card-icon">🎨</span>
+        <div class="card-name">Element Plus UI</div>
+        <div class="card-desc">企业级组件 · ECharts 5 · 富文本编辑器</div>
+      </div>
+      <div class="card theme-blue">
+        <span class="card-icon">📱</span>
+        <div class="card-name">移动端 / 三方调用</div>
+        <div class="card-desc">标准 REST API · API Key 鉴权</div>
+      </div>
+      <div class="card theme-blue">
+        <span class="card-icon">🔌</span>
+        <div class="card-name">SSE / WebSocket</div>
+        <div class="card-desc">AI 流式输出 · 实时通知推送</div>
+      </div>
+    </div>
+    <div class="env-badges">
+      <span style="font-size:11px;color:var(--text-muted)">多环境配置：</span>
+      <span class="env-badge env-dev">.env.development</span>
+      <span class="env-badge env-test">.env.test</span>
+      <span class="env-badge env-prod">.env.production</span>
+    </div>
+  </div>
+
+  <!-- 连接线 -->
+  <div class="connector">
+    <div class="connector-line">
+      <div class="connector-arrow"></div>
+    </div>
+    <span class="connector-label">HTTPS / TLS</span>
+  </div>
+
+  <!-- ════════════════════ 网关层 ════════════════════ -->
+  <div class="layer theme-cyan">
+    <div class="layer-header">
+      <div class="layer-icon">🛡️</div>
+      <div class="layer-title">网关 · 安全边界</div>
+      <div class="layer-badge">Gateway</div>
+    </div>
+    <div class="cards">
+      <div class="card theme-cyan">
+        <span class="card-icon">🔀</span>
+        <div class="card-name">Nginx 反向代理</div>
+        <div class="card-desc">SSL 终止 · 负载均衡 · 静态资源</div>
+      </div>
+      <div class="card theme-cyan">
+        <span class="card-icon">⛔</span>
+        <div class="card-name">slowapi 限流</div>
+        <div class="card-desc">按 IP / 用户 / 租户 / 接口多维限流</div>
+      </div>
+      <div class="card theme-cyan">
+        <span class="card-icon">🔑</span>
+        <div class="card-name">JWT 认证</div>
+        <div class="card-desc">PyJWT · Access + Refresh Token 轮换</div>
+      </div>
+      <div class="card theme-cyan">
+        <span class="card-icon">🏢</span>
+        <div class="card-name">租户解析中间件</div>
+        <div class="card-desc">Header / Domain 解析 · 跨租户防护</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 连接线 -->
+  <div class="connector">
+    <div class="connector-line"><div class="connector-arrow"></div></div>
+    <span class="connector-label">内部通信</span>
+  </div>
+
+  <!-- ════════════════════ 应用服务层（三列中间层） ════════════════════ -->
+  <div class="mid-row">
+
+    <!-- 左：中间件链 -->
+    <div class="layer theme-purple" style="height:100%">
+      <div class="layer-header">
+        <div class="layer-icon">⚙️</div>
+        <div class="layer-title">中间件链</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="module-chip chip-l0">RequestID 注入</div>
+        <div class="module-chip chip-l0">结构化日志</div>
+        <div class="module-chip chip-l1">CORS</div>
+        <div class="module-chip chip-l1">限流检查</div>
+        <div class="module-chip chip-l1">JWT 认证</div>
+        <div class="module-chip chip-l1">权限校验</div>
+        <div class="module-chip chip-l2">租户隔离</div>
+        <div class="module-chip chip-l2">请求体校验</div>
+        <div class="module-chip chip-l3">🔭 链路追踪</div>
+      </div>
+    </div>
+
+    <!-- 中：核心业务模块 -->
+    <div class="layer theme-purple">
+      <div class="layer-header">
+        <div class="layer-icon">🧩</div>
+        <div class="layer-title">FastAPI 应用服务层（多实例）</div>
+        <div class="layer-badge">Core Modules</div>
+      </div>
+
+      <div class="group-label">L0 — 核心框架（不可禁用）</div>
+      <div class="module-grid">
+        <div class="module-chip chip-l0">⚙️ 多环境配置</div>
+        <div class="module-chip chip-l0">🗄️ 数据库连接</div>
+        <div class="module-chip chip-l0">⚡ Redis 连接池</div>
+        <div class="module-chip chip-l0">🔐 安全加密</div>
+        <div class="module-chip chip-l0">🚨 异常处理</div>
+        <div class="module-chip chip-l0">📦 统一响应格式</div>
+      </div>
+
+      <div class="group-label">L1 — 基础服务</div>
+      <div class="module-grid">
+        <div class="module-chip chip-l1">🔑 登录认证</div>
+        <div class="module-chip chip-l1">👤 用户管理</div>
+        <div class="module-chip chip-l1">🏢 组织架构</div>
+        <div class="module-chip chip-l1">🛡️ 权限管理</div>
+        <div class="module-chip chip-l1">🏗️ 多租户</div>
+        <div class="module-chip chip-l1">📋 操作审计</div>
+        <div class="module-chip chip-l1">🎛️ 配置中心</div>
+        <div class="module-chip chip-l1">🏠 工作台门户</div>
+      </div>
+
+      <div class="group-label">L2 — 通用引擎</div>
+      <div class="module-grid">
+        <div class="module-chip chip-l2">📡 事件总线</div>
+        <div class="module-chip chip-l2">⏰ 定时任务</div>
+        <div class="module-chip chip-l2">🚦 接口限流</div>
+        <div class="module-chip chip-l2">📥 数据导入</div>
+        <div class="module-chip chip-l2">📤 数据导出</div>
+        <div class="module-chip chip-l2">🔍 全文搜索</div>
+        <div class="module-chip chip-l2">📊 审批流程</div>
+      </div>
+
+      <div class="group-label">L3 — 通用模块</div>
+      <div class="module-grid">
+        <div class="module-chip chip-l3">🔔 消息通知</div>
+        <div class="module-chip chip-l3">📁 文件管理</div>
+        <div class="module-chip chip-l3">📖 数据字典</div>
+        <div class="module-chip chip-l3">📈 系统监控</div>
+        <div class="module-chip chip-l3">🔗 单点登录</div>
+        <div class="module-chip chip-l3">🤖 代码生成</div>
+      </div>
+
+      <div class="group-label">L4 — 高级能力</div>
+      <div class="module-grid">
+        <div class="module-chip chip-l4">🚩 灰度发布</div>
+        <div class="module-chip chip-l4">📊 报表大屏</div>
+        <div class="module-chip chip-l4">🌍 多语言国际化</div>
+        <div class="module-chip chip-l4">🔒 数据合规</div>
+      </div>
+    </div>
+
+    <!-- 右：config_center 四级覆盖 -->
+    <div class="layer theme-purple" style="height:100%">
+      <div class="layer-header">
+        <div class="layer-icon">🎛️</div>
+        <div class="layer-title">Config Center</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:11px;">
+        <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:8px 10px;color:#fca5a5;font-weight:600;">🌐 Global（全局默认）</div>
+        <div style="text-align:center;color:var(--text-muted);font-size:12px;">↓ 覆盖</div>
+        <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.2);border-radius:8px;padding:8px 10px;color:#93c5fd;font-weight:600;">🏢 Tenant（租户级）</div>
+        <div style="text-align:center;color:var(--text-muted);font-size:12px;">↓ 覆盖</div>
+        <div style="background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.2);border-radius:8px;padding:8px 10px;color:#c4b5fd;font-weight:600;">📦 App（应用级）</div>
+        <div style="text-align:center;color:var(--text-muted);font-size:12px;">↓ 覆盖</div>
+        <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:8px 10px;color:#6ee7b7;font-weight:600;">👤 User（用户级）</div>
+        <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,.06);padding-top:10px;">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;">AI 专项配置键</div>
+          <div style="display:flex;flex-direction:column;gap:3px;font-size:10px;color:#94a3b8;">
+            <span>ai.default_provider</span>
+            <span>ai.default_temperature</span>
+            <span>ai.scene_routing.enabled</span>
+            <span>ai.rag.enabled</span>
+            <span>ai.quota.daily_tokens</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 连接线 -->
+  <div class="connector">
+    <div class="connector-line"><div class="connector-arrow"></div></div>
+    <span class="connector-label">Service Call</span>
+  </div>
+
+  <!-- ════════════════════ AI 子系统 ════════════════════ -->
+  <div class="layer theme-green">
+    <div class="layer-header">
+      <div class="layer-icon">🤖</div>
+      <div class="layer-title">AI 子系统（若茗核心差异化能力）</div>
+      <div class="layer-badge">AI Engine</div>
+    </div>
+
+    <div class="ai-inner">
+      <!-- LLM Gateway -->
+      <div class="ai-block">
+        <div class="ai-block-title">LLM Gateway · 统一模型网关</div>
+        <span class="ai-tag">🦌 追鹿大模型（主力）</span>
+        <span class="ai-tag">🔵 OpenAI 兼容层</span>
+        <span class="ai-tag">🏠 Ollama 本地化</span>
+        <div style="margin-top:8px;font-size:10px;color:var(--text-muted)">多模型热插拔 · Token 计量</div>
+      </div>
+
+      <!-- 场景路由 -->
+      <div class="ai-block">
+        <div class="ai-block-title">Scene Router · 场景路由（混合模式）</div>
+        <div class="priority-chain">
+          <span class="pc-step">① 前端显式</span>
+          <span class="pc-arrow">›</span>
+          <span class="pc-step">② Agent默认</span>
+          <span class="pc-arrow">›</span>
+          <span class="pc-step">③ 规则引擎</span>
+          <span class="pc-arrow">›</span>
+          <span class="pc-step">④ 模型分类</span>
+          <span class="pc-arrow">›</span>
+          <span class="pc-step">⑤ 兜底</span>
+        </div>
+        <div class="scene-pills" style="margin-top:8px;">
+          <span class="scene-pill sp-chitchat">闲聊 T=0.9</span>
+          <span class="scene-pill sp-professional">专业问答 T=0.2</span>
+          <span class="scene-pill sp-task">任务执行 T=0.3</span>
+          <span class="scene-pill sp-rag">RAG检索 T=0.1</span>
+          <span class="scene-pill sp-creative">创意写作 T=1.0</span>
+        </div>
+      </div>
+
+      <!-- Prompt 版本化 -->
+      <div class="ai-block">
+        <div class="ai-block-title">Prompt 版本化管理</div>
+        <span class="ai-tag">草稿 → 发布 → 回滚</span>
+        <span class="ai-tag">{{变量}} 插值渲染</span>
+        <span class="ai-tag">版本快照锁定</span>
+        <div style="margin-top:8px;font-size:10px;color:var(--text-muted)">ai_prompt_template + ai_prompt_version</div>
+      </div>
+
+      <!-- Agent 执行器 -->
+      <div class="ai-block">
+        <div class="ai-block-title">Agent Executor · 编排层</div>
+        <span class="ai-tag">单 Agent 推理</span>
+        <span class="ai-tag">多轮对话</span>
+        <span class="ai-tag">流式 SSE 输出</span>
+        <span class="ai-tag">超时控制</span>
+        <span class="ai-tag">LangChain 内部封装</span>
+      </div>
+
+      <!-- Workflow -->
+      <div class="ai-block">
+        <div class="ai-block-title">Multi-Agent Workflow · 有向图</div>
+        <span class="ai-tag">串行节点</span>
+        <span class="ai-tag">并行节点（asyncio.Lock）</span>
+        <span class="ai-tag">条件分支</span>
+        <span class="ai-tag">受控循环</span>
+        <span class="ai-tag">版本快照</span>
+        <span class="ai-tag">执行历史</span>
+      </div>
+
+      <!-- RAG -->
+      <div class="ai-block">
+        <div class="ai-block-title">RAG Pipeline · 混合检索</div>
+        <span class="ai-tag">文档解析（多格式）</span>
+        <span class="ai-tag">向量检索</span>
+        <span class="ai-tag">BM25 全文</span>
+        <span class="ai-tag">RRF 融合</span>
+        <span class="ai-tag">Rerank 精排</span>
+        <span class="ai-tag">增量更新</span>
+      </div>
+    </div>
+
+    <!-- 工具链 -->
+    <div style="margin-top:12px;padding:12px 14px;background:rgba(16,185,129,.04);border:1px solid rgba(16,185,129,.15);border-radius:10px;">
+      <div style="font-size:11px;font-weight:600;color:#6ee7b7;margin-bottom:8px;">🔧 Tool Registry · 工具注册中心</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        <span class="ai-tag">🔍 搜索</span>
+        <span class="ai-tag">💻 代码执行沙箱</span>
+        <span class="ai-tag">🗄️ 数据库查询</span>
+        <span class="ai-tag">📄 文件处理</span>
+        <span class="ai-tag">🌐 HTTP/API 调用</span>
+        <span class="ai-tag">📊 数据分析</span>
+        <span class="ai-tag">+ 自定义工具热插拔</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 连接线 -->
+  <div class="connector">
+    <div class="connector-line"><div class="connector-arrow"></div></div>
+  </div>
+
+  <!-- ════════════════════ 数据存储层 ════════════════════ -->
+  <div class="layer theme-orange">
+    <div class="layer-header">
+      <div class="layer-icon">🗃️</div>
+      <div class="layer-title">数据存储层</div>
+      <div class="layer-badge">Persistence</div>
+    </div>
+    <div class="storage-row">
+      <div class="storage-card">
+        <span class="storage-card-icon">🐘</span>
+        <div class="storage-card-name">PostgreSQL 15+</div>
+        <div class="storage-card-desc">主数据库<br>异步 SQLAlchemy 2.x<br>TenantAwareRepository</div>
+      </div>
+      <div class="storage-card">
+        <span class="storage-card-icon">⚡</span>
+        <div class="storage-card-name">Redis 7+</div>
+        <div class="storage-card-desc">缓存 · 会话 · 任务队列<br>Pub/Sub 配置失效广播<br>分布式锁</div>
+      </div>
+      <div class="storage-card">
+        <span class="storage-card-icon">🧠</span>
+        <div class="storage-card-name">向量数据库</div>
+        <div class="storage-card-desc">pgvector（MVP）<br>→ Milvus / Qdrant（生产）<br>VectorStoreAdapter 抽象切换</div>
+      </div>
+      <div class="storage-card">
+        <span class="storage-card-icon">📦</span>
+        <div class="storage-card-name">对象存储</div>
+        <div class="storage-card-desc">MinIO / 阿里云 OSS<br>文件签名下载<br>权限控制</div>
+      </div>
+      <div class="storage-card">
+        <span class="storage-card-icon">🔍</span>
+        <div class="storage-card-name">全文检索</div>
+        <div class="storage-card-desc">PG FTS（内置）<br>Elasticsearch（可选）<br>BM25 关键词检索</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 连接线 -->
+  <div class="connector">
+    <div class="connector-line"><div class="connector-arrow"></div></div>
+  </div>
+
+  <!-- ════════════════════ 基础设施 ════════════════════ -->
+  <div class="layer" style="background:var(--surface2);border-color:rgba(100,116,139,.15);">
+    <div class="layer-header">
+      <div class="layer-icon" style="background:rgba(100,116,139,.1);">🏗️</div>
+      <div class="layer-title" style="color:#94a3b8;">基础设施 · DevOps</div>
+      <div class="layer-badge" style="background:rgba(100,116,139,.1);color:#64748b;border:1px solid rgba(100,116,139,.2);">Infrastructure</div>
+    </div>
+    <div class="infra-row">
+      <div class="infra-chip">
+        <span class="infra-chip-icon">🐳</span>
+        <div class="infra-chip-name">Docker<br>Compose</div>
+      </div>
+      <div class="infra-chip">
+        <span class="infra-chip-icon">☸️</span>
+        <div class="infra-chip-name">Kubernetes<br>（生产可选）</div>
+      </div>
+      <div class="infra-chip" style="position:relative;">
+        <span class="infra-chip-icon">⚙️</span>
+        <div class="infra-chip-name">CI/CD 可插拔<br><span style="font-size:9px;color:#475569;">GitHub / GitLab / Gitea</span></div>
+      </div>
+      <div class="infra-chip">
+        <span class="infra-chip-icon">🔧</span>
+        <div class="infra-chip-name">Makefile<br>统一脚本层</div>
+      </div>
+      <div class="infra-chip">
+        <span class="infra-chip-icon">🏠</span>
+        <div class="infra-chip-name">镜像仓库<br>GHCR / Harbor</div>
+      </div>
+      <div class="infra-chip">
+        <span class="infra-chip-icon">📊</span>
+        <div class="infra-chip-name">Prometheus<br>+ Grafana</div>
+      </div>
+      <div class="infra-chip">
+        <span class="infra-chip-icon">📋</span>
+        <div class="infra-chip-name">Loki / ELK<br>日志收集</div>
+      </div>
+      <div class="infra-chip">
+        <span class="infra-chip-icon">🔭</span>
+        <div class="infra-chip-name">OpenTelemetry<br>链路追踪</div>
+      </div>
+    </div>
+    <!-- CI/CD 流水线说明 -->
+    <div style="margin-top:12px;padding:10px 14px;background:rgba(100,116,139,.05);border:1px solid rgba(100,116,139,.15);border-radius:8px;font-size:10px;color:#64748b;">
+      <span style="font-weight:600;color:#94a3b8;">CI/CD 流水线：</span>
+      &nbsp;push →
+      <span style="color:#6ee7b7;">lint + test</span> →
+      <span style="color:#93c5fd;">docker build + push</span> →
+      <span style="color:#fcd34d;">deploy dev</span> →
+      <span style="color:#fca5a5;">人工审批</span> →
+      <span style="color:#ef4444;">deploy prod</span>
+      &nbsp;·&nbsp; 业务逻辑统一封装在 Makefile，CI 平台只负责触发
+    </div>
+  </div>
+
+</div><!-- /canvas -->
+
+<footer>
+  若茗 PaaS 系统架构图 &nbsp;<span>v3.1</span>&nbsp; · &nbsp;FastAPI + Vue3 + LangChain + PostgreSQL + pgvector + Redis
+  &nbsp;|&nbsp; 更新时间：<span>2026-06-17</span>
+</footer>
+
+</body>
+</html>

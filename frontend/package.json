@@ -1,0 +1,41 @@
+{
+  "name": "ruoming-paas-admin",
+  "version": "2.0.0",
+  "private": true,
+  "description": "若茗 PaaS 管理后台",
+  "author": "ruoming",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --noEmit",
+    "lint": "eslint src --ext .ts,.vue --fix"
+  },
+  "dependencies": {
+    "vue": "^3.4.29",
+    "vue-router": "^4.3.3",
+    "pinia": "^2.1.7",
+    "axios": "^1.7.2",
+    "element-plus": "^2.7.6",
+    "@element-plus/icons-vue": "^2.3.1",
+    "echarts": "^5.5.0",
+    "vue-echarts": "^7.0.3",
+    "@vueuse/core": "^10.11.0",
+    "dayjs": "^1.11.11",
+    "nprogress": "^0.2.0",
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.5",
+    "@vitejs/plugin-vue-jsx": "^4.0.0",
+    "vite": "^5.3.1",
+    "typescript": "^5.4.5",
+    "vue-tsc": "^2.0.21",
+    "@types/node": "^20.14.9",
+    "@types/nprogress": "^0.2.3",
+    "sass": "^1.77.6",
+    "eslint": "^9.6.0",
+    "unplugin-auto-import": "^0.18.2",
+    "unplugin-vue-components": "^0.27.3"
+  }
+}

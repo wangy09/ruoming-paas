@@ -1,0 +1,50 @@
+frontend/
+├── package.json              # Vue3 + Element Plus + ECharts + Pinia 等全部依赖
+├── vite.config.ts            # 自动导入 + 路径别名 + 代码分割 + 代理
+├── tsconfig.json
+├── index.html
+├── .env.development / .env.production
+└── src/
+    ├── main.ts               # 应用入口，注册插件/指令/路由守卫
+    ├── App.vue
+    ├── types/index.d.ts      # 全局类型定义（用户/租户/AI/权限等）
+    ├── utils/
+    │   ├── request.ts        # Axios封装：Token刷新队列 + NProgress
+    │   └── format.ts         # 日期/文件大小/手机号脱敏等格式化
+    ├── directives/
+    │   └── permission.ts     # v-permission 指令
+    ├── api/                  # 按模块分层 API
+    │   ├── auth.ts / user.ts / permission.ts / tenant.ts / ai.ts
+    ├── store/                # Pinia 状态管理
+    │   ├── auth.ts           # 登录/登出/Token刷新
+    │   ├── permission.ts     # 权限码/菜单/列权限缓存
+    │   └── app.ts            # 暗色模式/侧边栏/标签页/主题色
+    ├── router/
+    │   ├── index.ts          # 静态路由 + 动态路由定义
+    │   └── guard.ts          # 导航守卫：未登录跳转 + 动态路由注册
+    ├── layouts/
+    │   ├── BasicLayout.vue   # 主布局（侧边栏 + Header + 面包屑 + 标签页）
+    │   ├── components/
+    │   │   ├── SidebarMenu.vue  # 折叠侧边栏 + 权限过滤
+    │   │   └── TabsBar.vue      # 多标签页导航
+    ├── styles/
+    │   ├── variables.scss    # SCSS 变量（主题色/尺寸/颜色）
+    │   └── global.scss       # 全局样式 + 工具类
+    └── views/
+        ├── login/index.vue           # 登录页（租户代码+用户名+密码）
+        ├── dashboard/index.vue       # 仪表盘（统计卡片 + ECharts图表）
+        ├── system/
+        │   ├── user/index.vue        # 用户管理（CRUD + 角色分配）
+        │   ├── role/index.vue        # 角色管理（CRUD + 权限树配置）
+        │   ├── permission/index.vue  # 权限管理（树形CRUD）
+        │   └── tenant/index.vue      # 租户管理（CRUD + 用量查看）
+        ├── ai/
+        │   ├── model/index.vue       # 模型管理（多供应商 + 连通测试）
+        │   ├── agent/index.vue       # Agent管理（卡片式 + 知识库绑定）
+        │   ├── knowledge/index.vue   # 知识库（文档上传 + 检索测试）
+        │   ├── conversation/index.vue # 对话历史（Markdown渲染）
+        │   └── prompt/index.vue      # Prompt模板（版本管理 + 渲染预览）
+        ├── audit/
+        │   ├── logs/index.vue        # 操作审计（before/after数据对比）
+        │   └── login/index.vue       # 登录日志
+        └── error/404.vue

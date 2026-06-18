@@ -1,0 +1,35 @@
+backend/app/ai/
+├── __init__.py
+├── llm/                        # LLM 统一网关
+│   ├── models.py               # ai_model_config 表
+│   ├── schemas.py              # ModelConfigCreate/Info、ChatRequest
+│   ├── service.py              # 进程内缓存 + Redis Pub/Sub 失效 + 流式/非流式对话
+│   ├── router.py               # GET/POST/PUT/DELETE /ai/models + 连通性测试
+│   └── providers/
+│       ├── base.py             # BaseLLMProvider 抽象（chat/stream_chat/embed/list_models）
+│       ├── zhuilu.py           # 追鹿大模型（OpenAI 兼容协议）
+│       └── openai_compat.py    # OpenAI/Ollama/Azure 通用 Provider
+├── conversation/               # 对话历史
+│   ├── models.py               # AiConversation、AiMessage、AiCallLog
+│   ├── schemas.py / service.py / router.py
+│   └── router.py               # SSE 流式 /chat + 对话列表/消息/删除
+├── agent/                      # Agent + 工作流
+│   ├── models.py               # AiAgent、AiSceneConfig、AiWorkflow 等
+│   ├── schemas.py / service.py
+│   ├── executor.py             # AgentRunner（场景路由→RAG→LLM）+ WorkflowOrchestrator（有向图+循环守卫）
+│   └── router.py               # CRUD + SSE 流式执行 + 工作流版本/执行历史
+├── knowledge/                  # 知识库 RAG
+│   ├── models.py               # AiKnowledgeBase/Doc/Chunk
+│   ├── pipeline.py             # 混合检索（Vector + BM25 + RRF + Rerank）
+│   ├── service.py              # 文档上传/增量更新/删除（含向量清理）
+│   ├── router.py               # 文件上传 API + 检索测试
+│   └── parsers/base.py         # txt/md/pdf/docx/html 多格式解析（按需降级）
+├── prompt/                     # Prompt 模板版本化
+│   ├── models.py               # AiPromptTemplate、AiPromptVersion
+│   ├── service.py              # 版本管理（发布/回滚）+ Redis 缓存渲染
+│   └── router.py               # 版本历史 + 发布/回滚/预览渲染
+├── scene/router.py             # 场景路由器（规则引擎 + 可选模型分类）
+└── tool/
+    ├── models.py               # ai_tool 表
+    ├── registry.py             # ToolRegistry 单例 + 内置工具（搜索/HTTP/计算器）
+    └── router.py

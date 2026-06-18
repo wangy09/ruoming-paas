@@ -1,0 +1,119 @@
+# ================================================================
+# 若茗 PaaS - 本地开发 Docker Compose
+# Author: ruoming
+# 使用：cd deploy && docker-compose up -d
+# ================================================================
+
+version: "3.9"
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ruoming_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ruoming
+      POSTGRES_PASSWORD: ruoming123
+      POSTGRES_DB: ruoming_dev
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ruoming -d ruoming_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ruoming_net
+
+  # ── Redis ────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ruoming_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ruoming_net
+
+  # ── 后端 API ─────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: ruoming_backend
+    restart: unless-stopped
+    env_file:
+      - ../backend/.env.development
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ruoming:ruoming123@postgres:5432/ruoming_dev
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ../backend:/app           # 开发时热重载
+      - uploads_data:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - ruoming_net
+
+  # ── 前端（Vite Dev Server）───────────────────────────────────────
+  frontend:
+    image: node:20-alpine
+    container_name: ruoming_frontend
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ../frontend:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "3000:3000"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3000"
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - ruoming_net
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+  frontend_node_modules:
+
+networks:
+  ruoming_net:
+    driver: bridge

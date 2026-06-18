@@ -1,0 +1,46 @@
+# 环境配置（敏感信息，禁止提交）
+**/.env.development
+**/.env.test
+**/.env.production
+**/.env.local
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/venv/
+**/.uv/
+**/dist/
+**/build/
+**/*.egg-info/
+
+# Node
+**/node_modules/
+**/.nuxt/
+**/.output/
+**/dist/
+
+# 测试/覆盖率
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# 上传/日志
+**/uploads/
+**/logs/
+**/*.log
+
+# IDE
+**/.idea/
+**/.vscode/
+**/*.swp
+**/*.swo
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Docker
+**/postgres-backup/

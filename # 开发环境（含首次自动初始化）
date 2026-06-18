@@ -1,0 +1,8 @@
+# 开发环境（含首次自动初始化）
+bash scripts/start.sh dev
+
+# 生产环境
+bash scripts/start.sh prod
+
+# 其他
+bash scripts/start.sh stop / status / logs / logs backend
