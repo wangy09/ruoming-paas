@@ -114,8 +114,8 @@ class UserService:
             username=data.username,
             password=hash_password(data.password),
             nickname=data.nickname or data.username,
-            email=data.email,
-            phone=data.phone,
+            email=data.email or None,  # 空字符串转为 None
+            phone=data.phone or None,  # 空字符串转为 None
             dept_id=data.dept_id,
             tenant_id=data.tenant_id or self.tenant_id,
         )
@@ -143,6 +143,9 @@ class UserService:
 
         update_data = data.model_dump(exclude_none=True)
         for k, v in update_data.items():
+            # 空字符串转为 None，避免唯一约束冲突
+            if isinstance(v, str) and not v:
+                v = None
             setattr(user, k, v)
 
         await self.db.flush()

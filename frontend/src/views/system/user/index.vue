@@ -65,7 +65,7 @@
         <el-table-column prop="created_at" label="创建时间" width="170">
           <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right" align="center">
+        <el-table-column label="操作" min-width="220" fixed="right" align="center">
           <template #default="{ row }">
             <el-button
               link type="primary"
@@ -73,6 +73,7 @@
               @click="openDialog(row)"
             >编辑</el-button>
             <el-button
+              v-if="!row.is_superplatform"
               link type="warning"
               v-permission="'system:user:update'"
               @click="openRoleDialog(row)"
@@ -83,6 +84,7 @@
               @click="handleResetPwd(row)"
             >重置密码</el-button>
             <el-button
+              v-if="!row.is_superplatform"
               link type="danger"
               v-permission="'system:user:delete'"
               @click="handleDelete(row)"
@@ -272,7 +274,7 @@ const currentUserId = ref<number>(0)
 
 async function openRoleDialog(row: UserListItem) {
   currentUserId.value = row.id
-  selectedRoleIds.value = row.roles.map(r => r.id)
+  selectedRoleIds.value = (row.roles || []).map((r: { id: number }) => r.id)
   if (!allRoles.value.length) {
     const res = await permissionApi.roleList({ page_size: 200 })
     allRoles.value = res.data.items

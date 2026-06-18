@@ -13,7 +13,7 @@ class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
     password: str = Field(..., min_length=8, max_length=128)
     nickname: str | None = Field(None, max_length=64)
-    email: EmailStr | None = None
+    email: str | None = Field(None, max_length=128)
     phone: str | None = Field(None, max_length=20)
     dept_id: int | None = None
     role_ids: list[int] = Field(default_factory=list)
@@ -24,7 +24,7 @@ class UserUpdate(BaseModel):
     """更新用户"""
 
     nickname: str | None = Field(None, max_length=64)
-    email: EmailStr | None = None
+    email: str | None = Field(None, max_length=128)
     phone: str | None = Field(None, max_length=20)
     dept_id: int | None = None
     status: int | None = Field(None, ge=0, le=1)

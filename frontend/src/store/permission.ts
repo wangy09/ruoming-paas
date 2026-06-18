@@ -27,6 +27,10 @@ export const usePermissionStore = defineStore('permission', () => {
 
   /** 判断是否拥有某权限码 */
   function hasPermission(code: string): boolean {
+    // 超管拥有所有权限
+    if (permCodes.value.has('*') || buttonCodes.value.has('*')) {
+      return true
+    }
     return permCodes.value.has(code) || buttonCodes.value.has(code)
   }
 
