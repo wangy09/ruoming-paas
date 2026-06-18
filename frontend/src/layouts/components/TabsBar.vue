@@ -8,7 +8,7 @@
           class="tab-item"
           :class="{ active: isActive(tab.path) }"
           @click="router.push(tab.path)"
-          @contextmenu.prevent="openContextMenu($event, tab)"
+          @contextmenu.prevent.stop="openContextMenu($event, tab)"
         >
           {{ tab.title }}
           <el-icon
@@ -35,14 +35,70 @@
         </el-dropdown-menu>
       </template>
     </el-dropdown>
+
+    <!-- 右键菜单 -->
+    <teleport to="body">
+      <transition name="fade">
+        <div
+          v-if="contextMenuVisible"
+          class="context-menu"
+          :style="{ left: menuLeft + 'px', top: menuTop + 'px' }"
+          @click.stop
+        >
+          <div class="context-menu-item" @click="handleContextCommand('refresh')">
+            <el-icon><Refresh /></el-icon>
+            <span>刷新</span>
+          </div>
+          <div class="context-menu-item" @click="handleContextCommand('close')">
+            <el-icon><Close /></el-icon>
+            <span>关闭</span>
+          </div>
+          <div class="context-menu-item" @click="handleContextCommand('close-others')">
+            <el-icon><Remove /></el-icon>
+            <span>关闭其他</span>
+          </div>
+          <div class="context-menu-item" @click="handleContextCommand('close-left')">
+            <el-icon><component :is="ElIcons.ArrowLeft || ElIcons.ArrowDown" /></el-icon>
+            <span>关闭左边</span>
+          </div>
+          <div class="context-menu-item" @click="handleContextCommand('close-right')">
+            <el-icon><component :is="ElIcons.ArrowRight || ElIcons.ArrowDown" /></el-icon>
+            <span>关闭右边</span>
+          </div>
+          <div class="context-menu-divider" />
+          <div class="context-menu-item" @click="handleContextCommand('maximize')">
+            <el-icon><component :is="ElIcons.Maximize || ElIcons.FullScreen || ElIcons.ArrowDown" /></el-icon>
+            <span>最大化</span>
+          </div>
+          <div class="context-menu-item" @click="handleContextCommand('open-new')">
+            <el-icon><component :is="ElIcons.ExternalLink || ElIcons.Link || ElIcons.ArrowDown" /></el-icon>
+            <span>新窗口打开</span>
+          </div>
+        </div>
+      </transition>
+      <!-- 点击空白处关闭菜单 -->
+      <div
+        v-if="contextMenuVisible"
+        class="context-menu-overlay"
+        @click="closeContextMenu"
+        @contextmenu.prevent.stop="closeContextMenu"
+      />
+    </teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Close, ArrowDown } from '@element-plus/icons-vue'
+import * as ElIcons from '@element-plus/icons-vue'
+import { Close, ArrowDown, Refresh, Remove } from '@element-plus/icons-vue'
 import { useAppStore } from '@/store/app'
+
+interface TabItem {
+  path: string
+  title: string
+  affix?: boolean
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -51,6 +107,12 @@ const appStore = useAppStore()
 const visitedViews = computed(() => appStore.visitedViews)
 
 const isActive = (path: string) => route.path === path
+
+// 右键菜单状态
+const contextMenuVisible = ref(false)
+const menuLeft = ref(0)
+const menuTop = ref(0)
+const currentTab = ref<TabItem | null>(null)
 
 function closeTab(path: string) {
   const idx = visitedViews.value.findIndex(v => v.path === path)
@@ -73,8 +135,96 @@ function handleTabCommand(cmd: string) {
   }
 }
 
-function openContextMenu(_e: MouseEvent, _tab: { path: string }) {
-  // 简化实现：可扩展为真正的右键菜单
+// 右键菜单
+function openContextMenu(e: MouseEvent, tab: TabItem) {
+  currentTab.value = tab
+  // 计算菜单位置，确保不超出屏幕
+  const menuWidth = 160
+  const menuHeight = 280
+  let left = e.clientX
+  let top = e.clientY
+
+  if (left + menuWidth > window.innerWidth) {
+    left = window.innerWidth - menuWidth - 10
+  }
+  if (top + menuHeight > window.innerHeight) {
+    top = window.innerHeight - menuHeight - 10
+  }
+
+  menuLeft.value = left
+  menuTop.value = top
+  contextMenuVisible.value = true
+}
+
+function closeContextMenu() {
+  contextMenuVisible.value = false
+  currentTab.value = null
+}
+
+function handleContextCommand(cmd: string) {
+  if (!currentTab.value) return
+
+  const tabPath = currentTab.value.path
+  const currentIdx = visitedViews.value.findIndex(v => v.path === tabPath)
+
+  switch (cmd) {
+    case 'refresh':
+      // 刷新当前标签页
+      if (isActive(tabPath)) {
+        router.go(0)
+      } else {
+        // 先跳转到该页再刷新
+        router.push(tabPath).then(() => router.go(0))
+      }
+      break
+
+    case 'close':
+      closeTab(tabPath)
+      break
+
+    case 'close-others':
+      // 关闭其他，保留当前和固定标签
+      visitedViews.value.forEach(v => {
+        if (v.path !== tabPath && !v.affix) {
+          appStore.removeVisitedView(v.path)
+        }
+      })
+      break
+
+    case 'close-left':
+      // 关闭左边所有标签
+      for (let i = currentIdx - 1; i >= 0; i--) {
+        const v = visitedViews.value[i]
+        if (!v.affix) {
+          appStore.removeVisitedView(v.path)
+        }
+      }
+      break
+
+    case 'close-right':
+      // 关闭右边所有标签
+      for (let i = visitedViews.value.length - 1; i > currentIdx; i--) {
+        const v = visitedViews.value[i]
+        if (!v.affix) {
+          appStore.removeVisitedView(v.path)
+        }
+      }
+      break
+
+    case 'maximize':
+      // 触发浏览器最大化（部分浏览器不支持）
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen()
+      }
+      break
+
+    case 'open-new':
+      // 新窗口打开
+      window.open(window.location.origin + tabPath, '_blank')
+      break
+  }
+
+  closeContextMenu()
 }
 </script>
 
@@ -139,5 +289,70 @@ function openContextMenu(_e: MouseEvent, _tab: { path: string }) {
   flex-shrink: 0;
   color: $text-regular;
   &:hover { color: $primary-color; }
+}
+</style>
+
+<style lang="scss">
+// 右键菜单样式（不受 scoped 影响）
+.context-menu-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  padding: 4px 0;
+  min-width: 140px;
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #606266;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  .el-icon {
+    font-size: 14px;
+    color: #909399;
+  }
+
+  &:hover {
+    background: #f5f7fa;
+    color: #409eff;
+    
+    .el-icon {
+      color: #409eff;
+    }
+  }
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: #e4e7ed;
+  margin: 4px 0;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: scale(0.95);
 }
 </style>
