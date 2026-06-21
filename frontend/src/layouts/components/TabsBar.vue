@@ -88,8 +88,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import * as ElIcons from '@element-plus/icons-vue'
 import { Close, ArrowDown, Refresh, Remove } from '@element-plus/icons-vue'
 import { useAppStore } from '@/store/app'
@@ -104,7 +105,7 @@ const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 
-const visitedViews = computed(() => appStore.visitedViews)
+const { visitedViews } = storeToRefs(appStore)
 
 const isActive = (path: string) => route.path === path
 

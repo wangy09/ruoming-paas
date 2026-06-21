@@ -42,15 +42,37 @@ class UserService:
         keyword: str | None = None,
         status: int | None = None,
         dept_id: int | None = None,
+        data_scope: dict | None = None,
     ) -> tuple[list[SysUser], int]:
-        """获取用户列表（分页）"""
+        """获取用户列表（分页），支持数据权限过滤"""
         from sqlalchemy import func
+        from app.modules.system.models import SysDept
 
-        query = select(SysUser).where(SysUser.is_deleted == False)  # noqa: E712
+        query = select(SysUser, SysDept.name.label("dept_name")).outerjoin(
+            SysDept, SysUser.dept_id == SysDept.id
+        ).where(SysUser.is_deleted == False)  # noqa: E712
 
         # 租户过滤（非超管）
         if self.tenant_id is not None:
             query = query.where(SysUser.tenant_id == self.tenant_id)
+
+        # 数据权限过滤
+        if data_scope:
+            allowed_dept_ids = data_scope.get("allowed_dept_ids")
+            allowed_user_ids = data_scope.get("allowed_user_ids")
+            ds = data_scope.get("data_scope")
+
+            if ds == 5:
+                # 仅本人
+                if allowed_user_ids:
+                    query = query.where(SysUser.id.in_(allowed_user_ids))
+            elif allowed_dept_ids is not None and len(allowed_dept_ids) > 0:
+                # 部门过滤
+                query = query.where(SysUser.dept_id.in_(allowed_dept_ids))
+            elif allowed_dept_ids is not None and len(allowed_dept_ids) == 0:
+                # 没有可访问的部门，返回空
+                return [], 0
+            # ds=1 全部数据，不加过滤
 
         if keyword:
             query = query.where(
@@ -68,7 +90,7 @@ class UserService:
 
         # 总数
         count_result = await self.db.execute(
-            select(func.count()).select_from(query.subquery())
+            select(func.count(SysUser.id)).select_from(query.subquery())
         )
         total = count_result.scalar_one()
 
@@ -76,7 +98,13 @@ class UserService:
         query = query.order_by(SysUser.created_at.desc())
         query = query.offset((page - 1) * page_size).limit(page_size)
         result = await self.db.execute(query)
-        items = list(result.scalars().all())
+        rows = list(result.all())
+
+        # 将部门名称附加到用户对象
+        items = []
+        for user, dept_name in rows:
+            user.dept_name = dept_name
+            items.append(user)
 
         return items, total
 

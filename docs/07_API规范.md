@@ -346,9 +346,10 @@ app = FastAPI(
     redoc_url="/api/redoc" if not settings.is_production else None,
     openapi_url="/api/openapi.json",
     openapi_tags=[
-        {"name": "认证", "description": "登录、Token 管理"},
+        {"name": "认证", "description": "登录、Token 管理、验证码"},
         {"name": "用户", "description": "用户 CRUD"},
         {"name": "权限", "description": "角色、权限、菜单"},
+        {"name": "字典", "description": "字典类型、字典项管理"},
         {"name": "AI-LLM", "description": "大模型管理"},
         {"name": "AI-Agent", "description": "Agent 管理与运行"},
         {"name": "AI-知识库", "description": "知识库管理"},

@@ -77,11 +77,12 @@ class PermissionService:
         perms = list(perm_result.scalars().all())
 
         buttons = [p.code for p in perms if p.perm_type == "button"]
-        menus = [
+        menu_items = [
             self._perm_to_menu_item(p)
             for p in perms
             if p.perm_type == "menu" and p.is_visible
         ]
+        menus = self._build_menu_tree(menu_items)
         # 列权限（resourceKey -> 可见列名列表）
         columns: dict[str, list[str]] = {}
         for p in perms:
@@ -218,7 +219,7 @@ class PermissionService:
         """将权限对象转换为前端菜单结构"""
         return {
             "id": perm.id,
-            "parentId": perm.parent_id,
+            "parent_id": perm.parent_id,
             "title": perm.name,
             "path": perm.path,
             "component": perm.component,
@@ -230,3 +231,150 @@ class PermissionService:
             "isExternal": perm.is_external,
             "permissionCode": perm.code,
         }
+
+    def _build_menu_tree(self, menu_items: list[dict], parent_id: int = 0) -> list[dict]:
+        """递归构建菜单树形结构"""
+        children = [item for item in menu_items if item.get("parent_id") == parent_id]
+        children.sort(key=lambda x: x.get("sort", 0))
+
+        result = []
+        for item in children:
+            node = {
+                **item,
+                "children": self._build_menu_tree(menu_items, item["id"]),
+            }
+            if not node["children"]:
+                node["children"] = None
+            result.append(node)
+        return result
+
+    async def get_all_menus(self) -> dict[str, Any]:
+        """获取所有菜单（供超管使用）"""
+        result = await self.db.execute(
+            select(SysPermission).where(
+                SysPermission.perm_type == "menu",
+                SysPermission.is_deleted == False,
+            )
+        )
+        perms = list(result.scalars().all())
+        menu_items = [self._perm_to_menu_item(p) for p in perms]
+        menus = self._build_menu_tree(menu_items)
+        return {
+            "menus": menus,
+            "columns": {},
+        }
+
+    # ── 数据权限过滤 ──────────────────────────────────────────────────
+
+    async def get_user_data_scope_filter(self, user_id: int, user_dept_id: int | None) -> dict[str, Any]:
+        """
+        获取用户的数据权限过滤条件。
+
+        返回结构：
+        {
+            "data_scope": 1-5,           # 最终生效的数据范围
+            "allowed_dept_ids": [1,2,3], # 允许访问的部门 ID 列表
+            "allowed_user_ids": [1],       # 允许访问的用户 ID 列表（仅本人时）
+        }
+
+        数据范围说明：
+        - 1全部：allowed_dept_ids = None（无限制）
+        - 2自定义：allowed_dept_ids = role.data_scope_depts
+        - 3本部门：allowed_dept_ids = [user_dept_id]
+        - 4本部门及子部门：allowed_dept_ids = [user_dept_id, ...所有子部门]
+        - 5仅本人：allowed_user_ids = [user_id]
+        """
+        from app.modules.user.models import SysUser
+
+        # 获取用户信息（用于判断超管）
+        user_result = await self.db.execute(
+            select(SysUser).where(SysUser.id == user_id, SysUser.is_deleted == False)  # noqa: E712
+        )
+        user = user_result.scalar_one_or_none()
+        if not user:
+            return {"data_scope": 5, "allowed_dept_ids": [], "allowed_user_ids": [user_id]}
+
+        # 超管拥有所有数据权限
+        if user.is_superplatform:
+            return {"data_scope": 1, "allowed_dept_ids": None, "allowed_user_ids": None}
+
+        # 获取用户所有角色的数据范围（取最大权限）
+        roles_result = await self.db.execute(
+            select(SysRole)
+            .join(SysUserRole, SysUserRole.role_id == SysRole.id)
+            .where(
+                SysUserRole.user_id == user_id,
+                SysRole.status == 1,
+                SysRole.is_deleted == False,  # noqa: E712
+            )
+        )
+        roles = list(roles_result.scalars().all())
+
+        if not roles:
+            # 无角色，默认仅本人
+            return {"data_scope": 5, "allowed_dept_ids": [], "allowed_user_ids": [user_id]}
+
+        # 取最大的数据范围权限（1全部 > 2自定义 > 3本部门 > 4本部门及子部门 > 5仅本人）
+        min_scope = min(role.data_scope for role in roles)
+
+        # 根据最大权限范围计算过滤条件
+        if min_scope == 1:
+            # 全部数据
+            return {"data_scope": 1, "allowed_dept_ids": None, "allowed_user_ids": None}
+
+        if min_scope == 5:
+            # 仅本人
+            return {"data_scope": 5, "allowed_dept_ids": [], "allowed_user_ids": [user_id]}
+
+        # 部门相关权限
+        dept_ids: set[int] = set()
+
+        for role in roles:
+            if role.data_scope == 2:
+                # 自定义部门
+                if role.data_scope_depts:
+                    try:
+                        custom_depts = json.loads(role.data_scope_depts)
+                        if isinstance(custom_depts, list):
+                            dept_ids.update(custom_depts)
+                    except json.JSONDecodeError:
+                        pass
+            elif role.data_scope == 3:
+                # 本部门
+                if user_dept_id:
+                    dept_ids.add(user_dept_id)
+            elif role.data_scope == 4:
+                # 本部门及子部门
+                if user_dept_id:
+                    dept_ids.add(user_dept_id)
+                    # 查询所有子部门
+                    child_depts = await self._get_child_dept_ids(user_dept_id)
+                    dept_ids.update(child_depts)
+
+        # 合并多个角色的部门权限
+        return {
+            "data_scope": min_scope,
+            "allowed_dept_ids": list(dept_ids) if dept_ids else [],
+            "allowed_user_ids": None,
+        }
+
+    async def _get_child_dept_ids(self, parent_dept_id: int) -> list[int]:
+        """递归获取所有子部门 ID"""
+        from app.modules.system.models import SysDept
+
+        child_ids: list[int] = []
+        result = await self.db.execute(
+            select(SysDept.id).where(
+                SysDept.parent_id == parent_dept_id,
+                SysDept.is_deleted == False,  # noqa: E712
+            )
+        )
+        children = list(result.scalars().all())
+
+        for child_id in children:
+            child_ids.append(child_id)
+            # 递归获取子部门的子部门
+            sub_children = await self._get_child_dept_ids(child_id)
+            child_ids.extend(sub_children)
+
+        return child_ids

@@ -10,6 +10,7 @@ from app.core.deps import get_current_user, require_permissions
 from app.core.redis import get_redis
 from app.core.response import ApiResponse, ok, paged
 from app.database import get_db
+from app.modules.permission.service import PermissionService
 from app.modules.user.schemas import (
     UserCreate,
     UserInfo,
@@ -35,15 +36,22 @@ async def list_users(
     dept_id: int | None = Query(default=None),
     current_user=Depends(require_permissions("system:user:view")),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
     tenant_id = None if current_user.is_superplatform else current_user.tenant_id
     svc = UserService(db, tenant_id)
+
+    # 获取当前用户的数据权限过滤
+    perm_svc = PermissionService(db, redis)
+    data_scope = await perm_svc.get_user_data_scope_filter(current_user.id, current_user.dept_id)
+
     items, total = await svc.get_list(
         page=page,
         page_size=page_size,
         keyword=keyword,
         status=status,
         dept_id=dept_id,
+        data_scope=data_scope,
     )
     return paged(
         items=[UserInfo.model_validate(u) for u in items],

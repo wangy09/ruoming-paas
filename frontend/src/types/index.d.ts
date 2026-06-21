@@ -35,6 +35,8 @@ export interface LoginRequest {
   username: string
   password: string
   tenant_code?: string
+  captcha_key?: string
+  captcha_code?: string
 }
 
 export interface LoginResponse {
@@ -54,6 +56,8 @@ export interface UserListItem {
   is_active: boolean
   is_superplatform: boolean
   tenant_id: number
+  dept_id?: number
+  dept_name?: string
   roles: RoleInfo[]
   created_at: string
   login_fail_count: number
@@ -84,7 +88,8 @@ export interface RoleInfo {
   code: string
   description?: string
   parent_id?: number
-  data_scope: string
+  data_scope: number
+  data_scope_depts?: string | null
   is_system: boolean
   created_at: string
 }
@@ -94,7 +99,25 @@ export interface RoleCreate {
   code: string
   description?: string
   parent_id?: number
-  data_scope?: string
+  data_scope?: number
+  data_scope_depts?: number[]
+}
+
+// ── 部门管理 ────────────────────────────────────────────────────────────────────
+export interface DeptInfo {
+  id: number
+  parent_id: number
+  name: string
+  ancestors: string | null
+  level: number
+  sort: number
+  leader: string | null
+  phone: string | null
+  email: string | null
+  status: number
+  tenant_id: number | null
+  children?: DeptInfo[]
+  remark: string | null
 }
 
 export interface PermissionItem {

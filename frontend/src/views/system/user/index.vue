@@ -2,37 +2,38 @@
   <div class="page-container">
     <div class="page-card">
       <!-- 搜索栏 -->
-      <el-form inline class="search-form" @submit.prevent="fetchList">
-        <el-form-item label="关键词">
-          <el-input v-model="query.keyword" placeholder="用户名 / 邮箱" clearable style="width:200px" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="query.is_active" placeholder="全部" clearable style="width:120px">
-            <el-option label="启用" :value="true" />
-            <el-option label="禁用" :value="false" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :icon="Search" @click="fetchList">查询</el-button>
-          <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
-        </el-form-item>
-      </el-form>
+      <div class="search-bar">
+        <el-form inline class="search-form" @submit.prevent="fetchList" style="flex: 1;">
+          <el-form-item label="关键词">
+            <el-input v-model="query.keyword" placeholder="用户名 / 邮箱" clearable style="width:200px" />
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="query.status" placeholder="全部" clearable style="width:120px">
+              <el-option label="启用" :value="1" />
+              <el-option label="禁用" :value="0" />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :icon="Search" @click="fetchList">查询</el-button>
+            <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
+          </el-form-item>
+        </el-form>
+        <el-button type="primary" :icon="Plus" v-permission="'system:user:create'" @click="openDialog()">
+          新增用户
+        </el-button>
+      </div>
 
       <el-divider />
-
-      <!-- 工具栏 -->
-      <div class="table-toolbar">
-        <div class="flex gap-2">
-          <el-button type="primary" :icon="Plus" v-permission="'system:user:create'" @click="openDialog()">
-            新增用户
-          </el-button>
-        </div>
-      </div>
 
       <!-- 表格 -->
       <el-table v-loading="loading" :data="tableData" border stripe>
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column prop="nickname" label="昵称" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="dept_name" label="部门" min-width="120">
+          <template #default="{ row }">
+            {{ row.dept_name || '-' }}
+          </template>
+        </el-table-column>
         <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
         <el-table-column label="角色" min-width="160">
           <template #default="{ row }">
@@ -50,7 +51,7 @@
         <el-table-column label="状态" width="80" align="center">
           <template #default="{ row }">
             <el-switch
-              v-model="row.is_active"
+              :model-value="row.status === 1"
               :loading="switchLoadingId === row.id"
               @change="toggleActive(row)"
             />
@@ -114,6 +115,17 @@
         <el-form-item label="昵称" prop="nickname">
           <el-input v-model="form.nickname" placeholder="显示名称" />
         </el-form-item>
+        <el-form-item label="部门">
+          <el-tree-select
+            v-model="form.dept_id"
+            :data="deptOptions"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            check-strictly
+            placeholder="请选择部门（可选）"
+            clearable
+            style="width: 100%"
+          />
+        </el-form-item>
         <el-form-item label="邮箱" prop="email">
           <el-input v-model="form.email" placeholder="email@example.com" />
         </el-form-item>
@@ -156,8 +168,9 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { userApi } from '@/api/user'
 import { permissionApi } from '@/api/permission'
+import { systemApi } from '@/api/system'
 import { formatDate } from '@/utils/format'
-import type { UserListItem, RoleInfo } from '@/types'
+import type { UserListItem, RoleInfo, DeptInfo } from '@/types'
 
 // ── 列表 ──────────────────────────────────────────────────────────────────────
 const loading = ref(false)
@@ -169,7 +182,7 @@ const query = reactive({
   page: 1,
   page_size: 10,
   keyword: '',
-  is_active: undefined as boolean | undefined,
+  status: undefined as number | undefined,
 })
 
 async function fetchList() {
@@ -185,18 +198,20 @@ async function fetchList() {
 
 function resetQuery() {
   query.keyword = ''
-  query.is_active = undefined
+  query.status = undefined
   query.page = 1
   fetchList()
 }
 
 async function toggleActive(row: UserListItem) {
+  const newStatus = row.status === 1 ? 0 : 1
   switchLoadingId.value = row.id
   try {
-    await userApi.update(row.id, { is_active: row.is_active })
-    ElMessage.success(row.is_active ? '已启用' : '已禁用')
+    await userApi.update(row.id, { status: newStatus })
+    row.status = newStatus
+    ElMessage.success(`用户已${newStatus === 1 ? '启用' : '禁用'}`)
   } catch {
-    row.is_active = !row.is_active
+    // 失败时不更新状态
   } finally {
     switchLoadingId.value = null
   }
@@ -216,6 +231,18 @@ async function handleResetPwd(row: UserListItem) {
   ElMessage.success('密码已重置')
 }
 
+// ── 部门选项 ──────────────────────────────────────────────────────────────────
+const deptOptions = ref<DeptInfo[]>([])
+
+async function fetchDeptOptions() {
+  try {
+    const res = await systemApi.deptOptions()
+    deptOptions.value = res.data
+  } catch {
+    deptOptions.value = []
+  }
+}
+
 // ── 新增/编辑 ─────────────────────────────────────────────────────────────────
 const dialogVisible = ref(false)
 const editId = ref<number | null>(null)
@@ -228,6 +255,7 @@ const form = reactive({
   email: '',
   phone: '',
   password: '',
+  dept_id: undefined as number | undefined,
 })
 
 const rules: FormRules = {
@@ -244,6 +272,7 @@ function openDialog(row?: UserListItem) {
     email: row?.email ?? '',
     phone: row?.phone ?? '',
     password: '',
+    dept_id: (row as any)?.dept_id,
   })
   dialogVisible.value = true
 }
@@ -253,10 +282,10 @@ async function handleSubmit() {
   submitting.value = true
   try {
     if (editId.value) {
-      await userApi.update(editId.value, { nickname: form.nickname, email: form.email, phone: form.phone })
+      await userApi.update(editId.value, { nickname: form.nickname, email: form.email, phone: form.phone, dept_id: form.dept_id })
       ElMessage.success('更新成功')
     } else {
-      await userApi.create(form)
+      await userApi.create(form as any)
       ElMessage.success('创建成功')
     }
     dialogVisible.value = false
@@ -294,12 +323,19 @@ async function handleAssignRoles() {
   }
 }
 
-onMounted(fetchList)
+onMounted(() => {
+  fetchList()
+  fetchDeptOptions()
+})
 </script>
 
 <style lang="scss" scoped>
 .search-form { :deep(.el-form-item) { margin-bottom: 0; } }
-.table-toolbar { margin-bottom: 12px; }
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .mt-4 { margin-top: 16px; }
 .mr-1 { margin-right: 4px; }
 .ml-2 { margin-left: 8px; }

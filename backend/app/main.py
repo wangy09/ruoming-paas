@@ -194,12 +194,16 @@ from app.modules.auth.router import router as auth_router
 from app.modules.user.router import router as user_router
 from app.modules.permission.router import router as permission_router
 from app.modules.audit.router import router as audit_router
+from app.modules.system.router import router as system_router
+from app.modules.dashboard.router import router as dashboard_router
 
-# M1/M2/M3 路由
+# 基础路由
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["认证"])
 app.include_router(user_router, prefix="/api/v1/users", tags=["用户"])
 app.include_router(permission_router, prefix="/api/v1", tags=["权限"])
 app.include_router(audit_router, prefix="/api/v1/audit", tags=["审计"])
+app.include_router(system_router, prefix="/api/v1", tags=["系统管理"])
+app.include_router(dashboard_router, prefix="/api/v1/dashboard", tags=["仪表盘"])
 
 # 提供前端权限初始化入口（无前缀，通过路由内部路径区分）
 # GET /api/v1/my/permissions  -> permission_router

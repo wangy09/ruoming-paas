@@ -35,7 +35,7 @@
             <p class="agent-desc">{{ agent.description || '暂无描述' }}</p>
 
             <div class="agent-footer">
-              <el-tag :type="statusTagMap[agent.status]" size="small">{{ statusLabelMap[agent.status] }}</el-tag>
+              <el-tag :type="getStatusTagType(agent.status)" size="small">{{ getStatusLabel(agent.status) }}</el-tag>
               <el-tag type="info" size="small">{{ typeLabelMap[agent.type] }}</el-tag>
             </div>
           </div>
@@ -136,10 +136,13 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Plus, MoreFilled, Robot } from '@element-plus/icons-vue'
 import { agentApi, modelApi, kbApi } from '@/api/ai'
+import { useAgentStatus } from '@/hooks/useDict'
 import type { AgentInfo, AiModelConfig, KnowledgeBase } from '@/types'
 
-const statusTagMap: Record<string, string> = { draft: 'info', active: 'success', archived: '' }
-const statusLabelMap: Record<string, string> = { draft: '草稿', active: '启用', archived: '归档' }
+// Agent 状态字典
+const { tagType: getStatusTagType, label: getStatusLabel } = useAgentStatus()
+
+// 类型映射（暂时保留硬编码）
 const typeLabelMap: Record<string, string> = { chat: '对话', rag: 'RAG', tool: '工具', workflow: '工作流' }
 
 const loading = ref(false)

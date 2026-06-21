@@ -11,6 +11,8 @@ class LoginRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=64, description="用户名")
     password: str = Field(..., min_length=1, max_length=128, description="密码")
     tenant_code: str | None = Field(None, description="租户标识（多租户场景）")
+    captcha_key: str | None = Field(None, description="验证码 key")
+    captcha_code: str | None = Field(None, description="验证码")
 
 
 class LoginResponse(BaseModel):

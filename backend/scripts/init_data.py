@@ -79,6 +79,7 @@ async def init_data() -> None:
             status=1,
             sort=1,
             tenant_id=None,  # 角色模板（平台级）
+            is_system=True,
         )
         db.add(tenant_admin_role)
 
@@ -87,10 +88,11 @@ async def init_data() -> None:
             code="tenant:user",
             description="普通成员，基本查看权限",
             parent_id=0,
-            data_scope=4,   # 仅本人
+            data_scope=5,   # 仅本人
             status=1,
             sort=10,
             tenant_id=None,
+            is_system=True,
         )
         db.add(normal_role)
         await db.flush()
@@ -98,10 +100,23 @@ async def init_data() -> None:
         # ── 5. 创建基础权限数据 ───────────────────────────────────────
         permissions_data = _get_default_permissions()
         perm_objects = []
+        code_to_id = {}
+
         for p in permissions_data:
-            perm = SysPermission(**p)
+            # 过滤掉 parent_code（用于建立关系，不写入数据库）
+            perm_data = {k: v for k, v in p.items() if k != "parent_code"}
+            perm = SysPermission(**perm_data)
             db.add(perm)
             perm_objects.append(perm)
+        await db.flush()
+
+        # 建立父级关系（通过 code 映射）
+        for p, perm in zip(permissions_data, perm_objects):
+            code_to_id[p["code"]] = perm.id
+            if p.get("parent_code"):
+                parent_id = code_to_id.get(p["parent_code"])
+                if parent_id:
+                    perm.parent_id = parent_id
         await db.flush()
 
         # 给租户管理员角色分配所有权限
@@ -110,6 +125,10 @@ async def init_data() -> None:
                 role_id=tenant_admin_role.id,
                 permission_id=perm.id,
             ))
+        await db.flush()
+
+        # ── 6. 初始化字典数据 ──────────────────────────────────────────
+        await init_dicts(db)
         await db.flush()
 
         await db.commit()
@@ -130,56 +149,86 @@ async def init_data() -> None:
 
 def _get_default_permissions() -> list[dict]:
     """默认权限数据"""
-    return [
+    perms = [
         # ── 系统管理（根菜单）────────────────────────────────────────
         {
             "parent_id": 0, "name": "系统管理", "code": "system",
             "perm_type": "menu", "path": "/system", "component": "",
             "icon": "Setting", "sort": 100, "is_visible": True,
         },
+        # 部门管理菜单
+        {
+            "parent_id": 0, "parent_code": "system", "name": "部门管理", "code": "system:dept:menu",
+            "perm_type": "menu", "path": "/system/depts",
+            "component": "system/dept/index", "icon": "Grid", "sort": 105, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "system:dept:menu", "name": "查询部门", "code": "system:dept:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "system:dept:menu", "name": "新增部门", "code": "system:dept:create", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "system:dept:menu", "name": "编辑部门", "code": "system:dept:update", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "system:dept:menu", "name": "删除部门", "code": "system:dept:delete", "perm_type": "button", "sort": 4},
         # 用户管理菜单
         {
-            "parent_id": 0, "name": "用户管理", "code": "system:user:menu",
-            "perm_type": "menu", "path": "/system/user",
+            "parent_id": 0, "parent_code": "system", "name": "用户管理", "code": "system:user:menu",
+            "perm_type": "menu", "path": "/system/users",
             "component": "system/user/index", "icon": "User", "sort": 110, "is_visible": True,
         },
         # 用户按钮权限
-        {"parent_id": 0, "name": "查询用户", "code": "system:user:view", "perm_type": "button", "sort": 1},
-        {"parent_id": 0, "name": "新增用户", "code": "system:user:create", "perm_type": "button", "sort": 2},
-        {"parent_id": 0, "name": "编辑用户", "code": "system:user:update", "perm_type": "button", "sort": 3},
-        {"parent_id": 0, "name": "删除用户", "code": "system:user:delete", "perm_type": "button", "sort": 4},
-        {"parent_id": 0, "name": "重置密码", "code": "system:user:reset_pwd", "perm_type": "button", "sort": 5},
-        {"parent_id": 0, "name": "分配角色", "code": "system:user:assign_role", "perm_type": "button", "sort": 6},
-        {"parent_id": 0, "name": "导出用户", "code": "system:user:export", "perm_type": "button", "sort": 7},
+        {"parent_id": 0, "parent_code": "system:user:menu", "name": "查询用户", "code": "system:user:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "system:user:menu", "name": "新增用户", "code": "system:user:create", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "system:user:menu", "name": "编辑用户", "code": "system:user:update", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "system:user:menu", "name": "删除用户", "code": "system:user:delete", "perm_type": "button", "sort": 4},
+        {"parent_id": 0, "parent_code": "system:user:menu", "name": "重置密码", "code": "system:user:reset_pwd", "perm_type": "button", "sort": 5},
+        {"parent_id": 0, "parent_code": "system:user:menu", "name": "分配角色", "code": "system:user:assign_role", "perm_type": "button", "sort": 6},
+        {"parent_id": 0, "parent_code": "system:user:menu", "name": "导出用户", "code": "system:user:export", "perm_type": "button", "sort": 7},
         # 角色管理菜单
         {
-            "parent_id": 0, "name": "角色管理", "code": "system:role:menu",
-            "perm_type": "menu", "path": "/system/role",
+            "parent_id": 0, "parent_code": "system", "name": "角色管理", "code": "system:role:menu",
+            "perm_type": "menu", "path": "/system/roles",
             "component": "system/role/index", "icon": "UserFilled", "sort": 120, "is_visible": True,
         },
-        {"parent_id": 0, "name": "查询角色", "code": "system:role:view", "perm_type": "button", "sort": 1},
-        {"parent_id": 0, "name": "新增角色", "code": "system:role:create", "perm_type": "button", "sort": 2},
-        {"parent_id": 0, "name": "编辑角色", "code": "system:role:update", "perm_type": "button", "sort": 3},
-        {"parent_id": 0, "name": "删除角色", "code": "system:role:delete", "perm_type": "button", "sort": 4},
-        {"parent_id": 0, "name": "分配权限", "code": "system:role:assign_perm", "perm_type": "button", "sort": 5},
-        # 权限管理菜单
+        {"parent_id": 0, "parent_code": "system:role:menu", "name": "查询角色", "code": "system:role:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "system:role:menu", "name": "新增角色", "code": "system:role:create", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "system:role:menu", "name": "编辑角色", "code": "system:role:update", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "system:role:menu", "name": "删除角色", "code": "system:role:delete", "perm_type": "button", "sort": 4},
+        {"parent_id": 0, "parent_code": "system:role:menu", "name": "分配权限", "code": "system:role:assign_perm", "perm_type": "button", "sort": 5},
+        # 菜单管理（权限管理页面）
         {
-            "parent_id": 0, "name": "权限管理", "code": "system:permission:menu",
-            "perm_type": "menu", "path": "/system/permission",
+            "parent_id": 0, "parent_code": "system", "name": "菜单管理", "code": "system:permission:menu",
+            "perm_type": "menu", "path": "/system/permissions",
             "component": "system/permission/index", "icon": "Lock", "sort": 130, "is_visible": True,
         },
-        {"parent_id": 0, "name": "查询权限", "code": "system:permission:view", "perm_type": "button", "sort": 1},
-        {"parent_id": 0, "name": "新增权限", "code": "system:permission:create", "perm_type": "button", "sort": 2},
-        {"parent_id": 0, "name": "编辑权限", "code": "system:permission:update", "perm_type": "button", "sort": 3},
-        {"parent_id": 0, "name": "删除权限", "code": "system:permission:delete", "perm_type": "button", "sort": 4},
-        # 审计日志菜单
+        {"parent_id": 0, "parent_code": "system:permission:menu", "name": "查询菜单", "code": "system:permission:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "system:permission:menu", "name": "新增菜单", "code": "system:permission:create", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "system:permission:menu", "name": "编辑菜单", "code": "system:permission:update", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "system:permission:menu", "name": "删除菜单", "code": "system:permission:delete", "perm_type": "button", "sort": 4},
+        # ── 字典管理（子菜单）────────────────────────────────────────
         {
-            "parent_id": 0, "name": "审计日志", "code": "system:audit:menu",
-            "perm_type": "menu", "path": "/system/audit",
-            "component": "system/audit/index", "icon": "Document", "sort": 190, "is_visible": True,
+            "parent_id": 0, "parent_code": "system", "name": "字典管理", "code": "system:dict:menu",
+            "perm_type": "menu", "path": "/system/dicts",
+            "component": "system/dict/index", "icon": "Reading", "sort": 140, "is_visible": True,
         },
-        {"parent_id": 0, "name": "查询审计日志", "code": "system:audit:view", "perm_type": "button", "sort": 1},
-        {"parent_id": 0, "name": "导出审计日志", "code": "system:audit:export", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "system:dict:menu", "name": "查询字典", "code": "system:dict:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "system:dict:menu", "name": "新增字典", "code": "system:dict:create", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "system:dict:menu", "name": "编辑字典", "code": "system:dict:update", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "system:dict:menu", "name": "删除字典", "code": "system:dict:delete", "perm_type": "button", "sort": 4},
+        # ── 审计日志（根菜单）────────────────────────────────────────
+        {
+            "parent_id": 0, "name": "审计日志", "code": "audit",
+            "perm_type": "menu", "path": "/audit", "component": "",
+            "icon": "Notebook", "sort": 300, "is_visible": True,
+        },
+        {
+            "parent_id": 0, "parent_code": "audit", "name": "操作日志", "code": "audit:log:menu",
+            "perm_type": "menu", "path": "/audit/logs",
+            "component": "audit/logs/index", "icon": "List", "sort": 310, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "audit:log:menu", "name": "查询操作日志", "code": "audit:log:view", "perm_type": "button", "sort": 1},
+        {
+            "parent_id": 0, "parent_code": "audit", "name": "登录日志", "code": "audit:login:menu",
+            "perm_type": "menu", "path": "/audit/login-logs",
+            "component": "audit/login/index", "icon": "Key", "sort": 320, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "audit:login:menu", "name": "查询登录日志", "code": "audit:login:view", "perm_type": "button", "sort": 1},
         # ── AI 管理（根菜单）─────────────────────────────────────────
         {
             "parent_id": 0, "name": "AI 管理", "code": "ai",
@@ -187,19 +236,29 @@ def _get_default_permissions() -> list[dict]:
             "icon": "MagicStick", "sort": 200, "is_visible": True,
         },
         {
-            "parent_id": 0, "name": "模型管理", "code": "ai:model:menu",
-            "perm_type": "menu", "path": "/ai/model",
+            "parent_id": 0, "parent_code": "ai", "name": "模型管理", "code": "ai:model:menu",
+            "perm_type": "menu", "path": "/ai/models",
             "component": "ai/model/index", "icon": "Cpu", "sort": 210, "is_visible": True,
         },
         {
-            "parent_id": 0, "name": "Agent 管理", "code": "ai:agent:menu",
-            "perm_type": "menu", "path": "/ai/agent",
+            "parent_id": 0, "parent_code": "ai", "name": "Agent 管理", "code": "ai:agent:menu",
+            "perm_type": "menu", "path": "/ai/agents",
             "component": "ai/agent/index", "icon": "Robot", "sort": 220, "is_visible": True,
         },
         {
-            "parent_id": 0, "name": "知识库", "code": "ai:knowledge:menu",
+            "parent_id": 0, "parent_code": "ai", "name": "知识库", "code": "ai:knowledge:menu",
             "perm_type": "menu", "path": "/ai/knowledge",
             "component": "ai/knowledge/index", "icon": "Reading", "sort": 230, "is_visible": True,
+        },
+        {
+            "parent_id": 0, "parent_code": "ai", "name": "对话历史", "code": "ai:conversation:menu",
+            "perm_type": "menu", "path": "/ai/conversations",
+            "component": "ai/conversation/index", "icon": "ChatDotRound", "sort": 240, "is_visible": True,
+        },
+        {
+            "parent_id": 0, "parent_code": "ai", "name": "Prompt 模板", "code": "ai:prompt:menu",
+            "perm_type": "menu", "path": "/ai/prompts",
+            "component": "ai/prompt/index", "icon": "Document", "sort": 250, "is_visible": True,
         },
         # ── 列权限示例 ────────────────────────────────────────────────
         {"parent_id": 0, "name": "用户手机号列", "code": "system:user:column:phone",
@@ -207,6 +266,87 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "name": "用户邮箱列", "code": "system:user:column:email",
          "perm_type": "column", "resource": "user_list", "sort": 2},
     ]
+
+    for p in perms:
+        p["is_system"] = True
+
+    return perms
+
+
+async def init_dicts(db) -> None:
+    """初始化字典数据"""
+    from sqlalchemy import select
+    from app.modules.system.models import SysDictType, SysDictItem
+
+    # 字典类型
+    dict_types = [
+        {"code": "system_user_status", "name": "用户状态", "sort": 1},
+        {"code": "system_common_status", "name": "通用状态", "sort": 2},
+        {"code": "system_data_scope", "name": "数据权限范围", "sort": 3},
+        {"code": "system_tenant_status", "name": "租户状态", "sort": 4},
+        {"code": "ai_agent_status", "name": "Agent状态", "sort": 5},
+    ]
+
+    for dt_data in dict_types:
+        exists = await db.execute(
+            select(SysDictType).where(SysDictType.code == dt_data["code"])
+        )
+        if exists.scalar_one_or_none():
+            continue
+
+        dt = SysDictType(
+            name=dt_data["name"],
+            code=dt_data["code"],
+            sort=dt_data["sort"],
+            status=1,
+            is_system=True,
+        )
+        db.add(dt)
+        await db.flush()
+
+        # 字典项
+        items = []
+        if dt_data["code"] == "system_user_status":
+            items = [
+                {"label": "启用", "value": "true", "sort": 1, "is_default": True},
+                {"label": "禁用", "value": "false", "sort": 2},
+            ]
+        elif dt_data["code"] == "system_common_status":
+            items = [
+                {"label": "正常", "value": "1", "sort": 1, "is_default": True},
+                {"label": "停用", "value": "0", "sort": 2},
+            ]
+        elif dt_data["code"] == "system_data_scope":
+            items = [
+                {"label": "全部数据", "value": "1", "sort": 1, "is_default": True},
+                {"label": "本部门", "value": "3", "sort": 2},
+                {"label": "本部门及子部门", "value": "2", "sort": 3},
+                {"label": "仅本人", "value": "4", "sort": 4},
+                {"label": "自定义部门", "value": "5", "sort": 5},
+            ]
+        elif dt_data["code"] == "system_tenant_status":
+            items = [
+                {"label": "正常", "value": "active", "sort": 1, "is_default": True},
+                {"label": "禁用", "value": "inactive", "sort": 2},
+                {"label": "暂停", "value": "suspended", "sort": 3},
+            ]
+        elif dt_data["code"] == "ai_agent_status":
+            items = [
+                {"label": "草稿", "value": "draft", "sort": 1, "is_default": True},
+                {"label": "启用", "value": "active", "sort": 2},
+                {"label": "归档", "value": "archived", "sort": 3},
+            ]
+
+        for item_data in items:
+            di = SysDictItem(
+                type_id=dt.id,
+                label=item_data["label"],
+                value=item_data["value"],
+                sort=item_data["sort"],
+                status=1,
+                is_default=item_data.get("is_default", False),
+            )
+            db.add(di)
 
 
 if __name__ == "__main__":

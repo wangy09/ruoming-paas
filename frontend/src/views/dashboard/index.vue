@@ -75,6 +75,7 @@ import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/compon
 import VChart from 'vue-echarts'
 import { useAuthStore } from '@/store/auth'
 import { formatDate } from '@/utils/format'
+import { dashboardApi } from '@/api/dashboard'
 import dayjs from 'dayjs'
 
 use([CanvasRenderer, LineChart, PieChart, GridComponent, TooltipComponent, LegendComponent])
@@ -104,21 +105,42 @@ const stats = ref([
   { label: '今日 Token 消耗', value: '-', icon: 'Coin', color: '#ff4d4f' },
 ])
 
-// 模拟加载统计数据（实际项目接入 /api/v1/dashboard/stats）
+// 加载统计数据
 onMounted(async () => {
-  await new Promise(r => setTimeout(r, 800))
-  stats.value[0].value = '128'
-  stats.value[1].value = '12'
-  stats.value[2].value = '3,542'
-  stats.value[3].value = '156K'
-  statsLoading.value = false
+  try {
+    const { data } = await dashboardApi.stats()
+    stats.value[0].value = String(data.total_users || 0)
+    stats.value[1].value = String(data.active_tenants || 0)
+    stats.value[2].value = String(data.today_calls || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+    stats.value[3].value = formatToken(data.today_tokens || 0)
+  } catch {
+    // 使用默认值
+    stats.value[0].value = '0'
+    stats.value[1].value = '0'
+    stats.value[2].value = '0'
+    stats.value[3].value = '0'
+  } finally {
+    statsLoading.value = false
+  }
 })
+
+// 格式化 Token 数量
+function formatToken(count: number): string {
+  if (count >= 1000000) {
+    return (count / 1000000).toFixed(1) + 'M'
+  }
+  if (count >= 1000) {
+    return (count / 1000).toFixed(1) + 'K'
+  }
+  return String(count)
+}
 
 // AI 调用趋势图
 const last7Days = Array.from({ length: 7 }, (_, i) =>
   dayjs().subtract(6 - i, 'day').format('MM-DD')
 )
 
+// 模拟趋势数据（后续可接入真实数据）
 const callTrendOption = computed(() => ({
   tooltip: { trigger: 'axis' },
   grid: { left: 40, right: 20, top: 20, bottom: 30 },

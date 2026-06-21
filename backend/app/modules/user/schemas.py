@@ -50,6 +50,7 @@ class UserInfo(BaseModel):
     status: int
     is_superplatform: bool
     dept_id: int | None
+    dept_name: str | None = None  # 部门名称（JOIN 查询）
     tenant_id: int | None
     last_login: datetime | None
     created_at: datetime

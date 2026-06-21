@@ -20,9 +20,9 @@
           >
             <el-table-column prop="name" label="角色名" min-width="120" />
             <el-table-column prop="code" label="权限码" min-width="140" />
-            <el-table-column label="系统" width="60" align="center">
+            <el-table-column label="系统内置" width="80" align="center">
               <template #default="{ row }">
-                <el-tag v-if="row.is_system" type="info" size="small">系统</el-tag>
+                <el-tag v-if="row.is_system" type="info" size="small">是</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="120" align="center">
@@ -71,16 +71,23 @@
             node-key="id"
             :default-checked-keys="checkedPermIds"
             check-strictly
+            :indent="32"
+            class="perm-tree"
           >
             <template #default="{ node, data }">
               <span class="tree-node">
+                <el-icon class="menu-icon" :color="typeTagMap[data.type] ? '#409eff' : '#909399'">
+                  <component :is="getIcon(data.icon, data.type)" />
+                </el-icon>
                 <el-tag
                   :type="typeTagMap[data.type] || 'info'"
                   size="small"
-                  class="mr-1"
-                >{{ data.type }}</el-tag>
-                {{ node.label }}
-                <span class="text-gray text-sm ml-1">{{ data.code }}</span>
+                  class="ml-1"
+                >{{ typeLabelMap[data.type] || data.type }}</el-tag>
+                <span class="ml-1">{{ node.label }}</span>
+                <el-tooltip :content="data.code" placement="top">
+                  <span class="text-gray text-sm ml-1">{{ data.code }}</span>
+                </el-tooltip>
               </span>
             </template>
           </el-tree>
@@ -89,7 +96,7 @@
     </el-row>
 
     <!-- 新增/编辑角色 -->
-    <el-dialog v-model="dialogVisible" :title="editId ? '编辑角色' : '新增角色'" width="480px" destroy-on-close>
+    <el-dialog v-model="dialogVisible" :title="editId ? '编辑角色' : '新增角色'" width="520px" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
         <el-form-item label="角色名" prop="name">
           <el-input v-model="form.name" placeholder="如：租户管理员" />
@@ -102,13 +109,22 @@
             <el-option v-for="r in roles" :key="r.id" :label="r.name" :value="r.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="数据范围">
-          <el-select v-model="form.data_scope" style="width:100%">
-            <el-option label="全部数据" value="all" />
-            <el-option label="本部门" value="dept" />
-            <el-option label="本部门及子部门" value="dept_tree" />
-            <el-option label="仅本人" value="self" />
+        <el-form-item label="数据范围" prop="data_scope">
+          <el-select v-model="form.data_scope" style="width:100%" @change="onDataScopeChange">
+            <el-option v-for="opt in scopeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="form.data_scope === 5" label="授权部门">
+          <el-tree-select
+            v-model="form.data_scope_depts"
+            :data="deptOptions"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            multiple
+            check-strictly
+            placeholder="请选择授权部门"
+            clearable
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
@@ -125,12 +141,35 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Menu, Setting, List, Link, Box } from '@element-plus/icons-vue'
+import * as ElIcons from '@element-plus/icons-vue'
 import { permissionApi } from '@/api/permission'
-import type { RoleInfo, PermissionItem } from '@/types'
+import { systemApi } from '@/api/system'
+import { useDataScope } from '@/hooks/useDict'
+import type { RoleInfo, PermissionItem, DeptInfo } from '@/types'
+
+// 数据权限范围字典
+const { options: scopeOptions, label: getScopeLabel } = useDataScope()
 
 const typeTagMap: Record<string, string> = {
-  menu: 'primary', button: 'success', column: 'warning', api: 'info', data: 'danger',
+  menu: 'primary', button: 'success', column: 'warning',
+}
+const typeLabelMap: Record<string, string> = {
+  menu: '菜单', button: '按钮', column: '列',
+}
+const typeIconMap: Record<string, unknown> = {
+  menu: Menu,
+  button: Setting,
+  column: List,
+  api: Link,
+  data: Box,
+}
+
+function getIcon(iconName: string | undefined, type: string) {
+  if (iconName) {
+    return (ElIcons as Record<string, unknown>)[iconName] || typeIconMap[type] || Menu
+  }
+  return typeIconMap[type] || Menu
 }
 
 // ── 角色列表 ──────────────────────────────────────────────────────────────────
@@ -187,6 +226,14 @@ async function savePermissions() {
   }
 }
 
+// ── 部门选项 ──────────────────────────────────────────────────────────────────
+const deptOptions = ref<DeptInfo[]>([])
+
+async function fetchDeptOptions() {
+  const res = await systemApi.deptOptions()
+  deptOptions.value = res.data
+}
+
 // ── 新增/编辑 ─────────────────────────────────────────────────────────────────
 const dialogVisible = ref(false)
 const editId = ref<number | null>(null)
@@ -198,7 +245,8 @@ const form = reactive({
   code: '',
   description: '',
   parent_id: undefined as number | undefined,
-  data_scope: 'all',
+  data_scope: 1,
+  data_scope_depts: [] as number[],
 })
 
 const rules: FormRules = {
@@ -206,14 +254,33 @@ const rules: FormRules = {
   code: [{ required: true, message: '请输入权限码' }],
 }
 
+function onDataScopeChange(val: number) {
+  // 切换到非自定义时清空部门选择
+  if (val !== 2) {
+    form.data_scope_depts = []
+  }
+}
+
 function openDialog(row?: RoleInfo) {
   editId.value = row?.id ?? null
+
+  // 解析 data_scope_depts JSON
+  let dataScopeDepts: number[] = []
+  if (row?.data_scope_depts) {
+    try {
+      dataScopeDepts = JSON.parse(row.data_scope_depts as unknown as string)
+    } catch {
+      dataScopeDepts = []
+    }
+  }
+
   Object.assign(form, {
     name: row?.name ?? '',
     code: row?.code ?? '',
     description: row?.description ?? '',
     parent_id: row?.parent_id,
-    data_scope: row?.data_scope ?? 'all',
+    data_scope: row?.data_scope ?? 1,
+    data_scope_depts: dataScopeDepts,
   })
   dialogVisible.value = true
 }
@@ -222,11 +289,15 @@ async function handleSubmit() {
   await formRef.value?.validate()
   submitting.value = true
   try {
+    const payload = {
+      ...form,
+      parent_id: form.parent_id ?? 0,
+    }
     if (editId.value) {
-      await permissionApi.roleUpdate(editId.value, form)
+      await permissionApi.roleUpdate(editId.value, payload)
       ElMessage.success('更新成功')
     } else {
-      await permissionApi.roleCreate(form)
+      await permissionApi.roleCreate(payload)
       ElMessage.success('创建成功')
     }
     dialogVisible.value = false
@@ -236,14 +307,51 @@ async function handleSubmit() {
   }
 }
 
-onMounted(fetchRoles)
+onMounted(() => {
+  fetchRoles()
+  fetchDeptOptions()
+})
 </script>
 
 <style lang="scss" scoped>
 .h-full { height: calc(100vh - 160px); overflow: auto; }
 .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .card-title { font-size: 15px; font-weight: 600; }
-.tree-node { display: flex; align-items: center; gap: 6px; }
-.mr-1 { margin-right: 4px; }
-.ml-1 { margin-left: 4px; }
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.menu-icon {
+  font-size: 14px;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.text-gray { color: #909399; }
+
+.perm-tree {
+  :deep(.el-tree-node__content) {
+    height: auto;
+    padding: 6px 0;
+  }
+
+  :deep(.el-tree-node__expand-icon) {
+    font-size: 12px;
+    color: #909399;
+    margin-right: 4px;
+  }
+
+  :deep(.el-tree-node__expand-icon.is-expanded) {
+    color: #409eff;
+  }
+
+  :deep(.el-tree-node__expand-icon.is-leaf) {
+    opacity: 0;
+    width: 18px;
+  }
+}
 </style>

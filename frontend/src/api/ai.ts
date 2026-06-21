@@ -58,6 +58,9 @@ export const kbApi = {
   create: (data: Partial<KnowledgeBase>) =>
     post<ApiResponse<KnowledgeBase>>('/api/v1/ai/knowledge-bases', data),
 
+  update: (id: number, data: Partial<KnowledgeBase>) =>
+    put<ApiResponse<KnowledgeBase>>(`/api/v1/ai/knowledge-bases/${id}`, data),
+
   delete: (id: number) =>
     del<ApiResponse>(`/api/v1/ai/knowledge-bases/${id}`),
 

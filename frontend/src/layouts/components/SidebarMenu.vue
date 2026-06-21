@@ -10,36 +10,36 @@
       active-text-color="#ffffff"
       class="sidebar-menu"
     >
-      <template v-for="route in visibleRoutes" :key="route.path">
+      <template v-for="menu in menuTree" :key="menu.id">
         <!-- 有子菜单 -->
         <el-sub-menu
-          v-if="route.children && route.children.length"
-          :index="route.path"
+          v-if="menu.children && menu.children.length"
+          :index="menu.path || '/' + menu.id"
         >
           <template #title>
-            <el-icon v-if="route.meta?.icon">
-              <component :is="route.meta.icon" />
+            <el-icon v-if="menu.icon">
+              <component :is="getIconComponent(menu.icon)" />
             </el-icon>
-            <span>{{ route.meta?.title }}</span>
+            <span>{{ menu.title }}</span>
           </template>
           <el-menu-item
-            v-for="child in visibleChildren(route)"
-            :key="child.path"
-            :index="resolvePath(route.path, child.path)"
+            v-for="child in menu.children"
+            :key="child.id"
+            :index="child.path || '/' + child.id"
           >
-            <el-icon v-if="child.meta?.icon">
-              <component :is="child.meta.icon" />
+            <el-icon v-if="child.icon">
+              <component :is="getIconComponent(child.icon)" />
             </el-icon>
-            <template #title>{{ child.meta?.title }}</template>
+            <template #title>{{ child.title }}</template>
           </el-menu-item>
         </el-sub-menu>
 
         <!-- 无子菜单（直接叶子节点）-->
-        <el-menu-item v-else :index="route.path">
-          <el-icon v-if="route.meta?.icon">
-            <component :is="route.meta.icon" />
+        <el-menu-item v-else :index="menu.path || '/' + menu.id">
+          <el-icon v-if="menu.icon">
+            <component :is="getIconComponent(menu.icon)" />
           </el-icon>
-          <template #title>{{ route.meta?.title }}</template>
+          <template #title>{{ menu.title }}</template>
         </el-menu-item>
       </template>
     </el-menu>
@@ -47,47 +47,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, markRaw } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@/store/app'
-import { useAuthStore } from '@/store/auth'
 import { usePermissionStore } from '@/store/permission'
-import { asyncRoutes } from '@/router/index'
-import type { RouteRecordRaw } from 'vue-router'
+import * as ElIcons from '@element-plus/icons-vue'
+import type { MenuPermission } from '@/types'
 
 const route = useRoute()
 const appStore = useAppStore()
-const authStore = useAuthStore()
 const permStore = usePermissionStore()
 
 const activeMenu = computed(() => route.path)
 
-// 过滤不显示的顶层路由
-const visibleRoutes = computed(() => {
-  return asyncRoutes.filter(r => {
-    if (r.meta?.hidden) return false
-    if (authStore.isSuperplatform) return true
-    // 至少有一个子菜单有权限
-    if (r.children?.length) {
-      return r.children.some(child =>
-        !child.meta?.permCode || permStore.hasPermission(child.meta.permCode as string)
-      )
-    }
-    return !r.meta?.permCode || permStore.hasPermission(r.meta.permCode as string)
-  })
-})
+const menuTree = computed(() => permStore.menuTree)
 
-function visibleChildren(route: RouteRecordRaw) {
-  return (route.children || []).filter(child => {
-    if (child.meta?.hidden) return false
-    if (authStore.isSuperplatform) return true
-    return !child.meta?.permCode || permStore.hasPermission(child.meta.permCode as string)
-  })
-}
-
-function resolvePath(parentPath: string, childPath: string) {
-  if (childPath.startsWith('/')) return childPath
-  return `${parentPath}/${childPath}`
+function getIconComponent(iconName: string | undefined) {
+  if (!iconName) return null
+  const icon = (ElIcons as Record<string, unknown>)[iconName]
+  return icon ? markRaw(icon) : null
 }
 </script>
 

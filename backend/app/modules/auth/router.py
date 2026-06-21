@@ -18,8 +18,24 @@ from app.modules.auth.schemas import (
     RefreshTokenResponse,
 )
 from app.modules.auth.service import AuthService
+from app.modules.auth.captcha import CaptchaService
 
 router = APIRouter()
+
+
+@router.get(
+    "/captcha",
+    response_model=ApiResponse,
+    summary="获取验证码",
+)
+async def get_captcha(redis: Redis = Depends(get_redis)) -> ApiResponse:
+    """获取图形验证码"""
+    svc = CaptchaService(redis)
+    result = await svc.generate_captcha()
+    return ok({
+        "key": result["key"],
+        "image": result["image"],
+    })
 
 
 @router.post(
@@ -34,6 +50,13 @@ async def login(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> ApiResponse[LoginResponse]:
+    from app.core.exceptions import BusinessException
+
+    # 校验验证码
+    captcha_svc = CaptchaService(redis)
+    if not await captcha_svc.verify_captcha(req.captcha_key, req.captcha_code):
+        raise BusinessException(code=40001, message="验证码错误", http_status=400)
+
     client_ip = request.client.host if request.client else None
     user_agent = request.headers.get("User-Agent")
     svc = AuthService(db, redis)
@@ -79,16 +102,52 @@ async def logout(
     response_model=ApiResponse,
     summary="获取当前用户信息",
 )
-async def get_me(current_user=Depends(get_current_user)) -> ApiResponse:
+async def get_me(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse:
+    from app.modules.permission.models import SysRole, SysUserRole
+    from sqlalchemy import select
+
+    # 获取用户角色
+    result = await db.execute(
+        select(SysRole)
+        .join(SysUserRole, SysUserRole.role_id == SysRole.id)
+        .where(SysUserRole.user_id == current_user.id, SysRole.is_deleted == False)
+    )
+    roles = list(result.scalars().all())
+
     return ok({
         "id": current_user.id,
         "username": current_user.username,
         "nickname": current_user.nickname,
         "email": current_user.email,
+        "phone": current_user.phone,
         "avatar": current_user.avatar,
         "is_superplatform": current_user.is_superplatform,
         "tenant_id": current_user.tenant_id,
         "dept_id": current_user.dept_id,
         "status": current_user.status,
         "last_login": current_user.last_login.isoformat() if current_user.last_login else None,
+        "roles": [{"id": r.id, "name": r.name, "code": r.code} for r in roles],
     })
+
+
+from app.modules.user.schemas import UserPasswordUpdate
+
+
+@router.put(
+    "/me/password",
+    response_model=ApiResponse,
+    summary="修改当前用户密码",
+)
+async def change_my_password(
+    data: UserPasswordUpdate,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse:
+    from app.modules.user.service import UserService
+
+    svc = UserService(db)
+    await svc.update_password(current_user.id, data.old_password, data.new_password)
+    return ok(message="密码修改成功")

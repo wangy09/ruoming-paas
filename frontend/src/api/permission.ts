@@ -25,6 +25,9 @@ export const permissionApi = {
   permissionCreate: (data: Partial<PermissionItem>) =>
     post<ApiResponse<PermissionItem>>('/api/v1/permissions', data),
 
+  permissionUpdate: (id: number, data: Partial<PermissionItem>) =>
+    put<ApiResponse<PermissionItem>>(`/api/v1/permissions/${id}`, data),
+
   permissionDelete: (id: number) =>
     del<ApiResponse>(`/api/v1/permissions/${id}`),
 }

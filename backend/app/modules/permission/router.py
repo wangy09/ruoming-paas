@@ -20,6 +20,7 @@ from app.modules.permission.models import (
 )
 from app.modules.permission.schemas import (
     PermissionCreate,
+    PermissionUpdate,
     RoleCreate,
     RoleInfo,
     RolePermissionAssign,
@@ -41,17 +42,16 @@ async def get_my_permissions(
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
-    # 超管拥有所有权限
-    if current_user.is_superplatform:
-        return ok({
-            "codes": ["*"],
-            "buttons": ["*"],
-            "menus": [],
-            "columns": {},
-            "is_superplatform": True,
-        })
-
     svc = PermissionService(db, redis)
+
+    # 超管拥有所有权限（包括所有菜单）
+    if current_user.is_superplatform:
+        data = await svc.get_all_menus()
+        data["codes"] = ["*"]
+        data["buttons"] = ["*"]
+        data["is_superplatform"] = True
+        return ok(data)
+
     data = await svc.get_user_full_permissions(current_user.id)
     return ok(data)
 
@@ -79,7 +79,7 @@ async def get_permission_tree(
     # 构建树形结构
     perm_map = {p.id: {
         "id": p.id,
-        "parentId": p.parent_id,
+        "parent_id": p.parent_id,
         "name": p.name,
         "code": p.code,
         "type": p.perm_type,
@@ -87,9 +87,10 @@ async def get_permission_tree(
         "component": p.component,
         "icon": p.icon,
         "sort": p.sort,
-        "isVisible": p.is_visible,
-        "isCache": p.is_cache,
-        "isExternal": p.is_external,
+        "is_visible": p.is_visible,
+        "is_cache": p.is_cache,
+        "is_external": p.is_external,
+        "is_system": p.is_system,
         "resource": p.resource,
         "method": p.method,
         "children": [],
@@ -97,10 +98,10 @@ async def get_permission_tree(
 
     tree = []
     for perm in perm_map.values():
-        if perm["parentId"] == 0:
+        if perm["parent_id"] == 0:
             tree.append(perm)
-        elif perm["parentId"] in perm_map:
-            perm_map[perm["parentId"]]["children"].append(perm)
+        elif perm["parent_id"] in perm_map:
+            perm_map[perm["parent_id"]]["children"].append(perm)
 
     # 按 sort 排序
     def sort_tree(nodes):
@@ -147,6 +148,8 @@ async def list_roles(
     )
 
 
+import json
+
 @router.post("/roles", response_model=ApiResponse[RoleInfo], summary="创建角色", status_code=201)
 async def create_role(
     data: RoleCreate,
@@ -162,9 +165,16 @@ async def create_role(
 
     tenant_id = None if current_user.is_superplatform else current_user.tenant_id
     role = SysRole(
-        **data.model_dump(),
+        name=data.name,
+        code=data.code,
+        description=data.description,
+        parent_id=data.parent_id,
+        data_scope=data.data_scope,
+        data_scope_depts=json.dumps(data.data_scope_depts) if data.data_scope_depts else None,
+        sort=data.sort,
         tenant_id=tenant_id,
         status=1,
+        remark=data.remark,
     )
     db.add(role)
     await db.flush()
@@ -186,7 +196,12 @@ async def update_role(
     if not role:
         raise NotFoundException("角色")
 
-    for k, v in data.model_dump(exclude_none=True).items():
+    update_data = data.model_dump(exclude_none=True)
+    # 处理 data_scope_depts JSON 转换
+    if "data_scope_depts" in update_data:
+        update_data["data_scope_depts"] = json.dumps(update_data["data_scope_depts"]) if update_data["data_scope_depts"] else None
+
+    for k, v in update_data.items():
         setattr(role, k, v)
     await db.flush()
     await db.refresh(role)
@@ -273,6 +288,43 @@ async def create_permission(
     await db.flush()
     await db.refresh(perm)
     return ApiResponse(code=201, message="创建成功", data={"id": perm.id, "code": perm.code})
+
+
+@router.put("/permissions/{perm_id}", response_model=ApiResponse, summary="更新权限项")
+async def update_permission(
+    perm_id: int,
+    data: PermissionUpdate,
+    current_user=Depends(require_permissions("system:permission:update")),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse:
+    result = await db.execute(
+        select(SysPermission).where(
+            SysPermission.id == perm_id, SysPermission.is_deleted == False  # noqa: E712
+        )
+    )
+    perm = result.scalar_one_or_none()
+    if not perm:
+        raise NotFoundException("权限项")
+
+    # 如果更新 code，需要检查是否与其他权限重复
+    if data.code and data.code != perm.code:
+        exists = await db.execute(
+            select(SysPermission.id).where(
+                SysPermission.code == data.code, SysPermission.is_deleted == False  # noqa: E712
+            )
+        )
+        if exists.scalar_one_or_none():
+            raise BusinessException(
+                PermErrCode.PERMISSION_CODE_EXISTS,
+                f"权限标识 '{data.code}' 已存在",
+            )
+
+    update_data = data.model_dump(exclude_none=True)
+    for k, v in update_data.items():
+        setattr(perm, k, v)
+    await db.flush()
+    await db.refresh(perm)
+    return ok(message="更新成功", data={"id": perm.id, "code": perm.code})
 
 
 @router.delete("/permissions/{perm_id}", response_model=ApiResponse, summary="删除权限项")

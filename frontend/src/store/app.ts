@@ -27,7 +27,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function removeVisitedView(path: string) {
-    visitedViews.value = visitedViews.value.filter(v => v.path !== path && !v.affix)
+    visitedViews.value = visitedViews.value.filter(v => v.path !== path)
   }
 
   function closeOtherViews(path: string) {

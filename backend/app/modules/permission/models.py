@@ -25,7 +25,10 @@ class SysRole(BaseModel):
         SmallInteger,
         default=1,
         server_default="1",
-        comment="数据范围：1全部 2本部门及子部门 3本部门 4本人 5自定义",
+        comment="数据范围：1全部 2自定义 3本部门 4本部门及子部门 5仅本人",
+    )
+    data_scope_depts: Mapped[str | None] = mapped_column(
+        Text, comment="自定义数据范围部门 ID 列表（JSON，data_scope=2时使用）"
     )
     status: Mapped[int] = mapped_column(
         SmallInteger, default=1, server_default="1", comment="状态：1启用 0禁用"
@@ -67,6 +70,9 @@ class SysPermission(BaseModel):
     )
     is_external: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", comment="是否外链"
+    )
+    is_system: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", comment="是否系统内置权限（不可删除）"
     )
 
     # 按钮/API 类型字段

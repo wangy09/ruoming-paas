@@ -51,6 +51,7 @@ class RedisKeys:
     ACCESS_TOKEN_BLACKLIST = "auth:blacklist:{jti}"  # Access Token 黑名单
     LOGIN_FAIL = "auth:login_fail:{username}"         # 登录失败次数
     LOGIN_LOCK = "auth:login_lock:{username}"         # 账号锁定标记
+    CAPTCHA = "auth:captcha:{key}"                    # 验证码
 
     # 权限缓存
     USER_PERMISSIONS = "perm:user:{user_id}"         # 用户权限缓存

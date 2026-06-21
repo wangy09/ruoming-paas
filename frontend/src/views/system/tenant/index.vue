@@ -7,9 +7,7 @@
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="query.status" placeholder="全部" clearable style="width:120px">
-            <el-option label="正常" value="active" />
-            <el-option label="禁用" value="inactive" />
-            <el-option label="暂停" value="suspended" />
+            <el-option v-for="opt in statusOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -36,7 +34,7 @@
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
-            <el-tag :class="`status-${row.status}`" size="small">{{ statusLabelMap[row.status] }}</el-tag>
+            <el-tag :type="getStatusTagType(row.status)" size="small">{{ getStatusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="用户数" width="100" align="center">
@@ -130,11 +128,15 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { tenantApi } from '@/api/tenant'
 import { formatDate } from '@/utils/format'
+import { useTenantStatus } from '@/hooks/useDict'
 import type { TenantInfo } from '@/types'
 
+// 套餐映射（暂时保留硬编码）
 const planTagMap: Record<string, string> = { basic: 'info', pro: 'primary', enterprise: 'danger' }
 const planLabelMap: Record<string, string> = { basic: '基础版', pro: '专业版', enterprise: '企业版' }
-const statusLabelMap: Record<string, string> = { active: '正常', inactive: '禁用', suspended: '暂停' }
+
+// 租户状态字典
+const { options: statusOptions, tagType: getStatusTagType, label: getStatusLabel } = useTenantStatus()
 
 const loading = ref(false)
 const tableData = ref<TenantInfo[]>([])
