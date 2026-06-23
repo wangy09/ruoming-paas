@@ -5,6 +5,7 @@ Author: ruoming
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,8 @@ import structlog
 from app.ai.knowledge.models import AiKnowledgeBase, AiKnowledgeDoc
 from app.ai.knowledge.pipeline import RAGPipeline, RetrievedChunk
 from app.ai.knowledge.schemas import KnowledgeBaseCreate, KnowledgeBaseUpdate
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import AppException, NotFoundException
+from app.core.storage.factory import get_storage
 from app.core.utils.pagination import PageParams
 
 logger = structlog.get_logger(__name__)
@@ -98,11 +100,35 @@ class KnowledgeService:
     async def delete(self, kb_id: int) -> None:
         kb = await self.get_by_id(kb_id)
         kb.is_deleted = True
-        # 同步软删除文档（向量不立即清理，后台任务处理）
-        await self.db.execute(
-            select(AiKnowledgeDoc).where(AiKnowledgeDoc.kb_id == kb_id)
-        )
+        from app.ai.knowledge.tasks import delete_document_vectors_task
+        delete_document_vectors_task.delay(doc_id=0, kb_id=kb_id)
         await self.db.commit()
+
+    async def get_stats(self, kb_id: int) -> dict:
+        """获取知识库统计信息"""
+        kb = await self.get_by_id(kb_id)
+        stats = await self.db.execute(
+            select(
+                func.count(AiKnowledgeDoc.id).label("total_docs"),
+                func.sum(AiKnowledgeDoc.char_count).label("total_chars"),
+                func.sum(AiKnowledgeDoc.chunk_count).label("total_chunks"),
+                func.count(AiKnowledgeDoc.id).filter(AiKnowledgeDoc.status == "done").label("done_docs"),
+                func.count(AiKnowledgeDoc.id).filter(AiKnowledgeDoc.status == "processing").label("processing_docs"),
+                func.count(AiKnowledgeDoc.id).filter(AiKnowledgeDoc.status == "error").label("error_docs"),
+            ).where(AiKnowledgeDoc.kb_id == kb_id)
+            .where(AiKnowledgeDoc.is_deleted == False)
+        )
+        row = stats.one()
+        return {
+            "kb_id": kb_id,
+            "kb_name": kb.name,
+            "total_docs": row.total_docs or 0,
+            "total_chars": row.total_chars or 0,
+            "total_chunks": row.total_chunks or 0,
+            "done_docs": row.done_docs or 0,
+            "processing_docs": row.processing_docs or 0,
+            "error_docs": row.error_docs or 0,
+        }
 
     # ── 文档管理 ───────────────────────────────────────────────────────────────
 
@@ -126,28 +152,58 @@ class KnowledgeService:
             .where(AiKnowledgeDoc.is_deleted == False)
         )
         if existing.scalar_one_or_none():
-            raise ValueError("相同内容的文档已存在，请勿重复上传")
+            raise AppException(code=400, message="相同内容的文档已存在，请勿重复上传")
+
+        # 保存原始文件到配置的存储后端
+        ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else "bin"
+        storage_key = f"knowledge/{kb_id}/{datetime.now().strftime('%Y%m%d')}/{content_hash[:16]}.{ext}"
+        storage = get_storage()
+        try:
+            stored = await storage.put(
+                storage_key,
+                file_content,
+                content_type=_guess_content_type(ext),
+            )
+        except Exception as e:
+            logger.error("storage_put_failed", backend=storage.backend_name, error=str(e))
+            raise RuntimeError(f"文件保存失败：{e}") from e
 
         doc = AiKnowledgeDoc(
             kb_id=kb_id,
             name=filename,
             source_type=source_type,
+            file_type=ext,
+            file_size=len(file_content),
+            storage_backend=stored.backend,
+            storage_key=stored.key,
+            storage_url=stored.url,
             content_hash=content_hash,
             status="processing",
         )
         self.db.add(doc)
         await self.db.flush()
 
-        # 立即索引
-        pipeline = RAGPipeline(kb=kb, db=self.db)
         try:
-            chunk_count = await pipeline.index_document(doc, file_content)
-            logger.info("knowledge_upload_done", kb_id=kb_id, doc_id=doc.id, chunks=chunk_count)
-        except Exception as e:
-            doc.status = "error"
-            doc.error_msg = str(e)
-            await self.db.commit()
-            raise
+            from app.ai.knowledge.tasks import index_document_task
+
+            index_document_task.delay(
+                doc_id=doc.id,
+                kb_id=kb_id,
+                storage_key=stored.key,
+                filename=filename,
+            )
+            logger.info("index_task_dispatched", doc_id=doc.id, kb_id=kb_id)
+        except (ImportError, Exception) as e:
+            logger.info("celery_not_available", doc_id=doc.id, kb_id=kb_id, error=str(e))
+            pipeline = RAGPipeline(kb=kb, db=self.db)
+            try:
+                chunk_count = await pipeline.index_document(doc, file_content)
+                logger.info("knowledge_upload_done", kb_id=kb_id, doc_id=doc.id, chunks=chunk_count)
+            except Exception as e2:
+                doc.status = "error"
+                doc.error_msg = str(e2)
+                await self.db.commit()
+                raise
 
         await self.db.refresh(doc)
         return doc
@@ -193,14 +249,24 @@ class KnowledgeService:
         doc.is_deleted = True
         await self.db.commit()
 
+    async def get_document(self, kb_id: int, doc_id: int) -> AiKnowledgeDoc:
+        """获取单个文档详情"""
+        kb = await self.get_by_id(kb_id)
+        doc = await self.db.get(AiKnowledgeDoc, doc_id)
+        if not doc or doc.kb_id != kb_id or doc.is_deleted:
+            raise NotFoundException(f"文档 ID={doc_id} 不存在")
+        return doc
+
     async def list_documents(
-        self, kb_id: int, params: PageParams
+        self, kb_id: int, params: PageParams, status: str | None = None
     ) -> tuple[list[AiKnowledgeDoc], int]:
         stmt = (
             select(AiKnowledgeDoc)
             .where(AiKnowledgeDoc.kb_id == kb_id)
             .where(AiKnowledgeDoc.is_deleted == False)
         )
+        if status:
+            stmt = stmt.where(AiKnowledgeDoc.status == status)
         count = await self.db.scalar(select(func.count()).select_from(stmt.subquery()))
         items = (
             await self.db.scalars(
@@ -210,6 +276,91 @@ class KnowledgeService:
             )
         ).all()
         return list(items), count or 0
+
+    async def reindex_document(self, kb_id: int, doc_id: int) -> dict:
+        """重新索引文档（异步任务）"""
+        kb = await self.get_by_id(kb_id)
+        doc = await self.db.get(AiKnowledgeDoc, doc_id)
+        if not doc or doc.kb_id != kb_id or doc.is_deleted:
+            raise NotFoundException(f"文档 ID={doc_id} 不存在")
+
+        from app.ai.knowledge.tasks import reindex_single_task
+
+        task = reindex_single_task.delay(
+            doc_id=doc_id,
+            kb_id=kb_id,
+        )
+
+        return {"message": "重新索引任务已提交", "task_id": task.task_id}
+
+    async def reindex_all_documents(self, kb_id: int) -> dict:
+        """重新索引知识库中所有文档（异步任务）"""
+        kb = await self.get_by_id(kb_id)
+
+        from app.ai.knowledge.tasks import reindex_all_task
+
+        task = reindex_all_task.delay(
+            kb_id=kb_id,
+        )
+
+        return {"message": "重新索引任务已提交", "task_id": task.task_id}
+
+    async def get_task_status(self, kb_id: int, task_id: str) -> dict:
+        """查询任务状态"""
+        from app.ai.knowledge.models import AiKnowledgeTask
+
+        task = await self.db.execute(
+            select(AiKnowledgeTask)
+            .where(AiKnowledgeTask.task_id == task_id)
+            .where(AiKnowledgeTask.kb_id == kb_id)
+        )
+        task = task.scalar_one_or_none()
+
+        if not task:
+            raise NotFoundException(f"任务 ID={task_id} 不存在")
+
+        return {
+            "task_id": task.task_id,
+            "kb_id": task.kb_id,
+            "task_type": task.task_type,
+            "status": task.status,
+            "total": task.total,
+            "completed": task.completed,
+            "failed": task.failed,
+            "progress": task.progress,
+            "current_doc": task.current_doc,
+            "result": task.result,
+            "error_msg": task.error_msg,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+        }
+
+    async def list_tasks(self, kb_id: int) -> list[dict]:
+        """获取知识库的任务列表"""
+        from app.ai.knowledge.models import AiKnowledgeTask
+
+        result = await self.db.execute(
+            select(AiKnowledgeTask)
+            .where(AiKnowledgeTask.kb_id == kb_id)
+            .order_by(AiKnowledgeTask.created_at.desc())
+            .limit(10)
+        )
+        tasks = result.scalars().all()
+
+        return [
+            {
+                "task_id": t.task_id,
+                "task_type": t.task_type,
+                "status": t.status,
+                "total": t.total,
+                "completed": t.completed,
+                "failed": t.failed,
+                "progress": t.progress,
+                "created_at": t.created_at,
+                "updated_at": t.updated_at,
+            }
+            for t in tasks
+        ]
 
     # ── 检索 ───────────────────────────────────────────────────────────────────
 
@@ -241,3 +392,27 @@ class KnowledgeService:
             for c in chunks
             if c.score >= score_threshold
         ]
+
+
+# ── 辅助函数 ──────────────────────────────────────────────────────────────────
+
+_CONTENT_TYPE_MAP = {
+    "pdf": "application/pdf",
+    "txt": "text/plain",
+    "md": "text/markdown",
+    "html": "text/html",
+    "htm": "text/html",
+    "csv": "text/csv",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "json": "application/json",
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+}
+
+
+def _guess_content_type(ext: str) -> str:
+    return _CONTENT_TYPE_MAP.get(ext.lower(), "application/octet-stream")

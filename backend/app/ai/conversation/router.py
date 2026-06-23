@@ -34,7 +34,7 @@ async def list_conversations(
 ):
     svc = ConversationService(db)
     items, total = await svc.get_list(current_user.id, agent_id, page_params)
-    return paged(items=[ConversationInfo.model_validate(i) for i in items], total=total, params=page_params)
+    return paged(items=[ConversationInfo.model_validate(i) for i in items], total=total, page=page_params.page, page_size=page_params.page_size)
 
 
 @router.get("/{conversation_id}/messages", response_model=ApiResponse[PageData[MessageInfo]], summary="消息列表")
@@ -46,7 +46,7 @@ async def list_messages(
 ):
     svc = ConversationService(db)
     items, total = await svc.get_messages(conversation_id, current_user.id, page_params)
-    return paged(items=[MessageInfo.model_validate(i) for i in items], total=total, params=page_params)
+    return paged(items=[MessageInfo.model_validate(i) for i in items], total=total, page=page_params.page, page_size=page_params.page_size)
 
 
 @router.delete("/{conversation_id}", response_model=ApiResponse, summary="删除对话")

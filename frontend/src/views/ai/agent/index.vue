@@ -18,7 +18,7 @@
           <div class="agent-card" @click="openDialog(agent)">
             <div class="agent-card-header">
               <div class="agent-icon">
-                <el-icon :size="28"><Robot /></el-icon>
+                <el-icon :size="28"><MagicStick /></el-icon>
               </div>
               <el-dropdown trigger="click" @click.stop @command="cmd => handleCommand(cmd, agent)">
                 <el-icon class="agent-more" @click.stop><MoreFilled /></el-icon>
@@ -134,7 +134,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, MoreFilled, Robot } from '@element-plus/icons-vue'
+import { Plus, MoreFilled, MagicStick } from '@element-plus/icons-vue'
 import { agentApi, modelApi, kbApi } from '@/api/ai'
 import { useAgentStatus } from '@/hooks/useDict'
 import type { AgentInfo, AiModelConfig, KnowledgeBase } from '@/types'

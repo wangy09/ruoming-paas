@@ -66,65 +66,85 @@ class RAGPipeline:
         完整索引流程：解析 → 分块 → 向量化 → 写入 DB + pgvector。
         返回成功写入的分块数量。
         """
-        # 1. 文档解析
-        text = parse_document(doc.source_type or "text", file_content, doc.name)
-        if not text.strip():
-            logger.warning("knowledge_empty_document", doc_id=doc.id, name=doc.name)
-            return 0
+        try:
+            text = parse_document(doc.source_type or "text", file_content, doc.name)
+            if not text.strip():
+                logger.warning("knowledge_empty_document", doc_id=doc.id, name=doc.name)
+                doc.status = "done"
+                doc.chunk_count = 0
+                doc.char_count = 0
+                await self.db.commit()
+                return 0
 
-        # 2. 文本分块
-        chunks = self._split_text(text, self.kb.chunk_size, self.kb.chunk_overlap)
-        if not chunks:
-            return 0
+            chunks = self._split_text(text, self.kb.chunk_size, self.kb.chunk_overlap)
+            if not chunks:
+                doc.status = "done"
+                doc.chunk_count = 0
+                doc.char_count = 0
+                await self.db.commit()
+                return 0
 
-        # 3. 批量向量化（避免单次请求过大，分批）
-        batch_size = 20
-        all_embeddings: list[list[float]] = []
-        contents = [c.content for c in chunks]
+            batch_size = 20
+            all_embeddings: list[list[float]] = []
+            contents = [c.content for c in chunks]
+            embed_errors: list[str] = []
 
-        for i in range(0, len(contents), batch_size):
-            batch = contents[i: i + batch_size]
-            embeddings = await self._embed_batch(batch)
-            all_embeddings.extend(embeddings)
+            for i in range(0, len(contents), batch_size):
+                batch = contents[i: i + batch_size]
+                try:
+                    embeddings = await self._embed_batch(batch)
+                    all_embeddings.extend(embeddings)
+                except Exception as e:
+                    embed_errors.append(str(e))
+                    logger.error("embed_batch_failed", batch_start=i, error=str(e))
+                    all_embeddings.extend([[] for _ in batch])
 
-        # 4. 写入 pgvector 和分块表
-        written = 0
-        for i, (chunk, embedding) in enumerate(zip(chunks, all_embeddings)):
-            vector_id = str(uuid.uuid4())
+            written = 0
+            for i, (chunk, embedding) in enumerate(zip(chunks, all_embeddings)):
+                vector_id = str(uuid.uuid4())
 
-            # 写入向量（pgvector 通过 RAW SQL）
-            if embedding:
-                await self._upsert_vector(
-                    vector_id=vector_id,
-                    kb_id=self.kb.id,
+                if embedding:
+                    await self._upsert_vector(
+                        vector_id=vector_id,
+                        kb_id=self.kb.id,
+                        doc_id=doc.id,
+                        content=chunk.content,
+                        embedding=embedding,
+                        metadata=chunk.metadata,
+                    )
+
+                db_chunk = AiKnowledgeChunk(
                     doc_id=doc.id,
+                    kb_id=self.kb.id,
                     content=chunk.content,
-                    embedding=embedding,
-                    metadata=chunk.metadata,
+                    chunk_metadata=chunk.metadata,
+                    vector_id=vector_id if embedding else None,
+                    chunk_index=i,
+                    char_count=len(chunk.content),
                 )
+                self.db.add(db_chunk)
+                written += 1
 
-            # 写入分块表
-            db_chunk = AiKnowledgeChunk(
-                doc_id=doc.id,
-                kb_id=self.kb.id,
-                content=chunk.content,
-                chunk_metadata=chunk.metadata,
-                vector_id=vector_id if embedding else None,
-                chunk_index=i,
-                char_count=len(chunk.content),
-            )
-            self.db.add(db_chunk)
-            written += 1
+            doc.status = "done"
+            doc.chunk_count = written
+            doc.char_count = sum(len(c.content) for c in chunks)
+            doc.content_hash = hashlib.sha256(file_content).hexdigest()
+            if embed_errors:
+                doc.error_msg = "部分向量化失败: " + "; ".join(embed_errors[:3])
 
-        # 5. 更新文档状态
-        doc.status = "done"
-        doc.chunk_count = written
-        doc.char_count = sum(len(c.content) for c in chunks)
-        doc.content_hash = hashlib.sha256(file_content).hexdigest()
+            await self.db.commit()
+            logger.info("knowledge_index_done", doc_id=doc.id, chunks=written)
+            return written
 
-        await self.db.commit()
-        logger.info("knowledge_index_done", doc_id=doc.id, chunks=written)
-        return written
+        except Exception as e:
+            logger.exception("knowledge_index_failed", doc_id=doc.id, error=str(e))
+            doc.status = "error"
+            doc.error_msg = str(e)
+            try:
+                await self.db.commit()
+            except Exception as e2:
+                logger.error("failed_to_update_doc_status", error=str(e2))
+            raise
 
     async def delete_document_vectors(self, doc_id: int, kb_id: int) -> None:
         """删除文档在向量库（pgvector）和分块表中的所有数据"""

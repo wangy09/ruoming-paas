@@ -2,6 +2,26 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useDark, useToggle } from '@vueuse/core'
 
+function loadVisitedViews(): Array<{ path: string; title: string; name?: string; affix?: boolean }> {
+  try {
+    const data = localStorage.getItem('visited_views')
+    if (data) return JSON.parse(data)
+  } catch {
+    // ignore
+  }
+  return []
+}
+
+function loadCachedViews(): string[] {
+  try {
+    const data = localStorage.getItem('cached_views')
+    if (data) return JSON.parse(data)
+  } catch {
+    // ignore
+  }
+  return []
+}
+
 export const useAppStore = defineStore('app', () => {
   const isDark = useDark()
   const toggleDark = useToggle(isDark)
@@ -9,9 +29,8 @@ export const useAppStore = defineStore('app', () => {
   const sidebarCollapsed = ref(false)
   const primaryColor = ref(localStorage.getItem('primary_color') || '#1677ff')
 
-  // 标签页
-  const cachedViews = ref<string[]>([])
-  const visitedViews = ref<Array<{ path: string; title: string; name?: string; affix?: boolean }>>([])
+  const cachedViews = ref<string[]>(loadCachedViews())
+  const visitedViews = ref<Array<{ path: string; title: string; name?: string; affix?: boolean }>>(loadVisitedViews())
 
   const locale = ref<'zh-CN' | 'en-US'>('zh-CN')
 
@@ -24,18 +43,22 @@ export const useAppStore = defineStore('app', () => {
   function addVisitedView(view: { path: string; title: string; name?: string }) {
     if (visitedViews.value.some(v => v.path === view.path)) return
     visitedViews.value.push(view)
+    localStorage.setItem('visited_views', JSON.stringify(visitedViews.value))
   }
 
   function removeVisitedView(path: string) {
     visitedViews.value = visitedViews.value.filter(v => v.path !== path)
+    localStorage.setItem('visited_views', JSON.stringify(visitedViews.value))
   }
 
   function closeOtherViews(path: string) {
     visitedViews.value = visitedViews.value.filter(v => v.path === path || v.affix)
+    localStorage.setItem('visited_views', JSON.stringify(visitedViews.value))
   }
 
   function closeAllViews() {
     visitedViews.value = visitedViews.value.filter(v => v.affix)
+    localStorage.setItem('visited_views', JSON.stringify(visitedViews.value))
   }
 
   function setPrimaryColor(color: string) {

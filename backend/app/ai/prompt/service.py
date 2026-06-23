@@ -97,6 +97,25 @@ class PromptService:
         )
         return list(result.scalars().all())
 
+    async def get_version_content(
+        self, template_id: int, version: int | None = None
+    ) -> str | None:
+        """
+        获取指定版本的 Prompt 内容。
+        如果 version 为 None，返回当前已发布的版本内容。
+        """
+        stmt = select(AiPromptVersion).where(AiPromptVersion.template_id == template_id)
+        if version is not None:
+            stmt = stmt.where(AiPromptVersion.version == version)
+        else:
+            stmt = stmt.where(AiPromptVersion.is_published == True)
+        stmt = stmt.order_by(
+            AiPromptVersion.version.desc() if version is None else AiPromptVersion.version
+        )
+        result = await self.db.execute(stmt.limit(1))
+        pv = result.scalar_one_or_none()
+        return pv.content if pv else None
+
     async def add_version(
         self, template_id: int, data: PromptVersionCreate, user_id: int
     ) -> AiPromptVersion:
@@ -169,11 +188,17 @@ class PromptService:
     ) -> str:
         """
         加载指定版本的 Prompt 模板并插值变量。
-        version=None 时使用最新已发布版本。
+        version=None 时使用当前版本（支持草稿预览）。
         """
+        if version is None:
+            tmpl = await self.db.get(AiPromptTemplate, template_id)
+            if not tmpl or tmpl.is_deleted:
+                raise NotFoundException(f"Prompt 模板 ID={template_id} 不存在")
+            version = tmpl.current_version
+
         version_row = await self._get_version(template_id, version)
         if not version_row:
-            raise NotFoundException("未找到可用的 Prompt 版本（请先发布一个版本）")
+            raise NotFoundException(f"版本 {version} 不存在")
         return self._interpolate(version_row.content, variables)
 
     async def _get_version(

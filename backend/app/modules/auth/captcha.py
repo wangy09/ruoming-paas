@@ -2,14 +2,17 @@
 若茗 PaaS - 验证码服务
 Author: ruoming
 """
+from __future__ import annotations
 import base64
 import io
 import random
 import string
 from datetime import timedelta
+from pathlib import Path
+from typing import Any
 
 import structlog
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from redis.asyncio import Redis
 
 from app.core.redis import RedisKeys
@@ -22,6 +25,19 @@ class CaptchaService:
 
     def __init__(self, redis: Redis) -> None:
         self.redis = redis
+        self._font = self._load_font()
+
+    def _load_font(self) -> Any:
+        """加载字体，优先使用系统字体，失败则回退到默认"""
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "/usr/share/fonts/fonts-japanese-gothic.ttf",
+        ]
+        for font_path in font_paths:
+            if Path(font_path).exists():
+                return ImageFont.truetype(font_path, 32)
+        return ImageFont.load_default()
 
     async def generate_captcha(self) -> dict:
         """生成验证码并返回图片和key"""
@@ -56,8 +72,8 @@ class CaptchaService:
         return stored_code == captcha_code.lower()
 
     def _generate_code(self, length: int = 4) -> str:
-        """生成随机验证码"""
-        chars = string.ascii_uppercase + string.ascii_lowercase + string.digits
+        """生成随机验证码，使用大写字母和数字，排除容易混淆的字符"""
+        chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         return "".join(random.choices(chars, k=length))
 
     def _generate_key(self) -> str:
@@ -65,157 +81,25 @@ class CaptchaService:
         chars = string.ascii_letters + string.digits
         return "".join(random.choices(chars, k=32))
 
-    def _draw_char(self, draw: ImageDraw.ImageDraw, char: str, x: int, y: int, size: int, color: tuple):
-        """绘制单个字符（使用几何形状，不依赖字体）"""
-        w = size
-        h = size
-        thick = max(3, size // 8)
-
-        char = char.upper()
-        if char == 'A':
-            draw.line([(x + w//2, y), (x + w - 4, y + h - 4), (x + w//2, y + h//2), (x + 4, y + h - 4), (x + w//2, y)], fill=color, width=thick)
-        elif char == 'B':
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + w - 4, y), (x + w - 4, y + h//2)], fill=color, width=thick)
-            draw.line([(x + 4, y + h//2), (x + w - 4, y + h//2), (x + w - 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'C':
-            draw.line([(x + w - 4, y + 4), (x + 4, y + 4), (x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'D':
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + w - 4, y), (x + w - 4, y + h//2), (x + w - 4, y + h - 4), (x + 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'E':
-            draw.line([(x + 4, y), (x + w - 4, y)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y + h//2), (x + w - 4, y + h//2)], fill=color, width=thick)
-            draw.line([(x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'F':
-            draw.line([(x + 4, y), (x + w - 4, y)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y + h//2), (x + w - 4, y + h//2)], fill=color, width=thick)
-        elif char == 'G':
-            draw.line([(x + w - 4, y + 4), (x + 4, y + 4), (x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + w - 4, y + h//2), (x + w//2, y + h//2)], fill=color, width=thick)
-        elif char == 'H':
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + w - 4, y), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y + h//2), (x + w - 4, y + h//2)], fill=color, width=thick)
-        elif char == 'I':
-            draw.line([(x + w//2, y), (x + w//2, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + w - 4, y)], fill=color, width=thick)
-            draw.line([(x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'J':
-            draw.line([(x + w - 4, y), (x + w - 4, y + h - 4), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y + h - 4), (x + 4, y + h//2)], fill=color, width=thick)
-        elif char == 'K':
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + w - 4, y + h//2)], fill=color, width=thick)
-            draw.line([(x + 4, y + h//2), (x + w - 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'L':
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'M':
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + w - 4, y), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + w//2, y + h//2), (x + w - 4, y)], fill=color, width=thick)
-        elif char == 'N':
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + w - 4, y), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + w - 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'O':
-            draw.line([(x + 4, y + 4), (x + w - 4, y + 4), (x + w - 4, y + h - 4), (x + 4, y + h - 4), (x + 4, y + 4)], fill=color, width=thick)
-        elif char == 'P':
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + w - 4, y), (x + w - 4, y + h//2), (x + 4, y + h//2)], fill=color, width=thick)
-        elif char == 'Q':
-            draw.line([(x + 4, y + 4), (x + w - 4, y + 4), (x + w - 4, y + h - 4), (x + 4, y + h - 4), (x + 4, y + 4)], fill=color, width=thick)
-            draw.line([(x + w - 4, y + h//2), (x + w//2, y + h - 4)], fill=color, width=thick)
-        elif char == 'R':
-            draw.line([(x + 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y), (x + w - 4, y), (x + w - 4, y + h//2)], fill=color, width=thick)
-            draw.line([(x + 4, y + h//2), (x + w - 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'S':
-            draw.line([(x + w - 4, y + 4), (x + 4, y + 4), (x + 4, y + h//2)], fill=color, width=thick)
-            draw.line([(x + w - 4, y + h//2), (x + w - 4, y + h - 4), (x + 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'T':
-            draw.line([(x + 4, y), (x + w - 4, y)], fill=color, width=thick)
-            draw.line([(x + w//2, y), (x + w//2, y + h - 4)], fill=color, width=thick)
-        elif char == 'U':
-            draw.line([(x + 4, y), (x + 4, y + h - 4), (x + w - 4, y + h - 4), (x + w - 4, y)], fill=color, width=thick)
-        elif char == 'V':
-            draw.line([(x + 4, y), (x + w//2, y + h - 4), (x + w - 4, y)], fill=color, width=thick)
-        elif char == 'W':
-            draw.line([(x + 4, y), (x + 4, y + h - 4), (x + w//3, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + w//3, y), (x + 2*w//3, y)], fill=color, width=thick)
-            draw.line([(x + 2*w//3, y + h - 4), (x + w - 4, y + h - 4), (x + w - 4, y)], fill=color, width=thick)
-        elif char == 'X':
-            draw.line([(x + 4, y), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + w - 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-        elif char == 'Y':
-            draw.line([(x + 4, y), (x + w//2, y + h//2)], fill=color, width=thick)
-            draw.line([(x + w - 4, y), (x + w//2, y + h//2), (x + w//2, y + h - 4)], fill=color, width=thick)
-        elif char == 'Z':
-            draw.line([(x + 4, y), (x + w - 4, y)], fill=color, width=thick)
-            draw.line([(x + w - 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-        elif char in '0123456789':
-            if char == '0':
-                draw.line([(x + 4, y + 4), (x + w - 4, y + 4), (x + w - 4, y + h - 4), (x + 4, y + h - 4), (x + 4, y + 4)], fill=color, width=thick)
-            elif char == '1':
-                draw.line([(x + w - 4, y), (x + w - 4, y + h - 4)], fill=color, width=thick)
-                draw.line([(x + 4, y), (x + w - 4, y)], fill=color, width=thick)
-            elif char == '2':
-                draw.line([(x + 4, y), (x + w - 4, y)], fill=color, width=thick)
-                draw.line([(x + w - 4, y), (x + w - 4, y + h//2), (x + 4, y + h//2)], fill=color, width=thick)
-                draw.line([(x + 4, y + h//2), (x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            elif char == '3':
-                draw.line([(x + 4, y), (x + w - 4, y)], fill=color, width=thick)
-                draw.line([(x + w - 4, y), (x + w - 4, y + h - 4)], fill=color, width=thick)
-                draw.line([(x + 4, y + h//2), (x + w - 4, y + h//2)], fill=color, width=thick)
-                draw.line([(x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            elif char == '4':
-                draw.line([(x + 4, y), (x + 4, y + h//2), (x + w - 4, y + h//2)], fill=color, width=thick)
-                draw.line([(x + w - 4, y), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            elif char == '5':
-                draw.line([(x + 4, y), (x + w - 4, y), (x + w - 4, y + h//2)], fill=color, width=thick)
-                draw.line([(x + w - 4, y + h//2), (x + 4, y + h//2)], fill=color, width=thick)
-                draw.line([(x + 4, y + h//2), (x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            elif char == '6':
-                draw.line([(x + w - 4, y + 4), (x + 4, y + 4), (x + 4, y + h - 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-                draw.line([(x + w - 4, y + h//2), (x + 4, y + h//2)], fill=color, width=thick)
-            elif char == '7':
-                draw.line([(x + 4, y), (x + w - 4, y)], fill=color, width=thick)
-                draw.line([(x + w - 4, y), (x + 4, y + h - 4)], fill=color, width=thick)
-            elif char == '8':
-                draw.line([(x + 4, y + 4), (x + w - 4, y + 4), (x + w - 4, y + h - 4), (x + 4, y + h - 4), (x + 4, y + 4)], fill=color, width=thick)
-                draw.line([(x + 4, y + h//2), (x + w - 4, y + h//2)], fill=color, width=thick)
-            elif char == '9':
-                draw.line([(x + w - 4, y + 4), (x + w - 4, y + h - 4), (x + 4, y + h - 4)], fill=color, width=thick)
-                draw.line([(x + 4, y + h//2), (x + w - 4, y + h//2), (x + w - 4, y)], fill=color, width=thick)
-        else:
-            draw.line([(x + 4, y + 4), (x + w - 4, y + h - 4)], fill=color, width=thick)
-            draw.line([(x + w - 4, y + 4), (x + 4, y + h - 4)], fill=color, width=thick)
-
     def _generate_image(self, code: str) -> str:
         """生成验证码图片，返回 base64 编码"""
-        width, height = 120, 42
+        width, height = 140, 48
         image = Image.new("RGB", (width, height), (255, 255, 255))
         draw = ImageDraw.Draw(image)
 
-        char_size = 26
-        chars = list(code)
-        char_width = width // len(chars)
+        char_width = width // len(code)
 
-        for i, char in enumerate(chars):
-            x = i * char_width + random.randint(2, 6)
-            y = random.randint(2, height - char_size - 2)
+        for i, char in enumerate(code):
+            x = i * char_width + random.randint(4, 10)
+            y = random.randint(4, height - 36)
             color = (
                 random.randint(0, 80),
                 random.randint(0, 80),
                 random.randint(0, 80),
             )
 
-            self._draw_char(draw, char, x, y, char_size, (180, 180, 180))
-            self._draw_char(draw, char, x - 1, y - 1, char_size, color)
+            draw.text((x + 1, y + 1), char, font=self._font, fill=(180, 180, 180))
+            draw.text((x, y), char, font=self._font, fill=color)
 
         for _ in range(3):
             start = (random.randint(0, width), random.randint(0, height))

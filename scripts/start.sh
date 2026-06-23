@@ -89,12 +89,12 @@ start_dev() {
         "import asyncio; from app.database import AsyncSessionLocal; from sqlalchemy import text; \
         async def f(): \
             async with AsyncSessionLocal() as s: \
-                r = await s.execute(text('SELECT COUNT(*) FROM users')); return r.scalar() \
+                r = await s.execute(text('SELECT COUNT(*) FROM sys_user WHERE is_superplatform = true')); return r.scalar() \
         print(asyncio.run(f()))" 2>/dev/null || echo "0")
 
     if [[ "$user_count" == "0" ]]; then
         log_step "首次启动，初始化种子数据..."
-        $(compose_cmd) exec backend python scripts/init_data.py
+        $(compose_cmd) exec backend python /app/scripts/init_data.py
         log_info "种子数据初始化完成 ✓"
     fi
 

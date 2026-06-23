@@ -19,10 +19,12 @@
       <el-table v-loading="loading" :data="tableData" border stripe>
         <el-table-column prop="name" label="模型名称" min-width="160" />
         <el-table-column prop="provider" label="供应商" width="120" />
-        <el-table-column prop="model_name" label="模型标识" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="model_id" label="模型标识" min-width="200" show-overflow-tooltip />
         <el-table-column label="类型" width="90" align="center">
           <template #default="{ row }">
-            <el-tag :type="typeTagMap[row.model_type]" size="small">{{ row.model_type }}</el-tag>
+            <el-tag v-if="row.is_embed" size="small">向量</el-tag>
+            <el-tag v-else-if="row.is_rerank" size="small">Rerank</el-tag>
+            <el-tag v-else size="small">对话</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="默认" width="70" align="center">
@@ -32,11 +34,11 @@
         </el-table-column>
         <el-table-column label="状态" width="80" align="center">
           <template #default="{ row }">
-            <el-switch v-model="row.is_active" @change="toggleActive(row)" />
+            <el-switch :model-value="row.status === 1" @change="toggleStatus(row)" />
           </template>
         </el-table-column>
         <el-table-column label="上下文窗口" width="120" align="right">
-          <template #default="{ row }">{{ row.context_window?.toLocaleString() }}</template>
+          <template #default="{ row }">{{ row.context_length?.toLocaleString() }}</template>
         </el-table-column>
         <el-table-column label="操作" width="180" fixed="right" align="center">
           <template #default="{ row }">
@@ -61,7 +63,7 @@
 
     <!-- 新增/编辑对话框 -->
     <el-dialog v-model="dialogVisible" :title="editId ? '编辑模型' : '接入模型'" width="580px" destroy-on-close>
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px" autocomplete="off">
         <el-form-item label="供应商" prop="provider">
           <el-select v-model="form.provider" style="width:100%" @change="onProviderChange">
             <el-option label="追鹿（Zhuilu）" value="zhuilu" />
@@ -71,30 +73,34 @@
             <el-option label="自定义兼容接口" value="custom" />
           </el-select>
         </el-form-item>
-        <el-form-item label="模型类型" prop="model_type">
-          <el-radio-group v-model="form.model_type">
-            <el-radio value="chat">对话</el-radio>
-            <el-radio value="embedding">向量</el-radio>
-            <el-radio value="rerank">Rerank</el-radio>
-          </el-radio-group>
+        <el-form-item label="模型用途">
+          <el-checkbox v-model="form.is_embed">向量嵌入</el-checkbox>
+          <el-checkbox v-model="form.is_rerank">Rerank</el-checkbox>
+          <span class="text-gray text-sm ml-2">（都不选则为对话模型）</span>
         </el-form-item>
         <el-form-item label="显示名称" prop="name">
           <el-input v-model="form.name" placeholder="自定义显示名称" />
         </el-form-item>
-        <el-form-item label="模型标识" prop="model_name">
-          <el-input v-model="form.model_name" placeholder="如：gpt-4o / qwen-max" />
+        <el-form-item label="模型标识" prop="model_id">
+          <el-input v-model="form.model_id" placeholder="如：gpt-4o / qwen-max" />
         </el-form-item>
         <el-form-item label="API Base URL">
-          <el-input v-model="form.base_url" :placeholder="baseUrlPlaceholder" />
+          <el-input v-model="form.base_url" :placeholder="baseUrlPlaceholder" name="base_url" autocomplete="off" />
         </el-form-item>
         <el-form-item label="API Key">
-          <el-input v-model="form.api_key" type="password" show-password placeholder="留空则使用全局配置" />
+          <el-input v-model="form.api_key" type="password" show-password placeholder="留空则使用全局配置" name="api_key" autocomplete="new-password" />
+        </el-form-item>
+        <el-form-item label="上下文窗口">
+          <el-input-number v-model="form.context_length" :min="512" :max="131072" :step="512" />
         </el-form-item>
         <el-form-item label="Max Tokens">
-          <el-input-number v-model="form.max_tokens" :min="256" :max="128000" :step="256" />
+          <el-input-number v-model="form.max_tokens" :min="128" :max="131072" :step="256" />
         </el-form-item>
-        <el-form-item label="Temperature">
-          <el-slider v-model="form.temperature" :min="0" :max="2" :step="0.1" show-input style="width:100%" />
+        <el-form-item label="状态">
+          <el-radio-group v-model="form.status">
+            <el-radio :value="1">启用</el-radio>
+            <el-radio :value="0">禁用</el-radio>
+          </el-radio-group>
         </el-form-item>
         <el-form-item label="设为默认">
           <el-switch v-model="form.is_default" />
@@ -115,8 +121,6 @@ import { Plus, Check } from '@element-plus/icons-vue'
 import { modelApi } from '@/api/ai'
 import type { AiModelConfig } from '@/types'
 
-const typeTagMap: Record<string, string> = { chat: 'primary', embedding: 'success', rerank: 'warning', multimodal: 'info' }
-
 const loading = ref(false)
 const tableData = ref<AiModelConfig[]>([])
 const total = ref(0)
@@ -136,8 +140,8 @@ async function fetchList() {
   }
 }
 
-async function toggleActive(row: AiModelConfig) {
-  await modelApi.update(row.id, { is_default: row.is_default })
+async function toggleStatus(row: AiModelConfig) {
+  await modelApi.update(row.id, { status: row.status === 1 ? 0 : 1 })
 }
 
 async function testConnect(row: AiModelConfig) {
@@ -165,14 +169,22 @@ const editId = ref<number | null>(null)
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const form = reactive({
-  provider: 'zhuilu', model_type: 'chat', name: '', model_name: '',
-  base_url: '', api_key: '', max_tokens: 4096, temperature: 0.7, is_default: false,
+  provider: 'zhuilu',
+  is_embed: false,
+  is_rerank: false,
+  name: '',
+  model_id: '',
+  base_url: '',
+  api_key: '',
+  context_length: 8192,
+  max_tokens: 4096,
+  status: 1,
+  is_default: false,
 })
 const rules: FormRules = {
   provider: [{ required: true }],
-  model_type: [{ required: true }],
   name: [{ required: true, message: '请输入显示名称' }],
-  model_name: [{ required: true, message: '请输入模型标识' }],
+  model_id: [{ required: true, message: '请输入模型标识' }],
 }
 
 const baseUrlPlaceholder = computed(() => {
@@ -191,20 +203,22 @@ function onProviderChange(val: string) {
   const modelMap: Record<string, string> = {
     zhuilu: 'qwen-max', openai: 'gpt-4o', ollama: 'llama3', azure: 'gpt-4o',
   }
-  form.model_name = modelMap[val] || ''
+  form.model_id = modelMap[val] || ''
 }
 
 function openDialog(row?: AiModelConfig) {
   editId.value = row?.id ?? null
   Object.assign(form, {
     provider: row?.provider ?? 'zhuilu',
-    model_type: row?.model_type ?? 'chat',
+    is_embed: row?.is_embed ?? false,
+    is_rerank: row?.is_rerank ?? false,
     name: row?.name ?? '',
-    model_name: row?.model_name ?? '',
+    model_id: row?.model_id ?? '',
     base_url: row?.base_url ?? '',
     api_key: '',
+    context_length: row?.context_length ?? 8192,
     max_tokens: row?.max_tokens ?? 4096,
-    temperature: row?.temperature ?? 0.7,
+    status: row?.status ?? 1,
     is_default: row?.is_default ?? false,
   })
   dialogVisible.value = true
@@ -236,4 +250,7 @@ onMounted(fetchList)
 .card-title { font-size: 15px; font-weight: 600; }
 .mb-3 { margin-bottom: 12px; }
 .mt-4 { margin-top: 16px; }
+.text-gray { color: #909399; }
+.text-sm { font-size: 12px; }
+.ml-2 { margin-left: 8px; }
 </style>

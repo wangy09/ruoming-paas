@@ -79,7 +79,6 @@ async def init_data() -> None:
             status=1,
             sort=1,
             tenant_id=None,  # 角色模板（平台级）
-            is_system=True,
         )
         db.add(tenant_admin_role)
 
@@ -92,7 +91,6 @@ async def init_data() -> None:
             status=1,
             sort=10,
             tenant_id=None,
-            is_system=True,
         )
         db.add(normal_role)
         await db.flush()
@@ -103,8 +101,8 @@ async def init_data() -> None:
         code_to_id = {}
 
         for p in permissions_data:
-            # 过滤掉 parent_code（用于建立关系，不写入数据库）
-            perm_data = {k: v for k, v in p.items() if k != "parent_code"}
+            # 过滤掉 parent_code 和 is_system（用于建立关系，不写入数据库）
+            perm_data = {k: v for k, v in p.items() if k not in ("parent_code", "is_system")}
             perm = SysPermission(**perm_data)
             db.add(perm)
             perm_objects.append(perm)

@@ -50,7 +50,7 @@ async def list_model_configs(
     result = await db.execute(stmt)
     items = result.scalars().all()
 
-    return paged(items=[ModelConfigInfo.model_validate(i) for i in items], total=total, params=page_params)
+    return paged(items=[ModelConfigInfo.model_validate(i) for i in items], total=total, page=page_params.page, page_size=page_params.page_size)
 
 
 @router.post("", response_model=ApiResponse[ModelConfigInfo], summary="添加模型配置", status_code=201)

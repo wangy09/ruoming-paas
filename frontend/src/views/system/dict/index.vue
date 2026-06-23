@@ -84,7 +84,8 @@
       <div class="items-header">
         <el-input v-model="itemFilter" placeholder="搜索字典项" style="width: 200px; margin-bottom: 15px" />
         <el-button type="primary" :icon="Plus" @click="openDictItemDialog()" style="float: right">新增字典项</el-button>
-      </div>
+      </div>API Base URL
+
       <el-table :data="filteredItems" border style="width: 100%">
         <el-table-column prop="label" label="显示标签" min-width="120" />
         <el-table-column prop="value" label="实际值" min-width="120" />

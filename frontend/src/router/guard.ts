@@ -43,7 +43,21 @@ export function setupRouterGuard(router: Router) {
     if (!permStore.loaded) {
       try {
         await permStore.loadPermissions()
-      } catch {
+        // 动态路由注册后，检查并补全恢复的标签页信息
+        appStore.visitedViews.forEach(view => {
+          const resolved = router.resolve(view.path)
+          if (resolved.matched.length && resolved.meta.title && !view.title) {
+            view.title = resolved.meta.title as string
+          }
+        })
+        localStorage.setItem('visited_views', JSON.stringify(appStore.visitedViews))
+        // 需要重新导航到目标路由
+        const targetRoute = router.resolve(to.path)
+        if (targetRoute.matched.length) {
+          return next({ ...to, replace: true })
+        }
+      } catch (error) {
+        console.error('加载权限失败:', error)
         ElMessage.error('加载权限失败')
         authStore.clear()
         return next('/login')
@@ -59,10 +73,10 @@ export function setupRouterGuard(router: Router) {
       })
     }
 
-    // 检查路由是否存在（动态路由注册后可能需要重新导航）
+    // 检查路由是否存在
     const targetRoute = router.resolve(to.path)
     if (!targetRoute.matched.length) {
-      return next({ ...to, replace: true })
+      return next({ path: '/404' })
     }
 
     next()

@@ -8,12 +8,41 @@ import sys
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import pool, String, Text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.types import TypeDecorator, CHAR
 
 # 添加项目根目录到 PATH，使 app 包可以被导入
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+# ── pgvector 自定义类型（SQLAlchemy 不直接支持 pgvector）─────────────────────────
+class Vector(TypeDecorator):
+    """PostgreSQL pgvector 类型"""
+    impl = CHAR
+    cache_ok = True
+
+    def __init__(self, dimension=1536):
+        super().__init__(256 * dimension)  # 每个 float4 占 4 字节
+        self.dimension = dimension
+
+    def load_dialect_impl(self, dialect):
+        return dialect.type_descriptor(String(256 * self.dimension))
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            return '[' + ','.join([str(v) for v in value]) + ']'
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            return [float(x) for x in value.strip('[]').split(',')]
+        return value
+
+    def column_format(self, column, **kw):
+        return f"VECTOR({self.dimension})"
 
 from app.config import settings
 from app.database import Base

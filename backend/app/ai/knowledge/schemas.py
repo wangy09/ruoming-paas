@@ -67,6 +67,10 @@ class KnowledgeDocInfo(BaseModel):
     name: str
     source_type: str | None
     source_url: str | None
+    file_type: str | None
+    file_size: int | None
+    storage_backend: str | None
+    storage_url: str | None
     content_hash: str | None
     char_count: int | None
     chunk_count: int | None
@@ -86,3 +90,29 @@ class KnowledgeSearchResult(BaseModel):
     doc_id: int
     score: float
     metadata: dict = Field(default_factory=dict)
+
+
+# ── 分片上传 ────────────────────────────────────────────────────────────────
+
+class UploadInitRequest(BaseModel):
+    filename: str = Field(..., max_length=255)
+    file_size: int = Field(..., ge=1, description="文件总大小（字节）")
+    file_hash: str = Field(..., description="完整文件 SHA-256")
+    part_count: int = Field(..., ge=1, description="分片总数")
+
+
+class UploadInitResponse(BaseModel):
+    upload_id: str = Field(..., description="上传会话 ID")
+    part_size: int = Field(..., description="每个分片大小（字节）")
+    uploaded_parts: list[int] = Field(default_factory=list, description="已上传的分片序号")
+
+
+class UploadPartRequest(BaseModel):
+    upload_id: str
+    part_number: int = Field(..., ge=1)
+    part_hash: str = Field(..., description="分片 SHA-256")
+
+
+class UploadCompleteRequest(BaseModel):
+    upload_id: str
+    part_hashes: list[str] = Field(..., description="所有分片 hash 列表（按序号排序）")

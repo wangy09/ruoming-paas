@@ -173,14 +173,14 @@ export interface AiModelConfig {
   id: number
   name: string
   provider: string
-  model_type: 'chat' | 'embedding' | 'multimodal' | 'rerank'
+  model_id: string
   base_url?: string
-  model_name: string
-  is_active: boolean
   is_default: boolean
+  is_embed: boolean
+  is_rerank: boolean
   max_tokens: number
-  context_window: number
-  temperature: number
+  context_length: number
+  status: number
   tenant_id?: number
   created_at: string
 }
@@ -188,13 +188,15 @@ export interface AiModelConfig {
 export interface AiModelCreate {
   name: string
   provider: string
-  model_type: string
+  model_id: string
   base_url?: string
-  model_name: string
   api_key?: string
   max_tokens?: number
-  temperature?: number
+  context_length?: number
   is_default?: boolean
+  is_embed?: boolean
+  is_rerank?: boolean
+  status?: number
 }
 
 // ── Agent 相关 ────────────────────────────────────────────────────────────────
@@ -291,7 +293,7 @@ export interface PromptTemplate {
   name: string
   description?: string
   category?: string
-  template_text: string
+  content: string
   variables: string[]
   status: 'draft' | 'published' | 'archived'
   current_version: number

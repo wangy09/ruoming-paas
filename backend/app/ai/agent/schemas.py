@@ -24,7 +24,7 @@ class AgentCreate(BaseModel):
     max_tokens: int = Field(2048, ge=128, le=131072)
     node_timeout_sec: int = Field(60, ge=5, le=600)
     memory_type: str = Field("buffer", description="buffer / summary / vector")
-    tool_ids: list[str] = Field(default_factory=list)
+    tool_ids: list[int] = Field(default_factory=list)
     kb_ids: list[int] = Field(default_factory=list)
 
     @field_validator("memory_type")
@@ -40,9 +40,11 @@ class AgentUpdate(BaseModel):
     description: str | None = None
     system_prompt: str | None = None
     model_config_id: int | None = None
+    prompt_template_id: int | None = None
+    prompt_version: int | None = None
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(None, ge=128, le=131072)
-    tool_ids: list[str] | None = None
+    tool_ids: list[int] | None = None
     kb_ids: list[int] | None = None
     status: int | None = Field(None, ge=0, le=1)
     default_scene: str | None = None
@@ -56,6 +58,8 @@ class AgentInfo(BaseModel):
     description: str | None
     avatar: str | None
     model_config_id: int | None
+    prompt_template_id: int | None
+    prompt_version: int | None
     system_prompt: str | None
     default_scene: str | None
     max_rounds: int

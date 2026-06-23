@@ -1,7 +1,7 @@
 """
 若茗 PaaS - Agent 和工作流路由
-/api/v1/ai/agents
-/api/v1/ai/workflows
+/agents
+/workflows
 Author: ruoming
 """
 import uuid
@@ -31,12 +31,12 @@ from app.core.utils.pagination import PageParams
 from app.database import get_db
 from app.modules.user.models import SysUser
 
-router = APIRouter(tags=["AI-Agent管理"])
+router = APIRouter(prefix="/ai", tags=["AI-Agent管理"])
 
 
 # ── Agent CRUD ────────────────────────────────────────────────────────────────
 
-@router.get("/ai/agents", response_model=ApiResponse[PageData[AgentInfo]], summary="Agent 列表")
+@router.get("/agents", response_model=ApiResponse[PageData[AgentInfo]], summary="Agent 列表")
 async def list_agents(
     keyword: str | None = Query(None, description="名称关键字"),
     page_params: PageParams = Depends(),
@@ -45,10 +45,10 @@ async def list_agents(
 ):
     svc = AgentService(db)
     items, total = await svc.get_list(current_user.tenant_id, page_params, keyword)
-    return paged(items=[AgentInfo.model_validate(i) for i in items], total=total, params=page_params)
+    return paged(items=[AgentInfo.model_validate(i) for i in items], total=total, page=page_params.page, page_size=page_params.page_size)
 
 
-@router.post("/ai/agents", response_model=ApiResponse[AgentInfo], summary="创建 Agent", status_code=201)
+@router.post("/agents", response_model=ApiResponse[AgentInfo], summary="创建 Agent", status_code=201)
 async def create_agent(
     data: AgentCreate,
     db: AsyncSession = Depends(get_db),
@@ -59,7 +59,7 @@ async def create_agent(
     return created(AgentInfo.model_validate(agent))
 
 
-@router.put("/ai/agents/{agent_id}", response_model=ApiResponse[AgentInfo], summary="修改 Agent")
+@router.put("/agents/{agent_id}", response_model=ApiResponse[AgentInfo], summary="修改 Agent")
 async def update_agent(
     agent_id: int,
     data: AgentCreate,
@@ -74,7 +74,7 @@ async def update_agent(
     return ok(AgentInfo.model_validate(agent))
 
 
-@router.delete("/ai/agents/{agent_id}", response_model=ApiResponse, summary="删除 Agent")
+@router.delete("/agents/{agent_id}", response_model=ApiResponse, summary="删除 Agent")
 async def delete_agent(
     agent_id: int,
     db: AsyncSession = Depends(get_db),
@@ -88,7 +88,7 @@ async def delete_agent(
 
 # ── Agent 执行 ────────────────────────────────────────────────────────────────
 
-@router.post("/ai/agents/{agent_id}/run", summary="执行 Agent（支持流式 SSE）")
+@router.post("/agents/{agent_id}/run", summary="执行 Agent（支持流式 SSE）")
 async def run_agent(
     agent_id: int,
     data: AgentRunRequest,
@@ -111,43 +111,26 @@ async def run_agent(
     if data.stream:
         async def _generate() -> AsyncGenerator[str, None]:
             import json
-            try:
-                from app.ai.llm.providers.base import ChatMessage
-                from app.ai.llm.service import LLMService
-
-                # 场景路由
-                from app.ai.scene.router import SceneRouter
-                router = SceneRouter()
-                scene = await router.resolve(
-                    message=data.message,
-                    explicit_scene=data.scene_type,
-                    agent_default_scene=agent.default_scene,
-                    has_attachment=data.has_attachment,
-                )
-
-                system_prompt = agent.system_prompt or ""
-                messages = [ChatMessage(role="user", content=data.message)]
-                if system_prompt:
-                    messages.insert(0, ChatMessage(role="system", content=system_prompt))
-
-                llm_svc = LLMService()
-                gen = await llm_svc.stream_chat(
-                    messages=messages,
-                    model_config_id=agent.model_config_id,
-                    db=db,
-                    temperature=agent.temperature,
-                    max_tokens=agent.max_tokens,
-                )
-
-                # 首先发送 metadata
-                yield f"data: {json.dumps({'type': 'meta', 'scene': scene.scene_type, 'scene_source': scene.source})}\n\n"
-
-                async for chunk in gen:
-                    yield f"data: {json.dumps({'type': 'content', 'text': chunk})}\n\n"
-
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            async for event in runner.stream_run(
+                user_message=data.message,
+                session_id=data.session_id,
+                scene_type=data.scene_type,
+                has_attachment=data.has_attachment,
+                timeout_sec=data.timeout_sec,
+                tenant_id=current_user.tenant_id,
+                user_id=current_user.id,
+                conversation_id=data.conversation_id,
+            ):
+                if event["type"] == "error":
+                    yield f"data: {json.dumps(event)}\n\n"
+                    break
+                elif event["type"] == "meta":
+                    yield f"data: {json.dumps(event)}\n\n"
+                elif event["type"] == "content":
+                    yield f"data: {json.dumps({'type': 'content', 'text': event['text']})}\n\n"
+                elif event["type"] == "done":
+                    done_event = {"type": "done", "output": event.get("output", "")}
+                    yield f"data: {json.dumps(done_event)}\n\n"
 
         return StreamingResponse(_generate(), media_type="text/event-stream")
 
@@ -167,7 +150,7 @@ async def run_agent(
 
 # ── 工作流 CRUD ───────────────────────────────────────────────────────────────
 
-@router.get("/ai/workflows", response_model=ApiResponse[PageData[WorkflowInfo]], summary="工作流列表")
+@router.get("/workflows", response_model=ApiResponse[PageData[WorkflowInfo]], summary="工作流列表")
 async def list_workflows(
     page_params: PageParams = Depends(),
     db: AsyncSession = Depends(get_db),
@@ -175,10 +158,10 @@ async def list_workflows(
 ):
     svc = WorkflowService(db)
     items, total = await svc.get_list(current_user.tenant_id, page_params)
-    return paged(items=[WorkflowInfo.model_validate(i) for i in items], total=total, params=page_params)
+    return paged(items=[WorkflowInfo.model_validate(i) for i in items], total=total, page=page_params.page, page_size=page_params.page_size)
 
 
-@router.post("/ai/workflows", response_model=ApiResponse[WorkflowInfo], summary="创建工作流", status_code=201)
+@router.post("/workflows", response_model=ApiResponse[WorkflowInfo], summary="创建工作流", status_code=201)
 async def create_workflow(
     data: WorkflowCreate,
     db: AsyncSession = Depends(get_db),
@@ -189,7 +172,7 @@ async def create_workflow(
     return created(WorkflowInfo.model_validate(workflow))
 
 
-@router.put("/ai/workflows/{workflow_id}", response_model=ApiResponse[WorkflowInfo], summary="修改工作流（自动新增版本）")
+@router.put("/workflows/{workflow_id}", response_model=ApiResponse[WorkflowInfo], summary="修改工作流（自动新增版本）")
 async def update_workflow(
     workflow_id: int,
     data: WorkflowUpdate,
@@ -203,7 +186,7 @@ async def update_workflow(
     return ok(WorkflowInfo.model_validate(workflow))
 
 
-@router.get("/ai/workflows/{workflow_id}/versions", response_model=ApiResponse, summary="工作流版本历史")
+@router.get("/workflows/{workflow_id}/versions", response_model=ApiResponse, summary="工作流版本历史")
 async def get_workflow_versions(
     workflow_id: int,
     db: AsyncSession = Depends(get_db),
@@ -222,7 +205,7 @@ async def get_workflow_versions(
     ])
 
 
-@router.post("/ai/workflows/{workflow_id}/run", response_model=ApiResponse[WorkflowRunInfo], summary="执行工作流")
+@router.post("/workflows/{workflow_id}/run", response_model=ApiResponse[WorkflowRunInfo], summary="执行工作流")
 async def run_workflow(
     workflow_id: int,
     data: WorkflowRunRequest,
@@ -235,11 +218,12 @@ async def run_workflow(
         input_data=data.input,
         session_id=data.session_id,
         user_id=current_user.id,
+        tenant_id=current_user.tenant_id,
     )
     return ok(WorkflowRunInfo.model_validate(run))
 
 
-@router.get("/ai/workflows/{workflow_id}/runs", response_model=ApiResponse[PageData[WorkflowRunInfo]], summary="执行历史")
+@router.get("/workflows/{workflow_id}/runs", response_model=ApiResponse[PageData[WorkflowRunInfo]], summary="执行历史")
 async def get_workflow_runs(
     workflow_id: int,
     page_params: PageParams = Depends(),
@@ -248,4 +232,4 @@ async def get_workflow_runs(
 ):
     svc = WorkflowService(db)
     items, total = await svc.get_runs(workflow_id, page_params)
-    return paged(items=[WorkflowRunInfo.model_validate(i) for i in items], total=total, params=page_params)
+    return paged(items=[WorkflowRunInfo.model_validate(i) for i in items], total=total, page=page_params.page, page_size=page_params.page_size)

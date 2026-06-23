@@ -4,7 +4,7 @@ Author: ruoming
 """
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Float, Integer, SmallInteger, Text
+from sqlalchemy import BigInteger, Boolean, Float, Integer, SmallInteger, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -98,7 +98,7 @@ class AiSceneConfig(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     tenant_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default="NOW()")
-    updated_at: Mapped[datetime] = mapped_column(server_default="NOW()", onupdate="NOW()")
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
 
 class AiWorkflow(BaseModel):
@@ -155,6 +155,7 @@ class AiWorkflowRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    tenant_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True, comment="租户 ID（用于多租户隔离）")
     created_at: Mapped[datetime] = mapped_column(server_default="NOW()")
 
 

@@ -13,9 +13,7 @@
         <el-table-column prop="category" label="分类" width="120" />
         <el-table-column label="变量" min-width="200">
           <template #default="{ row }">
-            <el-tag v-for="v in row.variables" :key="v" size="small" type="info" class="mr-1">
-              {{ '{{' + v + '}}' }}
-            </el-tag>
+            <el-tag v-for="v in row.variables" :key="v" size="small" type="info" class="mr-1" v-text="`{{${v}}}`"></el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
@@ -31,7 +29,7 @@
           <template #default="{ row }">
             <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
             <el-button
-              v-if="row.status === 'draft'"
+              v-if="row.status === 0"
               link type="success"
               v-permission="'ai:prompt:publish'"
               @click="handlePublish(row)"
@@ -67,9 +65,9 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-form-item label="模板内容" prop="template_text">
+        <el-form-item label="模板内容" prop="content">
           <el-input
-            v-model="form.template_text"
+            v-model="form.content"
             type="textarea"
             :rows="12"
             placeholder="使用 {{variable}} 定义变量，如：请将以下内容翻译为{{language}}：{{content}}"
@@ -78,8 +76,8 @@
         </el-form-item>
         <el-form-item label="识别变量">
           <div class="flex gap-2 flex-wrap">
-            <el-tag v-for="v in detectedVars" :key="v" type="info">{{ '{{' + v + '}}' }}</el-tag>
-            <span v-if="!detectedVars.length" class="text-gray text-sm">在模板中使用 {{"{{"}}variable{{"}}"}}</span>
+            <el-tag v-for="v in detectedVars" :key="v" type="info" v-text="`{{${v}}}`"></el-tag>
+            <span v-if="!detectedVars.length" class="text-gray text-sm">在模板中使用 {{'{'}}{{'{'}}variable{{'}'}}{{'}'}}</span>
           </div>
         </el-form-item>
         <el-form-item label="描述">
@@ -119,8 +117,8 @@ import { promptApi } from '@/api/ai'
 import { formatDate } from '@/utils/format'
 import type { PromptTemplate } from '@/types'
 
-const statusTagMap: Record<string, string> = { draft: 'info', published: 'success', archived: '' }
-const statusLabelMap: Record<string, string> = { draft: '草稿', published: '已发布', archived: '归档' }
+const statusTagMap: Record<number, string> = { 0: 'info', 1: 'success', 2: 'warning' }
+const statusLabelMap: Record<number, string> = { 0: '草稿', 1: '已发布', 2: '归档' }
 
 const loading = ref(false)
 const tableData = ref<PromptTemplate[]>([])
@@ -156,15 +154,15 @@ const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const detectedVars = ref<string[]>([])
 const form = reactive({
-  name: '', category: '', template_text: '', description: '', variables: [] as string[],
+  name: '', category: '', content: '', description: '', variables: [] as string[],
 })
 const rules: FormRules = {
   name: [{ required: true, message: '请输入名称' }],
-  template_text: [{ required: true, message: '请输入模板内容' }],
+  content: [{ required: true, message: '请输入模板内容' }],
 }
 
 function extractVariables() {
-  const matches = form.template_text.match(/\{\{(\w+)\}\}/g) ?? []
+  const matches = form.content.match(/\{\{(\w+)\}\}/g) ?? []
   const vars = [...new Set(matches.map(m => m.replace(/\{\{|\}\}/g, '')))]
   detectedVars.value = vars
   form.variables = vars
@@ -174,7 +172,7 @@ function openDialog(row?: PromptTemplate) {
   editId.value = row?.id ?? null
   Object.assign(form, {
     name: row?.name ?? '', category: row?.category ?? '',
-    template_text: row?.template_text ?? '', description: row?.description ?? '',
+    content: row?.content ?? '', description: row?.description ?? '',
     variables: row?.variables ?? [],
   })
   detectedVars.value = form.variables

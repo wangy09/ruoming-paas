@@ -50,36 +50,77 @@ export const agentApi = {
 // ── 知识库 ────────────────────────────────────────────────────────────────────
 export const kbApi = {
   list: (params?: { page?: number; page_size?: number }) =>
-    get<ApiResponse<PageData<KnowledgeBase>>>('/api/v1/ai/knowledge-bases', params),
+    get<ApiResponse<PageData<KnowledgeBase>>>('/api/v1/ai/knowledge', params),
 
   get: (id: number) =>
-    get<ApiResponse<KnowledgeBase>>(`/api/v1/ai/knowledge-bases/${id}`),
+    get<ApiResponse<KnowledgeBase>>(`/api/v1/ai/knowledge/${id}`),
 
   create: (data: Partial<KnowledgeBase>) =>
-    post<ApiResponse<KnowledgeBase>>('/api/v1/ai/knowledge-bases', data),
+    post<ApiResponse<KnowledgeBase>>('/api/v1/ai/knowledge', data),
 
   update: (id: number, data: Partial<KnowledgeBase>) =>
-    put<ApiResponse<KnowledgeBase>>(`/api/v1/ai/knowledge-bases/${id}`, data),
+    put<ApiResponse<KnowledgeBase>>(`/api/v1/ai/knowledge/${id}`, data),
 
   delete: (id: number) =>
-    del<ApiResponse>(`/api/v1/ai/knowledge-bases/${id}`),
+    del<ApiResponse>(`/api/v1/ai/knowledge/${id}`),
 
   docs: (kbId: number, params?: { page?: number; page_size?: number }) =>
-    get<ApiResponse<PageData<KnowledgeDoc>>>(`/api/v1/ai/knowledge-bases/${kbId}/documents`, params),
+    get<ApiResponse<PageData<KnowledgeDoc>>>(`/api/v1/ai/knowledge/${kbId}/docs`, params),
 
   uploadDoc: (kbId: number, file: File) => {
     const fd = new FormData()
     fd.append('file', file)
-    return upload<ApiResponse<KnowledgeDoc>>(`/api/v1/ai/knowledge-bases/${kbId}/documents`, fd)
+    return upload<ApiResponse<KnowledgeDoc>>(`/api/v1/ai/knowledge/${kbId}/docs`, fd)
   },
 
+  uploadInit: (kbId: number, data: { filename: string; file_size: number; file_hash: string; part_count: number }) =>
+    post<ApiResponse<{ upload_id: string; part_size: number; uploaded_parts: number[] }>>(
+      `/api/v1/ai/knowledge/${kbId}/upload/init`,
+      data,
+    ),
+
+  uploadPart: (kbId: number, data: { upload_id: string; part_number: number; part_hash: string; file: Blob }) => {
+    const fd = new FormData()
+    fd.append('upload_id', data.upload_id)
+    fd.append('part_number', String(data.part_number))
+    fd.append('part_hash', data.part_hash)
+    fd.append('file', data.file)
+    return upload(`/api/v1/ai/knowledge/${kbId}/upload/part`, fd)
+  },
+
+  uploadComplete: (kbId: number, data: { upload_id: string; part_hashes: string[] }) =>
+    post<ApiResponse<KnowledgeDoc>>(`/api/v1/ai/knowledge/${kbId}/upload/complete`, data),
+
   deleteDoc: (kbId: number, docId: number) =>
-    del<ApiResponse>(`/api/v1/ai/knowledge-bases/${kbId}/documents/${docId}`),
+    del<ApiResponse>(`/api/v1/ai/knowledge/${kbId}/docs/${docId}`),
 
   search: (kbId: number, query: string, topK = 5) =>
     post<ApiResponse<Array<{ content: string; score: number }>>>(
-      `/api/v1/ai/knowledge-bases/${kbId}/search`,
+      `/api/v1/ai/knowledge/${kbId}/search`,
       { query, top_k: topK },
+    ),
+
+  getStats: (kbId: number) =>
+    get<ApiResponse<{ total_docs: number; total_chars: number; total_chunks: number; done_docs: number; processing_docs: number; error_docs: number }>>(
+      `/api/v1/ai/knowledge/${kbId}/stats`,
+    ),
+
+  reindexDoc: (kbId: number, docId: number) =>
+    post<ApiResponse>(`/api/v1/ai/knowledge/${kbId}/docs/${docId}/reindex`),
+
+  reindexAll: (kbId: number) =>
+    post<ApiResponse<{ message: string; task_id: string }>>(
+      `/api/v1/ai/knowledge/${kbId}/reindex`,
+    ),
+
+  listTasks: (kbId: number) =>
+    get<ApiResponse<Array<{ task_id: string; task_type: string; status: string; total: number; completed: number; failed: number; progress: number; created_at: string; updated_at: string }>>>(
+      `/api/v1/ai/knowledge/${kbId}/tasks`,
+    ),
+
+  getTaskStatus: (kbId: number, taskId: string) =>
+    get<ApiResponse<{ task_id: string; kb_id: number; task_type: string; status: string; total: number; completed: number; failed: number; progress: number; current_doc: string | null; result: any; error_msg: string | null; created_at: string; updated_at: string }>>(
+      `/api/v1/ai/knowledge/${kbId}/tasks/${taskId}`,
     ),
 }
 

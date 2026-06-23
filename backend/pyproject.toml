@@ -43,6 +43,8 @@ dependencies = [
     "pypdf2>=3.0.0",
     "python-docx>=1.1.0",
     "python-multipart>=0.0.9",
+    "pymupdf>=1.24.0",
+    "beautifulsoup4>=4.12.0",
     # 工具
     "httpx>=0.27.0",
     "python-jose[cryptography]>=3.3.0",
@@ -53,6 +55,7 @@ dependencies = [
     "cryptography>=42.0.0",
     # 任务队列
     "arq>=0.25.0",
+    "celery>=5.4.0",
     # 监控
     "prometheus-client>=0.20.0",
 ]

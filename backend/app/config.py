@@ -88,7 +88,17 @@ class Settings(BaseSettings):
     OSS_SECRET_KEY: str = ""
     OSS_CDN_DOMAIN: str = ""
 
-    # ── 任务队列（arq）───────────────────────────────────────────────
+    # MinIO / S3 兼容
+    MINIO_ENDPOINT: str = ""
+    MINIO_BUCKET: str = ""
+    MINIO_ACCESS_KEY: str = ""
+    MINIO_SECRET_KEY: str = ""
+    MINIO_SECURE: bool = False
+    MINIO_CDN_DOMAIN: str = ""
+
+    # ── 任务队列（Celery）───────────────────────────────────────────────
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
     WORKER_CONCURRENCY: int = 10
 
     # ── 监控 ──────────────────────────────────────────────────────────

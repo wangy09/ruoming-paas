@@ -34,7 +34,7 @@ async def list_templates(
 ):
     svc = PromptService(db, redis)
     items, total = await svc.get_list(current_user.tenant_id, page_params, category)
-    return paged(items=[PromptTemplateInfo.model_validate(i) for i in items], total=total, params=page_params)
+    return paged(items=[PromptTemplateInfo.model_validate(i) for i in items], total=total, page=page_params.page, page_size=page_params.page_size)
 
 
 @router.post("", response_model=ApiResponse[PromptTemplateInfo], summary="创建 Prompt 模板", status_code=201)
@@ -113,7 +113,7 @@ async def rollback_version(
     return ok(PromptTemplateInfo.model_validate(tmpl))
 
 
-@router.post("/{template_id}/render", response_model=ApiResponse[dict], summary="预览渲染效果")
+@router.post("/{template_id}/preview", response_model=ApiResponse[dict], summary="预览渲染效果")
 async def render_template(
     template_id: int,
     data: PromptRenderRequest,

@@ -19,23 +19,18 @@ def parse_document(source_type: str, content: bytes, filename: str = "") -> str:
     """
     ext = filename.lower().split(".")[-1] if "." in filename else ""
 
-    # 纯文本类型
     if source_type in ("text",) or ext in ("txt", "md", "markdown", "csv", "log"):
         return _parse_text(content)
 
-    # PDF
     if source_type == "file" and ext == "pdf":
         return _parse_pdf(content)
 
-    # Word
     if source_type == "file" and ext in ("docx", "doc"):
         return _parse_docx(content)
 
-    # HTML
     if source_type in ("url", "html") or ext in ("html", "htm"):
         return _parse_html(content)
 
-    # 默认尝试按 UTF-8 解码
     try:
         text = content.decode("utf-8", errors="replace")
         return text.strip()
@@ -44,7 +39,6 @@ def parse_document(source_type: str, content: bytes, filename: str = "") -> str:
 
 
 def _parse_text(content: bytes) -> str:
-    """纯文本解析"""
     try:
         return content.decode("utf-8", errors="replace").strip()
     except Exception:
@@ -52,13 +46,16 @@ def _parse_text(content: bytes) -> str:
 
 
 def _parse_pdf(content: bytes) -> str:
-    """PDF 解析（依赖 pymupdf 或 pdfminer）"""
     try:
-        import fitz  # pymupdf
+        import fitz
         doc = fitz.open(stream=content, filetype="pdf")
-        pages = [page.get_text() for page in doc]
+        pages = []
+        for page in doc:
+            text = page.get_text()
+            if text and text.strip():
+                pages.append(text.strip())
         doc.close()
-        return "\n\n".join(p.strip() for p in pages if p.strip())
+        return "\n\n".join(pages)
     except ImportError:
         pass
 
@@ -67,37 +64,51 @@ def _parse_pdf(content: bytes) -> str:
         from pdfminer.layout import LAParams
         output = io.StringIO()
         extract_text_to_fp(io.BytesIO(content), output, laparams=LAParams())
-        return output.getvalue().strip()
+        text = output.getvalue().strip()
+        if not text:
+            raise ValueError("pdfminer 返回空文本")
+        return text
     except ImportError:
         logger.warning("pdf_parser_not_available", note="请安装 pymupdf 或 pdfminer.six")
         return "[PDF 解析失败：请安装 pymupdf 或 pdfminer.six]"
+    except Exception as e:
+        logger.error("pdf_parse_failed", error=str(e))
+        return "[PDF 解析失败]"
 
 
 def _parse_docx(content: bytes) -> str:
-    """Word 文档解析（依赖 python-docx）"""
     try:
         from docx import Document
         doc = Document(io.BytesIO(content))
-        return "\n".join(para.text for para in doc.paragraphs if para.text.strip())
+        paragraphs = []
+        for para in doc.paragraphs:
+            if para.text and para.text.strip():
+                paragraphs.append(para.text.strip())
+        if not paragraphs:
+            return ""
+        return "\n".join(paragraphs)
     except ImportError:
         logger.warning("docx_parser_not_available", note="请安装 python-docx")
         return "[DOCX 解析失败：请安装 python-docx]"
+    except Exception as e:
+        logger.error("docx_parse_failed", error=str(e))
+        return "[DOCX 解析失败]"
 
 
 def _parse_html(content: bytes) -> str:
-    """HTML 解析，移除标签（依赖 beautifulsoup4）"""
     try:
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(content, "html.parser")
-        # 移除脚本和样式
-        for tag in soup(["script", "style", "head", "nav", "footer"]):
+        for tag in soup(["script", "style", "head", "nav", "footer", "iframe"]):
             tag.decompose()
         text = soup.get_text(separator="\n")
-        # 清理多余空行
         lines = [line.strip() for line in text.split("\n")]
-        return "\n".join(line for line in lines if line)
+        cleaned = "\n".join(line for line in lines if line)
+        return cleaned
     except ImportError:
         logger.warning("html_parser_not_available", note="请安装 beautifulsoup4")
-        # 降级：用正则删除 HTML 标签
         text = re.sub(r"<[^>]+>", " ", content.decode("utf-8", errors="replace"))
         return re.sub(r"\s+", " ", text).strip()
+    except Exception as e:
+        logger.error("html_parse_failed", error=str(e))
+        return "[HTML 解析失败]"

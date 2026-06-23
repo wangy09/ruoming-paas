@@ -10,7 +10,7 @@ import asyncio
 import time
 import uuid
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,6 +88,114 @@ class AgentRunner:
             return result
         except asyncio.TimeoutError:
             raise AgentTimeoutError(f"Agent [{self.agent.name}] 执行超时（{timeout}s）")
+
+    async def stream_run(
+        self,
+        user_message: str,
+        *,
+        session_id: str | None = None,
+        conversation_history: list[dict] | None = None,
+        scene_type: str | None = None,
+        has_attachment: bool = False,
+        timeout_sec: int | None = None,
+        tenant_id: int | None = None,
+        user_id: int | None = None,
+        conversation_id: int | None = None,
+    ) -> AsyncGenerator[dict, None]:
+        """
+        流式执行 Agent。
+        yield 事件 dict：{type: 'meta', ...} | {type: 'content', text: str} | {type: 'done'} | {type: 'error', message: str}
+        """
+        sid = session_id or str(uuid.uuid4())
+        timeout = timeout_sec or self.agent.node_timeout_sec or 60
+
+        try:
+            async for event in self._do_stream_run(
+                user_message=user_message,
+                session_id=sid,
+                history=conversation_history or [],
+                explicit_scene=scene_type,
+                has_attachment=has_attachment,
+                tenant_id=tenant_id,
+                user_id=user_id,
+            ):
+                event["session_id"] = sid
+                event["conversation_id"] = conversation_id or 0
+                yield event
+        except asyncio.TimeoutError:
+            yield {"type": "error", "message": f"Agent [{self.agent.name}] 执行超时（{timeout}s）"}
+        except Exception as e:
+            yield {"type": "error", "message": str(e)}
+
+    async def _do_stream_run(
+        self,
+        user_message: str,
+        session_id: str,
+        history: list[dict],
+        explicit_scene: str | None,
+        has_attachment: bool,
+        tenant_id: int | None,
+        user_id: int | None,
+    ) -> AsyncGenerator[dict, None]:
+        """内部流式执行逻辑"""
+        # 1. 场景路由
+        scene = await self._resolve_scene(
+            user_message, explicit_scene, has_attachment, tenant_id, user_id
+        )
+        yield {"type": "meta", "scene": scene.scene_type, "scene_source": scene.source}
+
+        # 2. 加载场景配置（合并参数）
+        effective = await self._merge_effective_config(scene.scene_type, tenant_id, user_id)
+
+        # 3. RAG 检索（如果有）
+        rag_context = ""
+        if effective.get("enable_rag") and self.agent.kb_ids:
+            rag_context = await self._retrieve_rag(
+                user_message,
+                kb_ids=self.agent.kb_ids,
+                top_k=effective.get("rag_top_k", 5),
+                score_threshold=effective.get("rag_score_threshold", 0.5),
+            )
+            if rag_context:
+                yield {"type": "meta", "rag_context_loaded": True}
+
+        system_prompt = effective.get("system_prompt") or self.agent.system_prompt or ""
+        if rag_context:
+            system_prompt = f"{system_prompt}\n\n{rag_context}"
+
+        # 4. 流式 LLM 调用
+        model_config_id = effective.get("model_config_id") or self.agent.model_config_id
+        temperature = effective.get("temperature", self.agent.temperature)
+        max_tokens = effective.get("max_tokens", self.agent.max_tokens)
+
+        from app.ai.llm.providers.base import ChatMessage
+        from app.ai.llm.service import LLMService
+
+        llm_svc = LLMService()
+
+        # 根据 memory_type 获取记忆
+        memories = await self._get_memories(history)
+
+        messages: list[ChatMessage] = []
+        if system_prompt:
+            messages.append(ChatMessage(role="system", content=system_prompt))
+        for h in memories:
+            messages.append(ChatMessage(role=h["role"], content=h["content"]))
+        messages.append(ChatMessage(role="user", content=user_message))
+
+        # 流式输出
+        full_output = ""
+        async for chunk in llm_svc.stream_chat(
+            messages=messages,
+            model_config_id=model_config_id,
+            db=self.db,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        ):
+            full_output += chunk
+            yield {"type": "content", "text": chunk}
+
+        yield {"type": "done", "output": full_output}
 
     async def _do_run(
         self,
@@ -195,7 +303,7 @@ class AgentRunner:
         tenant_id: int | None,
         user_id: int | None,
     ) -> dict:
-        """场景配置 > Agent 配置，返回最终生效参数"""
+        """场景配置 > Agent 配置 > Prompt 模板，返回最终生效参数"""
         from sqlalchemy import select
 
         result = await self.db.execute(
@@ -206,13 +314,35 @@ class AgentRunner:
         )
         scene_cfg: AiSceneConfig | None = result.scalar_one_or_none()
 
+        # Prompt 模板优先级：场景配置 > Agent 配置
+        prompt_template_id = (
+            scene_cfg.prompt_template_id if scene_cfg and scene_cfg.prompt_template_id else None
+        ) or self.agent.prompt_template_id
+        prompt_version = (
+            scene_cfg.prompt_version if scene_cfg and scene_cfg.prompt_version else None
+        ) or getattr(self.agent, 'prompt_version', None)
+
+        # 如果有 prompt_template_id，尝试加载模板内容
+        system_prompt_from_template: str | None = None
+        if prompt_template_id:
+            try:
+                from app.ai.prompt.service import PromptService
+                prompt_svc = PromptService(self.db)
+                system_prompt_from_template = await prompt_svc.get_version_content(
+                    prompt_template_id, prompt_version
+                )
+            except Exception:
+                pass  # prompt 模板加载失败不影响主流程
+
         return {
             "model_config_id": (
                 scene_cfg.model_config_id if scene_cfg else None
             ) or self.agent.model_config_id,
             "system_prompt": (
-                scene_cfg.system_prompt if scene_cfg else None
-            ) or self.agent.system_prompt,
+                system_prompt_from_template
+                or (scene_cfg.system_prompt if scene_cfg else None)
+                or self.agent.system_prompt
+            ),
             "temperature": (
                 scene_cfg.temperature
                 if scene_cfg and scene_cfg.temperature is not None
@@ -267,6 +397,44 @@ class AgentRunner:
 
     # ── LLM 推理 ──────────────────────────────────────────────────────────────
 
+    async def _get_memories(self, history: list[dict]) -> list[dict]:
+        """
+        根据 memory_type 获取记忆。
+        - buffer: 返回最近 max_rounds * 2 条消息
+        - summary: 返回摘要 + 最近 rounds 条消息
+        - vector: （未来扩展）基于语义检索相关历史
+        """
+        memory_type = getattr(self.agent, 'memory_type', 'buffer') or 'buffer'
+        max_rounds = getattr(self.agent, 'max_rounds', 10) or 10
+
+        if memory_type == 'buffer' or not history:
+            # buffer 模式：保留最近 N 轮对话
+            return history[-max_rounds * 2:] if history else []
+
+        if memory_type == 'summary':
+            # summary 模式：保留最近 N 轮 + 早期摘要
+            # 简化实现：超过 max_rounds 的历史返回摘要占位
+            if len(history) <= max_rounds * 2:
+                return history
+            # TODO: 实现 LLM 摘要生成
+            # 长期记忆 = summarize(早期历史)
+            # 返回 [{"role": "system", "content": f"对话摘要: {summary}"}] + 近期历史
+            recent = history[-max_rounds * 2:]
+            summary_content = f"[早期对话摘要，共 {len(history) - max_rounds * 2} 条消息已省略]"
+            return [{"role": "system", "content": summary_content}] + recent
+
+        if memory_type == 'vector':
+            # vector 模式：（未来扩展）需要 embedding 模型 + 向量存储
+            # TODO: 实现语义检索
+            # 1. embedding_model 嵌入当前用户消息
+            # 2. 向量数据库相似度搜索
+            # 3. 返回相关历史
+            logger.warning("memory_vector_not_implemented", note="向量记忆模式需要 embedding 基础设施")
+            return history[-max_rounds * 2:] if history else []
+
+        # 默认 buffer
+        return history[-max_rounds * 2:] if history else []
+
     async def _invoke_llm(
         self,
         user_message: str,
@@ -285,11 +453,14 @@ class AgentRunner:
 
         llm_svc = LLMService()
 
+        # 根据 memory_type 获取记忆
+        memories = await self._get_memories(history)
+
         # 构建消息列表
         messages: list[ChatMessage] = []
         if system_prompt:
             messages.append(ChatMessage(role="system", content=system_prompt))
-        for h in history[-self.agent.max_rounds * 2:]:
+        for h in memories:
             messages.append(ChatMessage(role=h["role"], content=h["content"]))
         messages.append(ChatMessage(role="user", content=user_message))
 
@@ -427,11 +598,22 @@ class WorkflowOrchestrator:
         self.db = db
         self.tool_registry = tool_registry
         self._context: dict[str, Any] = {}
-        self._context_lock = asyncio.Lock()
+        # per-key 锁，避免全局锁在嵌套并行时死锁
+        self._key_locks: dict[str, asyncio.Lock] = {}
+        self._key_locks_lock = asyncio.Lock()
         self._node_exec_count: dict[str, int] = {}
+        self._run_id: int | None = None
+
+    async def _get_key_lock(self, key: str) -> asyncio.Lock:
+        """获取指定 key 的锁（lazy 创建）"""
+        async with self._key_locks_lock:
+            if key not in self._key_locks:
+                self._key_locks[key] = asyncio.Lock()
+            return self._key_locks[key]
 
     async def run(self, input_data: dict, run_id: int) -> dict:
         """执行工作流，返回最终输出"""
+        self._run_id = run_id
         await self._set_context("start", input_data)
         node_map = {n["id"]: n for n in self.graph["nodes"]}
 
@@ -440,14 +622,57 @@ class WorkflowOrchestrator:
             node = node_map.get(current_node_id)
             if not node:
                 break
-            current_node_id = await self._run_node(node, run_id)
+            current_node_id = await self._run_node(node)
 
         ctx = await self._get_context()
         return ctx.get("end", {})
 
-    async def _run_node(self, node: dict, run_id: int) -> str | None:
+    async def _set_context(self, key: str, value: Any) -> None:
+        """设置 context 值（带 per-key 锁，支持并行安全）"""
+        lock = await self._get_key_lock(key)
+        async with lock:
+            self._context[key] = value
+
+    async def _get_context(self) -> dict:
+        """获取全部 context（全局只读，无需锁）"""
+        return deepcopy(self._context)
+
+    async def _record_node_run(
+        self,
+        node_id: str,
+        node_type: str | None,
+        status: str,
+        input_data: dict | None = None,
+        output_data: dict | None = None,
+        error: str | None = None,
+    ) -> None:
+        """写入节点执行明细到 AiWorkflowNodeRun"""
+        if not self._run_id:
+            return
+        try:
+            from datetime import datetime, UTC
+            from app.ai.agent.models import AiWorkflowNodeRun
+
+            node_run = AiWorkflowNodeRun(
+                run_id=self._run_id,
+                node_id=node_id,
+                node_type=node_type,
+                status=status,
+                input=input_data,
+                output=output_data,
+                error=error,
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            )
+            self.db.add(node_run)
+            await self.db.flush()
+        except Exception:
+            pass  # 节点记录失败不影响主流程
+
+    async def _run_node(self, node: dict) -> str | None:
         """执行单个节点，返回下一个节点 ID"""
         node_id = node["id"]
+        node_type = node["type"]
 
         # 循环次数守卫
         self._node_exec_count[node_id] = self._node_exec_count.get(node_id, 0) + 1
@@ -457,35 +682,48 @@ class WorkflowOrchestrator:
                 f"节点 [{node_id}] 执行次数超过限制 {max_loop}，工作流终止"
             )
 
-        node_type = node["type"]
         condition_result = None
+        iteration = self._node_exec_count[node_id]
 
         match node_type:
             case "start":
-                pass
+                await self._record_node_run(node_id, node_type, "success", input_data={"start": True})
             case "end":
                 ctx = await self._get_context()
                 # 将所有 context 汇总到 end 节点
                 await self._set_context("end", ctx)
+                await self._record_node_run(node_id, node_type, "success", output_data=ctx)
             case "agent":
+                ctx = await self._get_context()
                 timeout = node.get("config", {}).get("timeout_sec", 60)
+                node_input = {"input_template": node.get("config", {}).get("input_template", "{input}"), "context_keys": list(ctx.keys())}
                 try:
                     result = await asyncio.wait_for(
                         self._run_agent_node(node),
                         timeout=timeout,
                     )
+                    await self._set_context(node_id, result)
+                    await self._record_node_run(node_id, node_type, "success", input_data=node_input, output_data=result)
                 except asyncio.TimeoutError:
+                    await self._record_node_run(node_id, node_type, "failed", input_data=node_input, error=f"执行超时（{timeout}s）")
                     raise AgentTimeoutError(f"节点 [{node_id}] 执行超时（{timeout}s）")
-                await self._set_context(node_id, result)
+                except Exception as e:
+                    await self._record_node_run(node_id, node_type, "failed", input_data=node_input, error=str(e))
+                    raise
             case "tool":
+                ctx = await self._get_context()
+                node_input = {"tool_id": node.get("config", {}).get("tool_id"), "params": node.get("config", {}).get("params", {})}
                 result = await self._run_tool_node(node)
                 await self._set_context(node_id, result)
+                await self._record_node_run(node_id, node_type, "success" if "error" not in result else "failed", input_data=node_input, output_data=result, error=result.get("error"))
             case "condition":
                 ctx = await self._get_context()
+                node_input = {"condition": node.get("config", {}).get("condition", "")}
                 condition_result = self._evaluate_condition(node, ctx)
                 await self._set_context(node_id, {"result": condition_result})
+                await self._record_node_run(node_id, node_type, "success", input_data=node_input, output_data={"result": condition_result})
             case "parallel":
-                await self._run_parallel_nodes(node, run_id)
+                await self._run_parallel_nodes(node)
 
         return self._pick_next_node(node_id, condition_result)
 
@@ -540,7 +778,7 @@ class WorkflowOrchestrator:
         except Exception as e:
             return {"error": str(e)}
 
-    async def _run_parallel_nodes(self, parallel_node: dict, run_id: int) -> None:
+    async def _run_parallel_nodes(self, parallel_node: dict) -> None:
         sub_node_ids = parallel_node.get("config", {}).get("nodes", [])
         node_map = {n["id"]: n for n in self.graph["nodes"]}
 
@@ -554,17 +792,133 @@ class WorkflowOrchestrator:
         for nid, result in zip(sub_node_ids, results):
             if isinstance(result, Exception):
                 await self._set_context(nid, {"error": str(result)})
-            else:
+                await self._record_node_run(nid, "agent", "failed", error=str(result))
+            elif isinstance(result, dict):
                 await self._set_context(nid, result)
+                await self._record_node_run(nid, "agent", "success", output_data=result)
+            else:
+                await self._set_context(nid, {"error": str(result)})
+                await self._record_node_run(nid, "agent", "failed", error=str(result))
 
     def _evaluate_condition(self, node: dict, context: dict) -> bool:
-        """安全地对条件表达式求值（限制执行环境，仅允许比较运算）"""
+        """安全地对条件表达式求值（使用 AST 解析，禁止任意代码执行）"""
+        import ast
+        import operator
+
         condition = node.get("config", {}).get("condition", "false")
         rendered = self._render_template(condition, context)
         try:
-            return bool(eval(rendered, {"__builtins__": {}}, {}))  # noqa: S307
+            return self._safe_eval(rendered)
         except Exception:
             return False
+
+    def _safe_eval(self, expr: str) -> bool:
+        """使用 AST 的安全表达式求值器，仅支持比较运算和布尔逻辑"""
+        import ast
+        import operator
+
+        OPERATORS = {
+            ast.Eq: operator.eq,
+            ast.NotEq: operator.ne,
+            ast.Lt: operator.lt,
+            ast.LtE: operator.le,
+            ast.Gt: operator.gt,
+            ast.GtE: operator.ge,
+            ast.Is: operator.is_,
+            ast.IsNot: operator.is_not,
+            ast.In: lambda a, b: a in b,
+            ast.NotIn: lambda a, b: a not in b,
+            ast.And: None,  # handled specially
+            ast.Or: None,  # handled specially
+            ast.Not: None,  # handled specially
+            ast.NameConstant: None,  # True/False/None (Python 3.7-)
+            ast.Constant: None,  # True/False/None (Python 3.8+)
+            ast.Num: None,  # numbers (Python 3.7)
+            ast.Str: None,  # strings (Python 3.7)
+            ast.Name: None,  # identifiers
+            ast.Subscript: None,
+        }
+
+        # 二元运算映射
+        BINARY_OPS = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.truediv,
+            ast.FloorDiv: operator.floordiv,
+            ast.Mod: operator.mod,
+            ast.Pow: operator.pow,
+        }
+
+        def safe_name(node: ast.Name) -> bool | str | int | float | None:
+            # 允许的标识符
+            ALLOWED_NAMES = {
+                "true": True, "false": False, "null": None, "none": None,
+                "True": True, "False": False, "None": None,
+            }
+            if node.id in ALLOWED_NAMES:
+                return ALLOWED_NAMES[node.id]
+            # 从上下文查找
+            raise NameError(f"未知变量: {node.id}")
+
+        def safe_getattr(node: ast.Attribute) -> Any:
+            left = visit(node.value)
+            return getattr(left, node.attr)
+
+        def safe_subscript(node: ast.Subscript) -> Any:
+            val = visit(node.value)
+            key = visit(node.slice)
+            return val[key]
+
+        def visit(n: ast.AST) -> Any:
+            if isinstance(n, ast.Constant):
+                return n.value
+            if isinstance(n, ast.NameConstant):  # Python 3.7
+                return n.value
+            if isinstance(n, ast.Num):  # Python 3.7
+                return n.n
+            if isinstance(n, ast.Str):  # Python 3.7
+                return n.s
+            if isinstance(n, ast.Name):
+                return safe_name(n)
+            if isinstance(n, ast.Attribute):
+                return safe_getattr(n)
+            if isinstance(n, ast.BinOp):
+                op_type = type(n.op)
+                if op_type in BINARY_OPS:
+                    return BINARY_OPS[op_type](visit(n.left), visit(n.right))
+                raise ValueError(f"不支持的二元运算符: {op_type.__name__}")
+            if isinstance(n, ast.UnaryOp):
+                if isinstance(n.op, ast.Not):
+                    return not visit(n.operand)
+                if isinstance(n.op, ast.USub):
+                    return -visit(n.operand)
+                if isinstance(n.op, ast.UAdd):
+                    return +visit(n.operand)
+                raise ValueError(f"不支持的一元运算符: {type(n.op).__name__}")
+            if isinstance(n, ast.Subscript):
+                return safe_subscript(n)
+            if isinstance(n, ast.BoolOp):
+                if isinstance(n.op, ast.And):
+                    return all(visit(v) for v in n.values)
+                if isinstance(n.op, ast.Or):
+                    return any(visit(v) for v in n.values)
+                raise ValueError(f"不支持的布尔运算符: {type(n.op).__name__}")
+            if isinstance(n, ast.Compare):
+                left = visit(n.left)
+                for op, comparator in zip(n.ops, n.comparators):
+                    op_func = OPERATORS.get(type(op))  # type: ignore[index]
+                    if op_func is None:
+                        raise ValueError(f"不支持的比较运算符: {type(op).__name__}")
+                    right = visit(comparator)
+                    if not op_func(left, right):
+                        return False
+                    left = right
+                return True
+            raise ValueError(f"不支持的 AST 节点: {type(n).__name__}")
+
+        tree = ast.parse(expr, mode="eval")
+        return bool(visit(tree.body))
 
     def _render_template(self, template: str, context: dict) -> str:
         """将 {{node_id.field}} 形式的模板变量替换为 context 中的值"""
@@ -578,11 +932,3 @@ class WorkflowOrchestrator:
             return str(val)
 
         return re.sub(r"\{\{(.+?)\}\}", replace, template)
-
-    async def _set_context(self, key: str, value: Any) -> None:
-        async with self._context_lock:
-            self._context[key] = value
-
-    async def _get_context(self) -> dict:
-        async with self._context_lock:
-            return deepcopy(self._context)

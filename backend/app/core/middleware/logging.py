@@ -117,6 +117,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     pass
 
         event_type = f"{method.lower()}.{path.replace('/', '.').strip('.')}"
+        # 限制 event_type 长度，避免数据库字段溢出
+        if len(event_type) > 64:
+            event_type = event_type[:61] + "..."
         parts = path.strip("/").split("/")
         module = parts[1] if len(parts) >= 2 and parts[0] == "api" else None
         resource_type = parts[2] if len(parts) >= 3 and parts[0] == "api" else None

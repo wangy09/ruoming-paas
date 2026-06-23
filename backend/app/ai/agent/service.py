@@ -202,43 +202,75 @@ class WorkflowService:
         input_data: dict,
         session_id: str | None,
         user_id: int,
+        tenant_id: int | None = None,
     ) -> AiWorkflowRun:
         workflow = await self.db.get(AiWorkflow, workflow_id)
         if not workflow or workflow.is_deleted:
-            raise ValueError(f"工作流 ID={workflow_id} 不存在")
+            from app.core.exceptions import NotFoundException
+            raise NotFoundException(f"工作流 ID={workflow_id} 不存在")
 
         graph_json = await self.get_current_graph(workflow_id)
         if not graph_json:
-            raise ValueError("工作流图定义不存在")
+            from app.core.exceptions import AppException
+            raise AppException(message="工作流图定义不存在")
 
         sid = session_id or str(uuid.uuid4())
+
+        # 先创建 pending 状态的运行记录
         run = AiWorkflowRun(
             workflow_id=workflow_id,
             workflow_version=workflow.current_version,
             session_id=sid,
-            status="running",
+            status="pending",
             input=input_data,
             started_at=datetime.now(UTC),
             created_by=user_id,
+            tenant_id=tenant_id,
         )
         self.db.add(run)
-        await self.db.flush()
+        await self.db.flush()  # 获取 run.id，但不提交
+
+        # 先执行 AI 调用（可能在 flush 之后但 commit 之前失败）
+        output: dict = {}
+        error_msg: str | None = None
 
         try:
             from app.ai.agent.executor import WorkflowOrchestrator
             orchestrator = WorkflowOrchestrator(graph_json=graph_json, db=self.db)
             output = await orchestrator.run(input_data=input_data, run_id=run.id)
+
+            # 成功时更新状态并提交
             run.status = "success"
             run.output = output
-        except Exception as e:
-            run.status = "failed"
-            run.error = str(e)
-        finally:
             run.finished_at = datetime.now(UTC)
             await self.db.commit()
             await self.db.refresh(run)
+            return run
+        except Exception as e:
+            import traceback as tb
+            error_msg = f"{str(e)}\n{tb.format_exc()}"
 
-        return run
+            # 失败时回滚事务，不保留记录
+            await self.db.rollback()
+
+            # 重新创建失败记录并提交（用于问题追踪）
+            failed_run = AiWorkflowRun(
+                workflow_id=workflow_id,
+                workflow_version=workflow.current_version,
+                session_id=sid,
+                status="failed",
+                input=input_data,
+                output={},
+                error=error_msg,
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+                created_by=user_id,
+                tenant_id=tenant_id,
+            )
+            self.db.add(failed_run)
+            await self.db.commit()
+            await self.db.refresh(failed_run)
+            return failed_run
 
     async def get_runs(
         self, workflow_id: int, params: PageParams
