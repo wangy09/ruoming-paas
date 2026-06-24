@@ -27,8 +27,11 @@ class AgentService:
         params: PageParams,
         keyword: str | None = None,
     ) -> tuple[list[AiAgent], int]:
+        from app.ai.llm.models import AiModelConfig
+
         stmt = (
             select(AiAgent)
+            .outerjoin(AiModelConfig, AiAgent.model_config_id == AiModelConfig.id)
             .where(AiAgent.is_deleted == False)
         )
         if tenant_id is not None:

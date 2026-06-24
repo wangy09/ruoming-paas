@@ -285,11 +285,26 @@ class KnowledgeService:
             raise NotFoundException(f"文档 ID={doc_id} 不存在")
 
         from app.ai.knowledge.tasks import reindex_single_task
+        from app.ai.knowledge.models import AiKnowledgeTask
 
         task = reindex_single_task.delay(
             doc_id=doc_id,
             kb_id=kb_id,
         )
+
+        task_record = AiKnowledgeTask(
+            task_id=task.task_id,
+            kb_id=kb_id,
+            task_type="reindex_single",
+            status="pending",
+            total=1,
+            completed=0,
+            failed=0,
+            progress=0,
+            current_doc=doc.name,
+        )
+        self.db.add(task_record)
+        await self.db.commit()
 
         return {"message": "重新索引任务已提交", "task_id": task.task_id}
 
@@ -298,10 +313,32 @@ class KnowledgeService:
         kb = await self.get_by_id(kb_id)
 
         from app.ai.knowledge.tasks import reindex_all_task
+        from app.ai.knowledge.models import AiKnowledgeTask
+
+        doc_count_result = await self.db.execute(
+            select(func.count(AiKnowledgeDoc.id))
+            .where(AiKnowledgeDoc.kb_id == kb_id)
+            .where(AiKnowledgeDoc.is_deleted == False)
+        )
+        doc_count = doc_count_result.scalar_one() or 0
 
         task = reindex_all_task.delay(
             kb_id=kb_id,
         )
+
+        task_record = AiKnowledgeTask(
+            task_id=task.task_id,
+            kb_id=kb_id,
+            task_type="reindex_all",
+            status="pending",
+            total=doc_count,
+            completed=0,
+            failed=0,
+            progress=0,
+            current_doc="",
+        )
+        self.db.add(task_record)
+        await self.db.commit()
 
         return {"message": "重新索引任务已提交", "task_id": task.task_id}
 
@@ -361,6 +398,95 @@ class KnowledgeService:
             }
             for t in tasks
         ]
+
+    # ── URL 抓取来源 ──────────────────────────────────────────────────────────
+
+    async def add_url_sources(
+        self,
+        kb_id: int,
+        urls: list[str],
+        name: str | None,
+        css_selector: str | None,
+    ) -> list[AiKnowledgeDoc]:
+        """为每个 URL 创建文档记录，并派发抓取+索引 Celery 任务"""
+        await self.get_by_id(kb_id)
+        from app.ai.knowledge.tasks import fetch_url_task
+
+        docs: list[AiKnowledgeDoc] = []
+        for url in urls:
+            doc_name = name or url[:80]
+            doc = AiKnowledgeDoc(
+                kb_id=kb_id,
+                name=doc_name,
+                source_type="url",
+                source_url=url,
+                file_type="html",
+                file_size=0,
+                status="pending",
+            )
+            self.db.add(doc)
+            await self.db.flush()
+
+            try:
+                fetch_url_task.delay(
+                    doc_id=doc.id,
+                    kb_id=kb_id,
+                    url=url,
+                    css_selector=css_selector,
+                )
+            except Exception as e:
+                logger.warning("celery_not_available_url", doc_id=doc.id, error=str(e))
+                # Celery 不可用时标记错误，提示用户手动重试
+                doc.status = "error"
+                doc.error_msg = f"任务派发失败（Celery 未启动）：{e}"
+
+            docs.append(doc)
+
+        await self.db.commit()
+        for doc in docs:
+            await self.db.refresh(doc)
+        return docs
+
+    # ── API / 数据库来源 ──────────────────────────────────────────────────────
+
+    async def add_api_source(
+        self,
+        kb_id: int,
+        name: str,
+        source_type: str,
+        config: dict,
+    ) -> AiKnowledgeDoc:
+        """创建 API/数据库来源文档记录，并派发抓取任务"""
+        await self.get_by_id(kb_id)
+        from app.ai.knowledge.tasks import fetch_api_task
+
+        doc = AiKnowledgeDoc(
+            kb_id=kb_id,
+            name=name,
+            source_type=source_type,
+            source_config=config,
+            file_type="text",
+            file_size=0,
+            status="pending",
+        )
+        self.db.add(doc)
+        await self.db.flush()
+
+        try:
+            fetch_api_task.delay(
+                doc_id=doc.id,
+                kb_id=kb_id,
+                source_type=source_type,
+                config=config,
+            )
+        except Exception as e:
+            logger.warning("celery_not_available_api", doc_id=doc.id, error=str(e))
+            doc.status = "error"
+            doc.error_msg = f"任务派发失败（Celery 未启动）：{e}"
+
+        await self.db.commit()
+        await self.db.refresh(doc)
+        return doc
 
     # ── 检索 ───────────────────────────────────────────────────────────────────
 

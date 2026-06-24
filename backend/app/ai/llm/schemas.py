@@ -10,10 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class ModelConfigCreate(BaseModel):
     """创建模型配置"""
     name: str = Field(..., max_length=64, description="配置名称")
-    provider: str = Field(..., description="提供商：zhuilu / openai / ollama")
+    provider: str = Field(..., max_length=64, description="厂商标识（自由填写，如 openai/qwen/doubao/deepseek/ollama/zhuilu 等）")
+    protocol: str = Field("openai_compat", description="通信协议：openai_compat（默认）/ anthropic / gemini")
     model_id: str = Field(..., max_length=128, description="模型 ID")
     api_key: str | None = Field(None, description="API Key（明文，写入时自动加密）")
-    base_url: str | None = Field(None, max_length=256, description="API 基础 URL")
+    base_url: str | None = Field(None, max_length=512, description="API 基础 URL")
     is_default: bool = Field(False, description="是否为默认对话模型")
     is_embed: bool = Field(False, description="是否为向量化专用模型")
     is_rerank: bool = Field(False, description="是否为 Rerank 模型")
@@ -21,12 +22,12 @@ class ModelConfigCreate(BaseModel):
     context_length: int = Field(8192, ge=512, description="上下文窗口长度")
     remark: str | None = None
 
-    @field_validator("provider")
+    @field_validator("protocol")
     @classmethod
-    def validate_provider(cls, v: str) -> str:
-        allowed = {"zhuilu", "openai", "ollama", "azure"}
+    def validate_protocol(cls, v: str) -> str:
+        allowed = {"openai_compat", "anthropic", "gemini"}
         if v not in allowed:
-            raise ValueError(f"provider 必须是 {allowed} 之一")
+            raise ValueError(f"protocol 必须是 {allowed} 之一")
         return v
 
 

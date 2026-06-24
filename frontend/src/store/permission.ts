@@ -7,7 +7,7 @@ import router from '@/router'
 
 // 使用 import.meta.glob 预加载所有 views 下的组件
 const modules = import.meta.glob('@/views/**/*.vue')
-console.log('Available modules:', Object.keys(modules).slice(0, 10))
+// console.log('Availables modules:', Object.keys(modules).slice(0, 10))
 
 export const usePermissionStore = defineStore('permission', () => {
   const permissions = ref<UserPermissions>({
@@ -82,7 +82,7 @@ export const usePermissionStore = defineStore('permission', () => {
           // 使用 import.meta.glob 映射的组件
           // import.meta.glob 的键格式是 /src/views/...
           const moduleKey = `/src/${componentPath}`
-          console.log('尝试加载组件:', { menu: menu.title, component: menu.component, moduleKey, found: !!modules[moduleKey] })
+          // console.log('尝试加载组件:', { menu: menu.title, component: menu.component, moduleKey, found: !!modules[moduleKey] })
           if (modules[moduleKey]) {
             route.component = modules[moduleKey]
           } else {

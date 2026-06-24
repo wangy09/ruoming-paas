@@ -17,9 +17,22 @@
               :class="{ active: currentKb?.id === kb.id }"
               @click="selectKb(kb)"
             >
-              <div class="kb-item-title">
-                <el-icon><Collection /></el-icon>
-                {{ kb.name }}
+                  <div class="kb-item-header">
+                <div class="kb-item-title">
+                  <el-icon><Collection /></el-icon>
+                  {{ kb.name }}
+                </div>
+                <div class="kb-item-actions" @click.stop>
+                  <el-dropdown trigger="click" @command="cmd => handleKbCommand(cmd, kb)">
+                    <el-icon class="kb-more"><MoreFilled /></el-icon>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item v-if="permStore.hasPermission('ai:kb:update')" command="edit">编辑</el-dropdown-item>
+                        <el-dropdown-item v-if="permStore.hasPermission('ai:kb:delete')" command="delete" divided>删除</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
               </div>
               <div class="kb-item-meta">
                 {{ kb.doc_count }} 个文档 · {{ kb.chunk_count }} 个分块
@@ -54,6 +67,24 @@
                   上传文档
                 </el-button>
                 <input ref="fileInput" type="file" accept=".txt,.md,.pdf,.docx,.html" hidden @change="handleUpload" />
+                <el-dropdown v-permission="'ai:kb:upload'" @command="handleSourceCommand">
+                  <el-button :icon="Plus">
+                    添加来源<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="url">
+                        <el-icon><Link /></el-icon> URL 抓取
+                      </el-dropdown-item>
+                      <el-dropdown-item command="api">
+                        <el-icon><Connection /></el-icon> API 接口
+                      </el-dropdown-item>
+                      <el-dropdown-item command="database">
+                        <el-icon><Grid /></el-icon> 数据库查询
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
                 <div v-if="uploading" class="w-full mt-2">
                   <div class="flex justify-between text-xs text-gray-500 mb-1">
                     <span>{{ uploadFileName }}</span>
@@ -74,8 +105,15 @@
             </div>
 
             <el-table v-loading="docLoading" :data="docList" border stripe style="flex:1">
-              <el-table-column prop="name" label="文件名" min-width="200" show-overflow-tooltip />
-              <el-table-column prop="file_type" label="类型" width="80" align="center" />
+              <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
+              <el-table-column label="来源" width="100" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="sourceTagType[row.source_type]" size="small">
+                    {{ sourceLabel[row.source_type] || row.source_type }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="file_type" label="类型" width="70" align="center" />
               <el-table-column label="大小" width="90" align="right">
                 <template #default="{ row }">{{ formatBytes(row.file_size) }}</template>
               </el-table-column>
@@ -110,7 +148,7 @@
                     v-if="row.status === 'done'"
                     @click="reindexOne(row)"
                   >重新索引</el-button>
-                  <el-button link type="danger" size="small" @click="deleteDoc(row)">删除</el-button>
+                  <el-button link type="danger" size="small" v-permission="'ai:kb:doc:delete'" @click="deleteDoc(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -127,13 +165,24 @@
       </el-col>
     </el-row>
 
-    <el-dialog v-model="kbDialogVisible" title="新建知识库" width="480px" destroy-on-close>
-      <el-form ref="kbFormRef" :model="kbForm" :rules="kbRules" label-width="100px">
+    <el-dialog v-model="kbDialogVisible" :title="kbEditId ? '编辑知识库' : '新建知识库'" width="520px" destroy-on-close>
+      <el-form ref="kbFormRef" :model="kbForm" :rules="kbRules" label-width="110px">
         <el-form-item label="知识库名称" prop="name">
           <el-input v-model="kbForm.name" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="kbForm.description" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="向量模型">
+          <el-select v-model="kbForm.embed_model_id" placeholder="使用默认向量模型" clearable style="width:100%">
+            <el-option
+              v-for="m in embedModels"
+              :key="m.id"
+              :label="`${m.name}（${m.provider}）`"
+              :value="m.id"
+            />
+          </el-select>
+          <div class="form-hint">不选则使用系统默认向量模型</div>
         </el-form-item>
         <el-form-item label="分块大小">
           <el-input-number v-model="kbForm.chunk_size" :min="128" :max="4096" :step="128" />
@@ -145,7 +194,7 @@
       </el-form>
       <template #footer>
         <el-button @click="kbDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="kbSubmitting" @click="createKb">确定</el-button>
+        <el-button type="primary" :loading="kbSubmitting" @click="submitKb">确定</el-button>
       </template>
     </el-dialog>
 
@@ -162,6 +211,89 @@
         </div>
         <el-empty v-if="!searchResults.length && !searching" description="暂无结果" />
       </div>
+    </el-dialog>
+
+    <!-- URL 抓取弹窗 -->
+    <el-dialog v-model="urlDialogVisible" title="添加 URL 抓取来源" width="560px" destroy-on-close>
+      <el-form ref="urlFormRef" :model="urlForm" :rules="urlRules" label-width="110px">
+        <el-form-item label="URL 列表" prop="urls">
+          <div style="width:100%">
+            <div v-for="(u, i) in urlForm.urlList" :key="i" class="url-row">
+              <el-input v-model="urlForm.urlList[i]" placeholder="https://example.com/article" style="flex:1" />
+              <el-button link type="danger" :icon="Delete" @click="urlForm.urlList.splice(i, 1)" v-if="urlForm.urlList.length > 1" />
+            </div>
+            <el-button link :icon="Plus" @click="urlForm.urlList.push('')" :disabled="urlForm.urlList.length >= 20">
+              添加 URL（最多 20 条）
+            </el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="文档名称">
+          <el-input v-model="urlForm.name" placeholder="留空则使用页面标题" />
+        </el-form-item>
+        <el-form-item label="CSS 选择器">
+          <el-input v-model="urlForm.css_selector" placeholder="可选，如 article.main-content" />
+          <div class="form-hint">指定 CSS 选择器可精准提取正文，留空自动识别</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="urlDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="sourceSubmitting" @click="submitUrlSource">开始抓取</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- API/数据库来源弹窗 -->
+    <el-dialog v-model="apiDialogVisible" :title="apiForm.source_type === 'database' ? '添加数据库来源' : '添加 API 接口来源'" width="600px" destroy-on-close>
+      <el-form ref="apiFormRef" :model="apiForm" :rules="apiRules" label-width="110px">
+        <el-form-item label="来源名称" prop="name">
+          <el-input v-model="apiForm.name" placeholder="如：产品文档 API" />
+        </el-form-item>
+
+        <!-- API 类型 -->
+        <template v-if="apiForm.source_type === 'api'">
+          <el-form-item label="请求 URL" prop="url">
+            <el-input v-model="apiForm.url" placeholder="https://api.example.com/docs" />
+          </el-form-item>
+          <el-form-item label="请求方法">
+            <el-select v-model="apiForm.method" style="width:140px">
+              <el-option v-for="m in ['GET','POST','PUT']" :key="m" :label="m" :value="m" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="请求头">
+            <div class="headers-editor">
+              <div v-for="(h, i) in apiHeaderRows" :key="i" class="header-row">
+                <el-input v-model="h.key" placeholder="Key" style="width:40%" />
+                <span class="colon">:</span>
+                <el-input v-model="h.value" placeholder="Value" style="width:48%" />
+                <el-button link :icon="Delete" type="danger" @click="apiHeaderRows.splice(i, 1)" />
+              </div>
+              <el-button link :icon="Plus" @click="apiHeaderRows.push({ key: '', value: '' })">添加请求头</el-button>
+            </div>
+          </el-form-item>
+          <el-form-item label="请求体">
+            <el-input v-model="apiForm.body" type="textarea" :rows="3" placeholder='{"key":"value"}（POST 时使用）' />
+          </el-form-item>
+          <el-form-item label="JSONPath">
+            <el-input v-model="apiForm.json_path" placeholder="如 $.data.content（留空使用完整响应）" />
+            <div class="form-hint">从 JSON 响应中提取指定字段作为文档内容</div>
+          </el-form-item>
+        </template>
+
+        <!-- 数据库类型 -->
+        <template v-if="apiForm.source_type === 'database'">
+          <el-form-item label="连接串" prop="db_url">
+            <el-input v-model="apiForm.db_url" placeholder="postgresql://user:pass@host:5432/db" />
+            <div class="form-hint">支持 PostgreSQL、MySQL（需服务端安装对应驱动）</div>
+          </el-form-item>
+          <el-form-item label="查询 SQL" prop="sql">
+            <el-input v-model="apiForm.sql" type="textarea" :rows="4" placeholder="SELECT title, content FROM articles WHERE status=1" />
+            <div class="form-hint">查询结果按列拼接为文本后写入知识库</div>
+          </el-form-item>
+        </template>
+      </el-form>
+      <template #footer>
+        <el-button @click="apiDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="sourceSubmitting" @click="submitApiSource">提交</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="progressDialogVisible" title="重新索引进度" width="500px" :close-on-click-modal="false" destroy-on-close>
@@ -210,10 +342,16 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, Upload, Search, Collection, Refresh, Loading } from '@element-plus/icons-vue'
-import { kbApi } from '@/api/ai'
+import { Plus, Upload, Search, Collection, Refresh, Loading, MoreFilled, Delete, Link, Connection, Grid, ArrowDown } from '@element-plus/icons-vue'
+import { kbApi, modelApi } from '@/api/ai'
 import { formatDate, formatBytes } from '@/utils/format'
-import type { KnowledgeBase, KnowledgeDoc } from '@/types'
+import { usePermissionStore } from '@/store/permission'
+import type { KnowledgeBase, KnowledgeDoc, AiModelConfig } from '@/types'
+
+const permStore = usePermissionStore()
+
+const sourceLabel: Record<string, string> = { file: '文件', url: 'URL', text: '文本', api: 'API', database: '数据库' }
+const sourceTagType: Record<string, string> = { file: '', url: 'success', text: 'info', api: 'warning', database: 'danger' }
 
 const statusTagMap: Record<string, string> = { ready: 'success', processing: 'warning', error: 'danger' }
 const docStatusTagMap: Record<string, string> = { pending: 'info', processing: 'warning', done: 'success', error: 'danger' }
@@ -223,16 +361,38 @@ const taskStatusLabel: Record<string, string> = { pending: '待执行', running:
 
 const kbList = ref<KnowledgeBase[]>([])
 const currentKb = ref<KnowledgeBase | null>(null)
+const embedModels = ref<AiModelConfig[]>([])
 
 async function fetchKbList() {
   const res = await kbApi.list({ page_size: 100 })
   kbList.value = res.data.items
 }
 
+async function fetchEmbedModels() {
+  const res = await modelApi.list({ model_type: 'embed', page_size: 200 })
+  embedModels.value = res.data.items
+}
+
 function selectKb(kb: KnowledgeBase) {
   currentKb.value = kb
   fetchDocs()
   startStatusPolling()
+}
+
+function handleKbCommand(cmd: string, kb: KnowledgeBase) {
+  if (cmd === 'edit') openKbDialog(kb)
+  if (cmd === 'delete') deleteKb(kb)
+}
+
+async function deleteKb(kb: KnowledgeBase) {
+  await ElMessageBox.confirm(`确定删除知识库「${kb.name}」及其所有文档和向量数据？此操作不可恢复！`, '警告', { type: 'warning' })
+  await kbApi.delete(kb.id)
+  ElMessage.success('已删除')
+  if (currentKb.value?.id === kb.id) {
+    currentKb.value = null
+    docList.value = []
+  }
+  fetchKbList()
 }
 
 const docLoading = ref(false)
@@ -467,19 +627,41 @@ function closeProgress() {
 }
 
 const kbDialogVisible = ref(false)
+const kbEditId = ref<number | null>(null)
 const kbSubmitting = ref(false)
 const kbFormRef = ref<FormInstance>()
-const kbForm = reactive({ name: '', description: '', chunk_size: 512, chunk_overlap: 64 })
+const kbForm = reactive<{
+  name: string; description: string; chunk_size: number; chunk_overlap: number; embed_model_id: number | undefined
+}>({ name: '', description: '', chunk_size: 512, chunk_overlap: 64, embed_model_id: undefined })
 const kbRules: FormRules = { name: [{ required: true, message: '请输入知识库名称' }] }
 
-function openKbDialog() { kbDialogVisible.value = true }
+function openKbDialog(kb?: KnowledgeBase) {
+  kbEditId.value = kb?.id ?? null
+  Object.assign(kbForm, {
+    name: kb?.name ?? '',
+    description: kb?.description ?? '',
+    chunk_size: kb?.chunk_size ?? 512,
+    chunk_overlap: kb?.chunk_overlap ?? 64,
+    embed_model_id: kb?.embed_model_id ?? undefined,
+  })
+  kbDialogVisible.value = true
+}
 
-async function createKb() {
+async function submitKb() {
   await kbFormRef.value?.validate()
   kbSubmitting.value = true
   try {
-    await kbApi.create(kbForm)
-    ElMessage.success('创建成功')
+    if (kbEditId.value) {
+      await kbApi.update(kbEditId.value, kbForm)
+      ElMessage.success('更新成功')
+      // 同步更新当前选中的KB信息
+      if (currentKb.value?.id === kbEditId.value) {
+        Object.assign(currentKb.value, kbForm)
+      }
+    } else {
+      await kbApi.create(kbForm)
+      ElMessage.success('创建成功')
+    }
     kbDialogVisible.value = false
     fetchKbList()
   } finally {
@@ -505,7 +687,102 @@ async function doSearch() {
   }
 }
 
-onMounted(fetchKbList)
+// ── URL 抓取来源 ──────────────────────────────────────────────────────────────
+const urlDialogVisible = ref(false)
+const urlFormRef = ref<FormInstance>()
+const sourceSubmitting = ref(false)
+const urlForm = reactive({ urlList: [''], name: '', css_selector: '' })
+const urlRules: FormRules = {
+  urls: [{ required: true, message: '请至少填写一个 URL' }],
+}
+
+// ── API/数据库来源 ────────────────────────────────────────────────────────────
+const apiDialogVisible = ref(false)
+const apiFormRef = ref<FormInstance>()
+
+interface HeaderRow { key: string; value: string }
+const apiHeaderRows = ref<HeaderRow[]>([])
+
+const apiForm = reactive({
+  source_type: 'api' as 'api' | 'database',
+  name: '',
+  url: '',
+  method: 'GET',
+  body: '',
+  json_path: '',
+  db_url: '',
+  sql: '',
+})
+
+const apiRules: FormRules = {
+  name: [{ required: true, message: '请填写来源名称', trigger: 'blur' }],
+  url: [{ required: true, message: '请填写 API URL', trigger: 'blur' }],
+  db_url: [{ required: true, message: '请填写数据库连接串', trigger: 'blur' }],
+  sql: [{ required: true, message: '请填写查询 SQL', trigger: 'blur' }],
+}
+
+function handleSourceCommand(cmd: 'url' | 'api' | 'database') {
+  if (cmd === 'url') {
+    Object.assign(urlForm, { urlList: [''], name: '', css_selector: '' })
+    urlDialogVisible.value = true
+  } else {
+    Object.assign(apiForm, { source_type: cmd, name: '', url: '', method: 'GET', body: '', json_path: '', db_url: '', sql: '' })
+    apiHeaderRows.value = []
+    apiDialogVisible.value = true
+  }
+}
+
+async function submitUrlSource() {
+  const urls = urlForm.urlList.map(u => u.trim()).filter(Boolean)
+  if (!urls.length) { ElMessage.warning('请至少填写一个有效 URL'); return }
+  if (!currentKb.value) return
+  sourceSubmitting.value = true
+  try {
+    await kbApi.addUrlSource(currentKb.value.id, {
+      urls,
+      name: urlForm.name || undefined,
+      css_selector: urlForm.css_selector || undefined,
+    })
+    ElMessage.success(`已提交 ${urls.length} 个 URL 抓取任务，正在后台处理...`)
+    urlDialogVisible.value = false
+    fetchDocs()
+    startStatusPolling()
+  } finally {
+    sourceSubmitting.value = false
+  }
+}
+
+async function submitApiSource() {
+  if (!await apiFormRef.value?.validate().catch(() => false)) return
+  if (!currentKb.value) return
+  sourceSubmitting.value = true
+  try {
+    const headers: Record<string, string> = {}
+    apiHeaderRows.value.forEach(h => { if (h.key) headers[h.key] = h.value })
+    await kbApi.addApiSource(currentKb.value.id, {
+      name: apiForm.name,
+      source_type: apiForm.source_type,
+      url: apiForm.url || undefined,
+      method: apiForm.method,
+      headers,
+      body: apiForm.body || undefined,
+      json_path: apiForm.json_path || undefined,
+      db_url: apiForm.db_url || undefined,
+      sql: apiForm.sql || undefined,
+    })
+    ElMessage.success('已提交来源任务，正在后台处理...')
+    apiDialogVisible.value = false
+    fetchDocs()
+    startStatusPolling()
+  } finally {
+    sourceSubmitting.value = false
+  }
+}
+
+onMounted(() => {
+  fetchKbList()
+  fetchEmbedModels()
+})
 onUnmounted(() => {
   stopStatusPolling()
   closeProgress()
@@ -529,7 +806,7 @@ onUnmounted(() => {
 .empty-state { display: flex; align-items: center; justify-content: center; flex: 1; }
 
 .kb-item {
-  padding: 12px 14px;
+  padding: 10px 14px;
   border-radius: 8px;
   cursor: pointer;
   margin-bottom: 6px;
@@ -538,12 +815,36 @@ onUnmounted(() => {
   &:hover { background: #f0f7ff; }
   &.active { background: #e6f4ff; border: 1px solid #91caff; }
 
+  .kb-item-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 4px;
+  }
   .kb-item-title {
     display: flex; align-items: center; gap: 6px;
     font-size: 14px; font-weight: 500; color: $text-primary;
-    margin-bottom: 4px;
   }
+  .kb-item-actions {
+    opacity: 0; transition: opacity .15s;
+    .kb-more { font-size: 16px; color: $text-secondary; cursor: pointer; padding: 2px 4px;
+      &:hover { color: $primary-color; }
+    }
+  }
+  &:hover .kb-item-actions { opacity: 1; }
   .kb-item-meta { font-size: 12px; color: $text-secondary; }
+}
+
+.form-hint { font-size: 11px; color: $text-secondary; margin-top: 4px; }
+
+.url-row {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
+}
+
+.headers-editor {
+  width: 100%;
+  .header-row {
+    display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
+    .colon { color: $text-secondary; font-weight: bold; }
+  }
 }
 
 .search-results { max-height: 400px; overflow: auto; }

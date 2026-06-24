@@ -5,7 +5,8 @@ import type {
   AgentInfo,
   KnowledgeBase, KnowledgeDoc,
   Conversation, ChatMessage,
-  PromptTemplate,
+  PromptTemplate, PromptVersion,
+  ToolInfo, CustomToolDetail,
 } from '@/types'
 
 // ── LLM 模型 ──────────────────────────────────────────────────────────────────
@@ -55,10 +56,10 @@ export const kbApi = {
   get: (id: number) =>
     get<ApiResponse<KnowledgeBase>>(`/api/v1/ai/knowledge/${id}`),
 
-  create: (data: Partial<KnowledgeBase>) =>
+  create: (data: Partial<KnowledgeBase> & { embed_model_id?: number }) =>
     post<ApiResponse<KnowledgeBase>>('/api/v1/ai/knowledge', data),
 
-  update: (id: number, data: Partial<KnowledgeBase>) =>
+  update: (id: number, data: Partial<KnowledgeBase> & { embed_model_id?: number }) =>
     put<ApiResponse<KnowledgeBase>>(`/api/v1/ai/knowledge/${id}`, data),
 
   delete: (id: number) =>
@@ -66,6 +67,16 @@ export const kbApi = {
 
   docs: (kbId: number, params?: { page?: number; page_size?: number }) =>
     get<ApiResponse<PageData<KnowledgeDoc>>>(`/api/v1/ai/knowledge/${kbId}/docs`, params),
+
+  addUrlSource: (kbId: number, data: { urls: string[]; name?: string; css_selector?: string }) =>
+    post<ApiResponse<KnowledgeDoc[]>>(`/api/v1/ai/knowledge/${kbId}/docs/url`, data),
+
+  addApiSource: (kbId: number, data: {
+    name: string; source_type: 'api' | 'database';
+    url?: string; method?: string; headers?: Record<string, string>; body?: string; json_path?: string;
+    db_url?: string; sql?: string;
+  }) =>
+    post<ApiResponse<KnowledgeDoc>>(`/api/v1/ai/knowledge/${kbId}/docs/api`, data),
 
   uploadDoc: (kbId: number, file: File) => {
     const fd = new FormData()
@@ -124,13 +135,25 @@ export const kbApi = {
     ),
 }
 
+// ── 工具管理 ────────────────────────────────────────────────────────────────────
+export const toolApi = {
+  list: () =>
+    get<ApiResponse<ToolInfo[]>>('/api/v1/ai/tools'),
+  create: (data: { name: string; description: string; url: string; method: string; headers: Record<string, string> }) =>
+    post<ApiResponse<CustomToolDetail>>('/api/v1/ai/tools', data),
+  update: (id: number, data: Partial<{ name: string; description: string; url: string; method: string; headers: Record<string, string>; status: number }>) =>
+    put<ApiResponse<CustomToolDetail>>(`/api/v1/ai/tools/${id}`, data),
+  remove: (id: number) =>
+    del<ApiResponse<null>>(`/api/v1/ai/tools/${id}`),
+}
+
 // ── 对话历史 ────────────────────────────────────────────────────────────────────
 export const conversationApi = {
   list: (params?: { page?: number; page_size?: number; agent_id?: number }) =>
     get<ApiResponse<PageData<Conversation>>>('/api/v1/ai/conversations', params),
 
   messages: (convId: number) =>
-    get<ApiResponse<ChatMessage[]>>(`/api/v1/ai/conversations/${convId}/messages`),
+    get<ApiResponse<PageData<ChatMessage>>>(`/api/v1/ai/conversations/${convId}/messages`),
 
   delete: (convId: number) =>
     del<ApiResponse>(`/api/v1/ai/conversations/${convId}`),
@@ -150,11 +173,21 @@ export const promptApi = {
   update: (id: number, data: Partial<PromptTemplate>) =>
     put<ApiResponse<PromptTemplate>>(`/api/v1/ai/prompts/${id}`, data),
 
-  publish: (id: number) =>
-    post<ApiResponse>(`/api/v1/ai/prompts/${id}/publish`),
+  delete: (id: number) =>
+    del<ApiResponse>(`/api/v1/ai/prompts/${id}`),
 
-  rollback: (id: number, version: number) =>
-    post<ApiResponse>(`/api/v1/ai/prompts/${id}/rollback`, { version }),
+  // 版本管理
+  versions: (id: number) =>
+    get<ApiResponse<PromptVersion[]>>(`/api/v1/ai/prompts/${id}/versions`),
+
+  addVersion: (id: number, data: { content: string; variables?: string[]; changelog?: string }) =>
+    post<ApiResponse<PromptVersion>>(`/api/v1/ai/prompts/${id}/versions`, data),
+
+  publishVersion: (id: number, version: number) =>
+    post<ApiResponse<PromptVersion>>(`/api/v1/ai/prompts/${id}/versions/${version}/publish`),
+
+  rollbackVersion: (id: number, version: number) =>
+    post<ApiResponse<PromptTemplate>>(`/api/v1/ai/prompts/${id}/versions/${version}/rollback`),
 
   preview: (id: number, variables: Record<string, string>) =>
     post<ApiResponse<{ rendered: string }>>(`/api/v1/ai/prompts/${id}/preview`, { variables }),

@@ -83,6 +83,7 @@ class AiKnowledgeDoc(Base):
         nullable=True, comment="来源类型：file / url / text / notion / feishu"
     )
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True, comment="来源 URL")
+    source_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="来源配置（API/数据库用）")
     file_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="关联文件存储 ID")
     file_type: Mapped[str | None] = mapped_column(nullable=True, comment="文件类型（扩展名）")
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="文件大小（字节）")

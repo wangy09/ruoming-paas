@@ -22,10 +22,18 @@ class Settings(BaseSettings):
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 10
     DATABASE_POOL_RECYCLE: int = 3600
+    # 只读副本（可选）：配置后自动启用读写分离，不配置则读写同库
+    DATABASE_REPLICA_URL: str = ""
 
     # ── Redis（必填）──────────────────────────────────────────────────
     REDIS_URL: str  # redis://localhost:6379/0
     REDIS_MAX_CONNECTIONS: int = 20
+    # 部署模式：standalone（默认）/ sentinel / cluster
+    REDIS_MODE: str = "standalone"
+    REDIS_SENTINEL_HOSTS: str = "127.0.0.1:26379"  # 逗号分隔：host:port,host:port
+    REDIS_SENTINEL_MASTER: str = "mymaster"
+    REDIS_SENTINEL_PASSWORD: str = ""
+    REDIS_CLUSTER_NODES: str = "127.0.0.1:7000"    # 逗号分隔：host:port,host:port
 
     # ── 安全（必填）──────────────────────────────────────────────────
     SECRET_KEY: str  # 至少 32 位随机字符串

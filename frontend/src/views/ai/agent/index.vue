@@ -15,17 +15,20 @@
           :key="agent.id"
           :xs="24" :sm="12" :md="8" :lg="6"
         >
-          <div class="agent-card" @click="openDialog(agent)">
+          <div class="agent-card" @click="permStore.hasPermission('ai:agent:update') && openDialog(agent)">
             <div class="agent-card-header">
-              <div class="agent-icon">
-                <el-icon :size="28"><MagicStick /></el-icon>
+              <div class="agent-icon" :style="{ background: getSceneBgColor(agent.default_scene) }">
+                <img v-if="agent.avatar" :src="agent.avatar" class="agent-avatar" />
+                <el-icon v-else :size="28" :color="getSceneIconColor(agent.default_scene)">
+                  <component :is="getSceneIcon(agent.default_scene)" />
+                </el-icon>
               </div>
               <el-dropdown trigger="click" @click.stop @command="cmd => handleCommand(cmd, agent)">
                 <el-icon class="agent-more" @click.stop><MoreFilled /></el-icon>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="edit">编辑</el-dropdown-item>
-                    <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                    <el-dropdown-item v-if="permStore.hasPermission('ai:agent:update')" command="edit">编辑</el-dropdown-item>
+                    <el-dropdown-item v-if="permStore.hasPermission('ai:agent:delete')" command="delete" divided>删除</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -34,14 +37,26 @@
             <h3 class="agent-name">{{ agent.name }}</h3>
             <p class="agent-desc">{{ agent.description || '暂无描述' }}</p>
 
+            <div class="agent-info">
+              <div class="info-row">
+                <el-tag :type="getSceneTagType(agent.default_scene)" size="small">{{ agent.scene_label || '未设置' }}</el-tag>
+                <el-tag type="info" size="small">{{ agent.model_name || '默认模型' }}</el-tag>
+              </div>
+              <div class="info-row">
+                <span class="info-item">温度: {{ agent.temperature }}</span>
+                <span class="info-item">记忆: {{ agent.memory_label }}</span>
+                <span class="info-item">工具: {{ agent.tool_count }}</span>
+                <span class="info-item">知识库: {{ agent.kb_count }}</span>
+              </div>
+            </div>
+
             <div class="agent-footer">
               <el-tag :type="getStatusTagType(agent.status)" size="small">{{ getStatusLabel(agent.status) }}</el-tag>
-              <el-tag type="info" size="small">{{ typeLabelMap[agent.type] }}</el-tag>
             </div>
           </div>
         </el-col>
 
-        <el-col :xs="24" :sm="12" :md="8" :lg="6">
+        <el-col v-if="permStore.hasPermission('ai:agent:create')" :xs="24" :sm="12" :md="8" :lg="6">
           <div class="agent-card agent-add-card" @click="openDialog()">
             <el-icon :size="36" color="#c0c4cc"><Plus /></el-icon>
             <span>新建 Agent</span>
@@ -60,7 +75,7 @@
     </div>
 
     <!-- 编辑对话框 -->
-    <el-dialog v-model="dialogVisible" :title="editId ? '编辑 Agent' : '新建 Agent'" width="680px" destroy-on-close>
+    <el-dialog v-model="dialogVisible" :title="editId ? '编辑 Agent' : '新建 Agent'" width="720px" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
         <el-row :gutter="16">
           <el-col :span="16">
@@ -69,12 +84,13 @@
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="类型" prop="type">
-              <el-select v-model="form.type" style="width:100%">
-                <el-option label="普通对话" value="chat" />
-                <el-option label="RAG 问答" value="rag" />
-                <el-option label="工具调用" value="tool" />
-                <el-option label="工作流" value="workflow" />
+            <el-form-item label="场景类型" prop="default_scene">
+              <el-select v-model="form.default_scene" placeholder="默认专业分析" style="width:100%">
+                <el-option label="闲聊" value="chitchat" />
+                <el-option label="专业分析" value="professional" />
+                <el-option label="任务执行" value="task" />
+                <el-option label="知识库问答" value="rag" />
+                <el-option label="创意写作" value="creative" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -113,15 +129,70 @@
           </el-col>
         </el-row>
 
-        <el-form-item label="绑定知识库" v-if="['rag', 'tool', 'workflow'].includes(form.type)">
-          <el-select v-model="form.knowledge_base_ids" multiple placeholder="可选多个" style="width:100%">
+        <el-form-item label="记忆类型">
+          <el-radio-group v-model="form.memory_type">
+            <el-radio-button value="buffer">缓冲记忆</el-radio-button>
+            <el-radio-button value="summary">摘要压缩</el-radio-button>
+            <el-radio-button value="vector">向量记忆</el-radio-button>
+          </el-radio-group>
+          <div class="form-hint">
+            <template v-if="form.memory_type === 'buffer'">保留完整对话历史，适合短对话</template>
+            <template v-else-if="form.memory_type === 'summary'">超长对话自动压缩摘要，节省 Token</template>
+            <template v-else>将历史存入向量库，支持超长会话检索</template>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="绑定工具">
+          <el-select v-model="form.tool_ids" multiple placeholder="可选多个工具" style="width:100%" value-key="tool_id">
+            <el-option
+              v-for="t in toolList"
+              :key="t.tool_id"
+              :label="t.name"
+              :value="t.tool_id"
+            >
+              <div style="display:flex;flex-direction:column">
+                <span>{{ t.name }}</span>
+                <span style="font-size:11px;color:#999">{{ t.description }}</span>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="绑定知识库">
+          <el-select v-model="form.kb_ids" multiple placeholder="可选多个" style="width:100%">
             <el-option v-for="kb in knowledgeBases" :key="kb.id" :label="kb.name" :value="kb.id" />
           </el-select>
         </el-form-item>
 
-        <el-form-item label="最大迭代次数">
-          <el-input-number v-model="form.max_iterations" :min="1" :max="20" />
+        <el-form-item label="Prompt 模板">
+          <el-select v-model="form.prompt_template_id" placeholder="使用系统 Prompt（可选）" clearable style="width:100%">
+            <el-option
+              v-for="p in promptTemplates.filter(t => t.status === 'published')"
+              :key="p.id"
+              :label="`${p.name}（v${p.current_version}）`"
+              :value="p.id"
+            />
+          </el-select>
+          <div class="form-hint">选择后将覆盖上方手动填写的系统 Prompt</div>
         </el-form-item>
+
+        <el-row :gutter="16">
+          <el-col :span="8">
+            <el-form-item label="最大对话轮次">
+              <el-input-number v-model="form.max_rounds" :min="1" :max="50" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="Max Tokens">
+              <el-input-number v-model="form.max_tokens" :min="128" :max="131072" :step="256" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="推理超时(秒)">
+              <el-input-number v-model="form.node_timeout_sec" :min="5" :max="600" :step="5" style="width:100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -134,22 +205,68 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, MoreFilled, MagicStick } from '@element-plus/icons-vue'
-import { agentApi, modelApi, kbApi } from '@/api/ai'
+import { Plus, MoreFilled, MagicStick, Refresh, Setting, Box, Collection, List } from '@element-plus/icons-vue'
+import { agentApi, modelApi, kbApi, toolApi, promptApi } from '@/api/ai'
 import { useAgentStatus } from '@/hooks/useDict'
-import type { AgentInfo, AiModelConfig, KnowledgeBase } from '@/types'
+import { usePermissionStore } from '@/store/permission'
+import type { AgentInfo, AiModelConfig, KnowledgeBase, ToolInfo, PromptTemplate } from '@/types'
+
+const permStore = usePermissionStore()
 
 // Agent 状态字典
 const { tagType: getStatusTagType, label: getStatusLabel } = useAgentStatus()
 
-// 类型映射（暂时保留硬编码）
-const typeLabelMap: Record<string, string> = { chat: '对话', rag: 'RAG', tool: '工具', workflow: '工作流' }
+function getSceneTagType(scene: string | undefined): string {
+  const map: Record<string, string> = {
+    chitchat: 'warning',
+    professional: 'primary',
+    task: 'success',
+    rag: 'danger',
+    creative: 'info',
+  }
+  return map[scene || ''] || 'default'
+}
+
+function getSceneIcon(scene: string | undefined) {
+  const map: Record<string, any> = {
+    chitchat: Refresh,
+    professional: Setting,
+    task: Box,
+    rag: Collection,
+    creative: List,
+  }
+  return map[scene || ''] || MagicStick
+}
+
+function getSceneBgColor(scene: string | undefined): string {
+  const map: Record<string, string> = {
+    chitchat: 'rgba(250,173,20,0.1)',
+    professional: 'rgba(22,119,255,0.1)',
+    task: 'rgba(82,196,26,0.1)',
+    rag: 'rgba(255,77,79,0.1)',
+    creative: 'rgba(144,147,153,0.1)',
+  }
+  return map[scene || ''] || 'rgba(22,119,255,0.1)'
+}
+
+function getSceneIconColor(scene: string | undefined): string {
+  const map: Record<string, string> = {
+    chitchat: '#faad14',
+    professional: '#1677ff',
+    task: '#52c41a',
+    rag: '#ff4d4f',
+    creative: '#909399',
+  }
+  return map[scene || ''] || '#1677ff'
+}
 
 const loading = ref(false)
 const tableData = ref<AgentInfo[]>([])
 const total = ref(0)
 const chatModels = ref<AiModelConfig[]>([])
 const knowledgeBases = ref<KnowledgeBase[]>([])
+const toolList = ref<ToolInfo[]>([])
+const promptTemplates = ref<PromptTemplate[]>([])
 
 const query = reactive({ page: 1, page_size: 20 })
 
@@ -182,37 +299,42 @@ const submitting = ref(false)
 const formRef = ref<FormInstance>()
 
 const form = reactive({
-  name: '', description: '', type: 'chat' as AgentInfo['type'],
+  name: '', description: '', default_scene: undefined as string | undefined,
   system_prompt: '', model_config_id: undefined as number | undefined,
-  temperature: 0.7, max_iterations: 5,
-  knowledge_base_ids: [] as number[],
+  temperature: 0.7, max_rounds: 10, max_tokens: 2048, node_timeout_sec: 60,
+  memory_type: 'buffer' as string,
+  kb_ids: [] as number[],
+  tool_ids: [] as string[],
+  prompt_template_id: undefined as number | undefined,
 })
 
 const rules: FormRules = {
   name: [{ required: true, message: '请输入名称' }],
-  type: [{ required: true }],
 }
 
 async function openDialog(row?: AgentInfo) {
   editId.value = row?.id ?? null
   Object.assign(form, {
     name: row?.name ?? '', description: row?.description ?? '',
-    type: row?.type ?? 'chat', system_prompt: row?.system_prompt ?? '',
+    default_scene: row?.default_scene, system_prompt: row?.system_prompt ?? '',
     model_config_id: row?.model_config_id,
     temperature: row?.temperature ?? 0.7,
-    max_iterations: row?.max_iterations ?? 5,
-    knowledge_base_ids: row?.knowledge_base_ids ?? [],
+    max_rounds: row?.max_rounds ?? 10,
+    max_tokens: row?.max_tokens ?? 2048,
+    node_timeout_sec: row?.node_timeout_sec ?? 60,
+    memory_type: row?.memory_type ?? 'buffer',
+    kb_ids: row?.kb_ids ?? [],
+    tool_ids: (row?.tool_ids ?? []) as any,
+    prompt_template_id: row?.prompt_template_id,
   })
 
-  // 预加载模型和知识库列表
-  if (!chatModels.value.length) {
-    const res = await modelApi.list({ model_type: 'chat', page_size: 200 })
-    chatModels.value = res.data.items
-  }
-  if (!knowledgeBases.value.length) {
-    const res = await kbApi.list({ page_size: 200 })
-    knowledgeBases.value = res.data.items
-  }
+  // 并行预加载依赖数据
+  await Promise.all([
+    chatModels.value.length ? null : modelApi.list({ model_type: 'chat', page_size: 200 }).then(r => { chatModels.value = r.data.items }),
+    knowledgeBases.value.length ? null : kbApi.list({ page_size: 200 }).then(r => { knowledgeBases.value = r.data.items }),
+    toolList.value.length ? null : toolApi.list().then(r => { toolList.value = r.data }),
+    promptTemplates.value.length ? null : promptApi.list({ page_size: 200 }).then(r => { promptTemplates.value = r.data.items }),
+  ])
 
   dialogVisible.value = true
 }
@@ -282,10 +404,13 @@ onMounted(fetchList)
 
   .agent-icon {
     width: 48px; height: 48px;
-    background: rgba(22,119,255,.1);
     border-radius: 10px;
     display: flex; align-items: center; justify-content: center;
-    color: $primary-color;
+    overflow: hidden;
+    .agent-avatar {
+      width: 100%; height: 100%;
+      object-fit: cover;
+    }
   }
 
   .agent-more {
@@ -296,10 +421,29 @@ onMounted(fetchList)
   .agent-name { font-size: 15px; font-weight: 600; color: $text-primary; margin-bottom: 6px; }
   .agent-desc { font-size: 12px; color: $text-secondary; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+  .agent-info {
+    margin: 10px 0;
+    .info-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .info-item {
+      font-size: 11px;
+      color: $text-secondary;
+      background: $bg-base;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+  }
+
   .agent-footer {
-    margin-top: 14px;
+    margin-top: 8px;
     display: flex;
     gap: 6px;
   }
 }
+
+.form-hint { font-size: 11px; color: $text-secondary; margin-top: 4px; line-height: 1.4; }
 </style>

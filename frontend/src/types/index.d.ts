@@ -204,14 +204,23 @@ export interface AgentInfo {
   id: number
   name: string
   description?: string
-  type: 'chat' | 'rag' | 'tool' | 'workflow'
-  status: 'draft' | 'active' | 'archived'
+  default_scene?: 'chitchat' | 'professional' | 'task' | 'rag' | 'creative'
+  scene_label?: string
   model_config_id?: number
+  model_name?: string
   system_prompt?: string
-  knowledge_base_ids: number[]
-  tool_codes: string[]
-  max_iterations: number
+  tool_ids: number[]
+  tool_count?: number
+  kb_ids: number[]
+  kb_count?: number
+  max_rounds: number
   temperature: number
+  max_tokens: number
+  memory_type: 'buffer' | 'summary' | 'vector'
+  memory_label?: string
+  node_timeout_sec: number
+  status: number
+  tenant_id?: number
   created_at: string
 }
 
@@ -284,6 +293,42 @@ export interface LoginLog {
   user_agent?: string
   status: 'success' | 'fail' | 'locked'
   fail_reason?: string
+  created_at: string
+}
+
+// ── 工具 ────────────────────────────────────────────────────────────────────
+export interface ToolInfo {
+  tool_id: string
+  name: string
+  description: string
+  tool_type?: string   // builtin | api | custom
+  db_id?: number       // 自定义工具的数据库 ID
+  status?: number
+  url?: string | null
+  method?: string | null
+  headers?: Record<string, string>
+}
+
+export interface CustomToolDetail {
+  id: number
+  name: string
+  description: string | null
+  tool_type: string
+  url: string | null
+  method: string | null
+  headers: Record<string, string>
+  status: number
+}
+
+// ── Prompt 版本 ────────────────────────────────────────────────────────────────
+export interface PromptVersion {
+  id: number
+  template_id: number
+  version: number
+  content: string
+  variables: string[]
+  changelog?: string
+  is_published: boolean
   created_at: string
 }
 

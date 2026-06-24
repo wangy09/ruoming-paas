@@ -55,7 +55,7 @@ async def login(
     # 校验验证码
     captcha_svc = CaptchaService(redis)
     if not await captcha_svc.verify_captcha(req.captcha_key, req.captcha_code):
-        raise BusinessException(code=40001, message="验证码错误", http_status=400)
+        raise BusinessException(code=40002, message="验证码错误", http_status=400)
 
     client_ip = request.client.host if request.client else None
     user_agent = request.headers.get("User-Agent")

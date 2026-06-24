@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.knowledge.schemas import (
+    ApiSourceRequest,
     KnowledgeBaseCreate,
     KnowledgeBaseInfo,
     KnowledgeBaseUpdate,
@@ -21,6 +22,7 @@ from app.ai.knowledge.schemas import (
     UploadInitRequest,
     UploadInitResponse,
     UploadPartRequest,
+    UrlSourceRequest,
 )
 from app.ai.knowledge.service import KnowledgeService
 from app.config import settings
@@ -116,6 +118,58 @@ async def upload_document(
 
     svc = KnowledgeService(db)
     doc = await svc.upload_document(kb_id, filename, content, source_type="file")
+    return created(KnowledgeDocInfo.model_validate(doc))
+
+
+@router.post("/{kb_id}/docs/url", response_model=ApiResponse[list[KnowledgeDocInfo]], summary="添加 URL 抓取来源", status_code=201)
+async def add_url_source(
+    kb_id: int,
+    body: UrlSourceRequest,
+    db: AsyncSession = Depends(get_db),
+    _: SysUser = Depends(require_permissions("ai:kb:upload")),
+):
+    """提交 URL 列表，后台异步抓取网页内容并写入知识库"""
+    svc = KnowledgeService(db)
+    docs = await svc.add_url_sources(
+        kb_id=kb_id,
+        urls=body.urls,
+        name=body.name,
+        css_selector=body.css_selector,
+    )
+    return created([KnowledgeDocInfo.model_validate(d) for d in docs])
+
+
+@router.post("/{kb_id}/docs/api", response_model=ApiResponse[KnowledgeDocInfo], summary="添加 API/数据库来源", status_code=201)
+async def add_api_source(
+    kb_id: int,
+    body: ApiSourceRequest,
+    db: AsyncSession = Depends(get_db),
+    _: SysUser = Depends(require_permissions("ai:kb:upload")),
+):
+    """配置 HTTP API 或数据库连接，后台异步拉取内容写入知识库"""
+    config: dict = {}
+    if body.source_type == "api":
+        if not body.url:
+            raise AppException(code=422, message="API 来源必须填写 URL")
+        config = {
+            "url": body.url,
+            "method": body.method,
+            "headers": body.headers,
+            "body": body.body,
+            "json_path": body.json_path,
+        }
+    elif body.source_type == "database":
+        if not body.db_url or not body.sql:
+            raise AppException(code=422, message="数据库来源必须填写连接串和 SQL")
+        config = {"db_url": body.db_url, "sql": body.sql}
+
+    svc = KnowledgeService(db)
+    doc = await svc.add_api_source(
+        kb_id=kb_id,
+        name=body.name,
+        source_type=body.source_type,
+        config=config,
+    )
     return created(KnowledgeDocInfo.model_validate(doc))
 
 

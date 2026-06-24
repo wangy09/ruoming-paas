@@ -82,7 +82,7 @@ class AuthService:
             raise BusinessException(
                 code=UserErrCode.WRONG_PASSWORD,
                 message="用户名或密码错误",
-                http_status=401,
+                http_status=400,
             )
 
         # 3. 校验账号锁定
@@ -104,7 +104,7 @@ class AuthService:
             raise BusinessException(
                 code=UserErrCode.WRONG_PASSWORD,
                 message="用户名或密码错误",
-                http_status=401,
+                http_status=400,
             )
 
         # 6. 登录成功，重置失败计数

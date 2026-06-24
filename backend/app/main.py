@@ -57,6 +57,13 @@ async def lifespan(app: FastAPI):
     # 注册内置工具（确保 ToolRegistry 单例初始化）
     import app.ai.tool.registry  # noqa: F401
 
+    # 从数据库加载自定义工具到注册中心
+    from app.ai.tool.router import load_custom_tools_from_db
+    from app.database import AsyncSessionFactory
+    async with AsyncSessionFactory() as _db:
+        await load_custom_tools_from_db(_db)
+    logger.info("custom_tools_loaded")
+
     yield
 
     # ── 关闭 ─────────────────────────────────────────────────────────
@@ -209,6 +216,10 @@ app.include_router(dashboard_router, prefix="/api/v1/dashboard", tags=["仪表�
 # GET /api/v1/my/permissions  -> permission_router
 # GET /api/v1/permissions/tree -> permission_router
 # GET/POST /api/v1/roles      -> permission_router
+
+# 配置中心路由
+from app.modules.config_center.router import router as config_center_router
+app.include_router(config_center_router, prefix="/api/v1", tags=["配置中心"])
 
 # M4 AI 路由
 from app.ai.llm.router import router as llm_router

@@ -11,7 +11,9 @@ import 'nprogress/nprogress.css'
 NProgress.configure({ showSpinner: false, speed: 300 })
 
 const request: AxiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '',
+  // baseURL 保持空字符串，请求走相对路径（/api/...），由 Vite 代理转发到后端
+  // 不能使用 VITE_API_BASE_URL，那是服务端代理 target，浏览器无法访问容器内部地址
+  baseURL: '',
   timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -78,6 +80,17 @@ request.interceptors.response.use(
 
     // 401：尝试刷新 Token
     if (response.status === 401) {
+      // 登录接口的 401 不视为过期，而是登录失败
+      const isLoginRequest = config.url?.includes('/auth/login')
+      if (isLoginRequest) {
+        if (response.data?.message) {
+          ElMessage.error(response.data.message)
+        } else {
+          ElMessage.error('登录失败')
+        }
+        return Promise.reject(error)
+      }
+
       const refreshToken = localStorage.getItem('refresh_token')
       if (!refreshToken) {
         redirectToLogin()
@@ -88,7 +101,7 @@ request.interceptors.response.use(
         isRefreshing = true
         try {
           const res = await axios.post(
-            `${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/auth/refresh`,
+            `/api/v1/auth/refresh`,
             { refresh_token: refreshToken },
           )
           const { access_token, refresh_token: newRefreshToken } = res.data.data

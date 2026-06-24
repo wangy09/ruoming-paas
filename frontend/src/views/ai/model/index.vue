@@ -65,12 +65,31 @@
     <el-dialog v-model="dialogVisible" :title="editId ? '编辑模型' : '接入模型'" width="580px" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="110px" autocomplete="off">
         <el-form-item label="供应商" prop="provider">
-          <el-select v-model="form.provider" style="width:100%" @change="onProviderChange">
-            <el-option label="追鹿（Zhuilu）" value="zhuilu" />
-            <el-option label="OpenAI" value="openai" />
-            <el-option label="Ollama（本地）" value="ollama" />
-            <el-option label="Azure OpenAI" value="azure" />
-            <el-option label="自定义兼容接口" value="custom" />
+          <el-select
+            v-model="form.provider"
+            style="width:100%"
+            filterable
+            allow-create
+            placeholder="选择或输入供应商标识"
+            @change="onProviderChange"
+          >
+            <el-option-group label="国内">
+              <el-option label="追鹿（Zhuilu）" value="zhuilu" />
+              <el-option label="阿里云通义（Qwen）" value="qwen" />
+              <el-option label="豆包（Doubao）" value="doubao" />
+              <el-option label="DeepSeek" value="deepseek" />
+              <el-option label="智谱 GLM（Zhipu）" value="zhipu" />
+              <el-option label="月之暗面（Moonshot）" value="moonshot" />
+              <el-option label="MiniMax" value="minimax" />
+              <el-option label="百度千帆（Baidu）" value="baidu" />
+            </el-option-group>
+            <el-option-group label="国际">
+              <el-option label="OpenAI" value="openai" />
+              <el-option label="Azure OpenAI" value="azure" />
+            </el-option-group>
+            <el-option-group label="本地部署">
+              <el-option label="Ollama（本地）" value="ollama" />
+            </el-option-group>
           </el-select>
         </el-form-item>
         <el-form-item label="模型用途">
@@ -187,23 +206,30 @@ const rules: FormRules = {
   model_id: [{ required: true, message: '请输入模型标识' }],
 }
 
-const baseUrlPlaceholder = computed(() => {
-  const map: Record<string, string> = {
-    zhuilu: 'https://api.zhuilu.ai/v1',
-    openai: 'https://api.openai.com/v1',
-    ollama: 'http://localhost:11434',
-    azure: 'https://<resource>.openai.azure.com',
-    custom: 'https://your-api.example.com/v1',
-  }
-  return map[form.provider] || ''
-})
+// 内置厂商预设（base_url + 默认 model_id）
+const VENDOR_PRESETS: Record<string, { url: string; model: string }> = {
+  zhuilu:   { url: 'https://api.zhuilu.ai/v1',                                      model: 'qwen-max' },
+  openai:   { url: 'https://api.openai.com/v1',                                     model: 'gpt-4o' },
+  azure:    { url: 'https://<resource>.openai.azure.com/openai/deployments/<deploy>', model: 'gpt-4o' },
+  ollama:   { url: 'http://localhost:11434',                                          model: 'llama3' },
+  qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',              model: 'qwen-max' },
+  doubao:   { url: 'https://ark.cn-beijing.volces.com/api/v3',                       model: 'ep-xxxxxxxx' },
+  deepseek: { url: 'https://api.deepseek.com/v1',                                   model: 'deepseek-chat' },
+  zhipu:    { url: 'https://open.bigmodel.cn/api/paas/v4',                           model: 'glm-4' },
+  moonshot: { url: 'https://api.moonshot.cn/v1',                                    model: 'moonshot-v1-8k' },
+  minimax:  { url: 'https://api.minimax.chat/v1',                                   model: 'abab6.5s-chat' },
+  baidu:    { url: 'https://qianfan.baidubce.com/v2',                               model: 'ernie-4.0-8k' },
+}
+
+const baseUrlPlaceholder = computed(() => VENDOR_PRESETS[form.provider]?.url || 'https://your-api.example.com/v1')
 
 function onProviderChange(val: string) {
-  form.base_url = baseUrlPlaceholder.value
-  const modelMap: Record<string, string> = {
-    zhuilu: 'qwen-max', openai: 'gpt-4o', ollama: 'llama3', azure: 'gpt-4o',
+  const preset = VENDOR_PRESETS[val]
+  if (preset) {
+    // 只在用户未手动填写时才回填预设值
+    if (!form.base_url) form.base_url = preset.url
+    if (!form.model_id) form.model_id = preset.model
   }
-  form.model_id = modelMap[val] || ''
 }
 
 function openDialog(row?: AiModelConfig) {

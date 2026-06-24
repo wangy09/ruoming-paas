@@ -21,7 +21,11 @@ class AiModelConfig(BaseModel):
         comment="配置名称（展示用）", nullable=False
     )
     provider: Mapped[str] = mapped_column(
-        comment="提供商标识：zhuilu / openai / ollama", nullable=False
+        comment="厂商标识（自由填写：openai/qwen/doubao/deepseek/ollama 等）", nullable=False
+    )
+    protocol: Mapped[str] = mapped_column(
+        default="openai_compat", server_default="openai_compat",
+        comment="通信协议：openai_compat / anthropic / gemini"
     )
     model_id: Mapped[str] = mapped_column(
         comment="模型 ID（调用时传给 API）", nullable=False
@@ -40,6 +44,10 @@ class AiModelConfig(BaseModel):
     )
     is_rerank: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", comment="是否为 Rerank 模型"
+    )
+    is_fallback: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false",
+        comment="是否为熔断备用模型（主力模型不可用时自动切换）"
     )
     max_tokens: Mapped[int] = mapped_column(
         Integer, default=4096, server_default="4096", comment="最大 Token 数"

@@ -66,6 +66,16 @@ class OpenAICompatProvider(BaseLLMProvider):
             raise
 
         data = resp.json()
+        # 兼容阿里云 MaaS 非标准格式：{"finish_reason": "stop", "text": "..."}
+        if "choices" not in data and "text" in data:
+            return ChatResult(
+                content=data["text"] or "",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                model=model,
+                finish_reason=data.get("finish_reason", "stop"),
+            )
         choice = data["choices"][0]
         usage = data.get("usage", {})
         return ChatResult(
@@ -89,18 +99,36 @@ class OpenAICompatProvider(BaseLLMProvider):
         async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
-                if not line or not line.startswith("data: "):
+                if not line:
                     continue
-                raw = line[6:]
-                if raw.strip() == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(raw)
-                    delta = chunk["choices"][0].get("delta", {})
-                    if content := delta.get("content"):
-                        yield content
-                except (json.JSONDecodeError, KeyError):
-                    continue
+                # 标准 SSE 格式：data: {...}
+                if line.startswith("data: "):
+                    raw = line[6:]
+                    if raw.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(raw)
+                        # 阿里云 MaaS 非标准格式：{"text": "...", "finish_reason": "..."}
+                        if "choices" not in chunk and "text" in chunk:
+                            yield chunk["text"]
+                        else:
+                            delta = chunk["choices"][0].get("delta", {})
+                            if content := delta.get("content"):
+                                yield content
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+                else:
+                    # 非 SSE 格式：直接裸 JSON（阿里云 MaaS 兼容模式）
+                    try:
+                        chunk = json.loads(line)
+                        if "text" in chunk:
+                            yield chunk["text"]
+                        elif "choices" in chunk:
+                            delta = chunk["choices"][0].get("delta", {})
+                            if content := delta.get("content"):
+                                yield content
+                    except (json.JSONDecodeError, KeyError):
+                        continue
 
     # ── 向量化 ────────────────────────────────────────────────────────────────
 

@@ -116,3 +116,34 @@ class UploadPartRequest(BaseModel):
 class UploadCompleteRequest(BaseModel):
     upload_id: str
     part_hashes: list[str] = Field(..., description="所有分片 hash 列表（按序号排序）")
+
+
+# ── URL 抓取 & API 来源 ───────────────────────────────────────────────────────
+
+class UrlSourceRequest(BaseModel):
+    """URL 抓取来源：抓取单个或多个网页内容写入知识库"""
+    urls: list[str] = Field(..., min_length=1, max_length=20, description="要抓取的 URL 列表，最多 20 条")
+    name: str | None = Field(None, max_length=128, description="文档名称，不填则使用页面标题")
+    css_selector: str | None = Field(None, max_length=256, description="可选 CSS 选择器，仅提取匹配节点内容")
+
+
+class ApiSourceRequest(BaseModel):
+    """API / 数据库来源：调用外部接口或查数据库获取文本内容"""
+    name: str = Field(..., max_length=128, description="来源名称")
+    source_type: str = Field(..., description="来源类型：api / database")
+    # API 类型
+    url: str | None = Field(None, max_length=500, description="API URL（source_type=api 时必填）")
+    method: str = Field("GET", description="HTTP 方法")
+    headers: dict = Field(default_factory=dict, description="请求头")
+    body: str | None = Field(None, description="请求体（JSON 字符串）")
+    json_path: str | None = Field(None, max_length=256, description="从响应 JSON 中提取内容的 JSONPath，如 $.data.content")
+    # 数据库类型
+    db_url: str | None = Field(None, max_length=500, description="数据库连接串（source_type=database 时必填）")
+    sql: str | None = Field(None, description="查询 SQL，结果拼接为文本")
+
+    @field_validator("source_type")
+    @classmethod
+    def validate_source_type(cls, v: str) -> str:
+        if v not in {"api", "database"}:
+            raise ValueError("source_type 必须是 api 或 database")
+        return v

@@ -412,28 +412,131 @@ class AgentRunner:
             return history[-max_rounds * 2:] if history else []
 
         if memory_type == 'summary':
-            # summary 模式：保留最近 N 轮 + 早期摘要
-            # 简化实现：超过 max_rounds 的历史返回摘要占位
+            # summary 模式：超出 max_rounds 时，用 LLM 将早期历史压缩为摘要
             if len(history) <= max_rounds * 2:
                 return history
-            # TODO: 实现 LLM 摘要生成
-            # 长期记忆 = summarize(早期历史)
-            # 返回 [{"role": "system", "content": f"对话摘要: {summary}"}] + 近期历史
+
             recent = history[-max_rounds * 2:]
-            summary_content = f"[早期对话摘要，共 {len(history) - max_rounds * 2} 条消息已省略]"
-            return [{"role": "system", "content": summary_content}] + recent
+            early = history[: len(history) - max_rounds * 2]
+
+            # 调用 LLM 生成早期对话摘要
+            summary_content = await self._summarize_history(early)
+            return [{"role": "system", "content": f"以下是此前对话的摘要：\n{summary_content}"}] + recent
 
         if memory_type == 'vector':
-            # vector 模式：（未来扩展）需要 embedding 模型 + 向量存储
-            # TODO: 实现语义检索
-            # 1. embedding_model 嵌入当前用户消息
-            # 2. 向量数据库相似度搜索
-            # 3. 返回相关历史
-            logger.warning("memory_vector_not_implemented", note="向量记忆模式需要 embedding 基础设施")
+            # vector 模式：使用 embedding 相似度检索与当前问题最相关的历史消息
+            # 需要从调用者传入 user_message，此处从 history 末尾取最后一条 user 消息作为查询
+            query = ""
+            for msg in reversed(history):
+                if msg.get("role") == "user":
+                    query = msg.get("content", "")
+                    break
+            if query:
+                relevant = await self._search_vector_memory(history, query, top_k=max_rounds)
+                if relevant:
+                    return relevant
+            # 降级为 buffer
             return history[-max_rounds * 2:] if history else []
 
         # 默认 buffer
         return history[-max_rounds * 2:] if history else []
+
+    async def _summarize_history(self, early_history: list[dict]) -> str:
+        """
+        用 LLM 将早期对话历史压缩为摘要。
+        summary 记忆模式的核心实现：超出 max_rounds 的历史通过 LLM 摘要后注入 system 消息。
+        """
+        try:
+            from app.ai.llm.providers.base import ChatMessage
+            from app.ai.llm.service import LLMService
+
+            # 将早期历史格式化为可阅读的对话文本
+            history_text = "\n".join(
+                f"{'用户' if m['role'] == 'user' else 'AI'}: {m.get('content', '')}"
+                for m in early_history
+                if m.get("role") in ("user", "assistant")
+            )
+
+            summarize_prompt = (
+                "请将以下对话历史压缩为简洁的摘要（100字以内），"
+                "保留关键信息和结论，忽略重复内容：\n\n"
+                f"{history_text}"
+            )
+
+            llm_svc = LLMService()
+            result = await llm_svc.chat(
+                messages=[ChatMessage(role="user", content=summarize_prompt)],
+                model_config_id=self.agent.model_config_id,
+                db=self.db,
+                temperature=0,
+                call_type="memory_summary",
+                use_cache=True,  # 相同历史可复用缓存
+            )
+            return result.content
+        except Exception as e:
+            logger.warning("memory_summary_failed", error=str(e))
+            # 降级：返回条数提示
+            return f"[早期对话共 {len(early_history)} 条消息，摘要生成失败，已省略]"
+
+    async def _search_vector_memory(
+        self, history: list[dict], query: str, top_k: int = 6
+    ) -> list[dict]:
+        """
+        vector 记忆模式：用 embedding 相似度从对话历史中检索最相关的消息对。
+        将每条 user-assistant 消息对向量化，按相似度排序后返回 top_k 条。
+        """
+        try:
+            from app.ai.llm.service import LLMService
+            import numpy as np
+
+            llm_svc = LLMService()
+
+            # 提取所有 user-assistant 消息对（成对处理）
+            pairs: list[tuple[dict, dict | None]] = []
+            i = 0
+            while i < len(history):
+                if history[i].get("role") == "user":
+                    user_msg = history[i]
+                    assistant_msg = history[i + 1] if i + 1 < len(history) and history[i + 1].get("role") == "assistant" else None
+                    pairs.append((user_msg, assistant_msg))
+                    i += 2 if assistant_msg else 1
+                else:
+                    i += 1
+
+            if not pairs:
+                return history[-top_k * 2:]
+
+            # 批量向量化（每对用 user 内容做索引）
+            texts = [p[0].get("content", "") for p in pairs]
+            embeddings = await llm_svc.embed(texts, None, self.db)
+            query_embedding = (await llm_svc.embed([query], None, self.db))[0]
+
+            # 余弦相似度排序
+            q = np.array(query_embedding)
+            scores = []
+            for idx, emb in enumerate(embeddings):
+                e = np.array(emb)
+                score = float(np.dot(q, e) / (np.linalg.norm(q) * np.linalg.norm(e) + 1e-9))
+                scores.append((score, idx))
+
+            scores.sort(key=lambda x: x[0], reverse=True)
+
+            # 取 top_k 对，按原始顺序重建（保持对话时序）
+            selected_indices = sorted({idx for _, idx in scores[:top_k]})
+            result_msgs: list[dict] = []
+            for idx in selected_indices:
+                user_msg, assistant_msg = pairs[idx]
+                result_msgs.append(user_msg)
+                if assistant_msg:
+                    result_msgs.append(assistant_msg)
+
+            return result_msgs
+        except ImportError:
+            logger.warning("numpy_not_installed", note="vector 记忆需要安装 numpy")
+            return history[-top_k * 2:] if history else []
+        except Exception as e:
+            logger.warning("vector_memory_search_failed", error=str(e))
+            return history[-top_k * 2:] if history else []
 
     async def _invoke_llm(
         self,

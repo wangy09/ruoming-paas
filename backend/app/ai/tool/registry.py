@@ -113,6 +113,41 @@ class ToolRegistry:
             for t in cls._tools.values()
         ]
 
+    @classmethod
+    def register_api_tool(cls, tool_id: str, name: str, description: str, url: str, method: str = "GET", headers: dict | None = None) -> None:
+        """动态注册一个 API 类型工具（自定义工具）"""
+        import httpx
+
+        async def _api_call(**kwargs) -> str:
+            body = kwargs.get("body") or kwargs.get("input")
+            try:
+                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                    resp = await client.request(
+                        method=method.upper(),
+                        url=url,
+                        headers=headers or {},
+                        content=str(body) if body else None,
+                    )
+                    return resp.text[:2000]
+            except Exception as e:
+                return f"工具调用失败：{str(e)}"
+
+        definition = ToolDefinition(
+            tool_id=tool_id,
+            name=name,
+            description=description,
+            func=_api_call,
+            is_async=True,
+        )
+        cls._tools[tool_id] = definition
+        logger.info("api_tool_registered", tool_id=tool_id)
+
+    @classmethod
+    def unregister(cls, tool_id: str) -> None:
+        """注销工具（删除自定义工具时调用）"""
+        cls._tools.pop(tool_id, None)
+        logger.info("tool_unregistered", tool_id=tool_id)
+
 
 # ── 内置工具注册 ──────────────────────────────────────────────────────────────
 

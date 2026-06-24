@@ -2,7 +2,17 @@
   <div class="page-container">
     <div class="page-card">
       <div class="card-header">
-        <span class="card-title">Prompt 模板管理</span>
+        <div class="header-left">
+          <span class="card-title">Prompt 模板管理</span>
+          <el-input
+            v-model="query.category"
+            placeholder="按分类筛选"
+            clearable
+            style="width:160px;margin-left:12px"
+            @clear="fetchList"
+            @keyup.enter="fetchList"
+          />
+        </div>
         <el-button type="primary" :icon="Plus" v-permission="'ai:prompt:create'" @click="openDialog()">
           新建模板
         </el-button>
@@ -25,17 +35,18 @@
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="240" fixed="right" align="center">
+        <el-table-column label="操作" width="260" fixed="right" align="center">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
             <el-button
-              v-if="row.status === 0"
+              v-if="row.status !== 'published'"
               link type="success"
               v-permission="'ai:prompt:publish'"
               @click="handlePublish(row)"
             >发布</el-button>
             <el-button link type="warning" @click="openPreview(row)">预览</el-button>
-            <el-button link type="info" @click="openVersions(row)">版本</el-button>
+            <el-button link type="info" v-permission="'ai:prompt:version'" @click="openVersions(row)">版本</el-button>
+            <el-button link type="danger" v-permission="'ai:prompt:delete'" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -106,6 +117,75 @@
         <pre>{{ previewResult }}</pre>
       </div>
     </el-dialog>
+
+    <!-- 版本历史 -->
+    <el-dialog v-model="versionsVisible" :title="`版本历史 — ${currentTemplate?.name}`" width="680px" destroy-on-close>
+      <div class="version-toolbar">
+        <el-button type="primary" size="small" :icon="Plus" @click="openAddVersion">提交新版本</el-button>
+      </div>
+      <el-table v-loading="versionsLoading" :data="versionList" border stripe class="mt-3">
+        <el-table-column prop="version" label="版本" width="70" align="center" />
+        <el-table-column label="状态" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.is_published ? 'success' : 'info'" size="small">
+              {{ row.is_published ? '已发布' : '草稿' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="changelog" label="变更说明" min-width="180" show-overflow-tooltip />
+        <el-table-column label="时间" width="160">
+          <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="160" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="previewVersion(row)">预览</el-button>
+            <el-button
+              v-if="!row.is_published"
+              link type="success"
+              @click="publishOneVersion(row)"
+            >发布</el-button>
+            <el-button
+              v-if="!row.is_published"
+              link type="warning"
+              @click="rollbackToVersion(row)"
+            >回滚</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- 新版本内容预览区 -->
+      <el-dialog v-model="versionContentVisible" title="版本内容预览" width="580px" append-to-body destroy-on-close>
+        <pre class="version-content-pre">{{ versionContentPreview }}</pre>
+      </el-dialog>
+
+      <!-- 提交新版本 -->
+      <el-dialog v-model="addVersionVisible" title="提交新版本" width="660px" append-to-body destroy-on-close>
+        <el-form ref="addVersionFormRef" :model="addVersionForm" label-width="90px">
+          <el-form-item label="版本内容" prop="content" :rules="[{ required: true, message: '请输入内容' }]">
+            <el-input
+              v-model="addVersionForm.content"
+              type="textarea"
+              :rows="10"
+              placeholder="输入新版本的模板内容..."
+              @input="extractAddVersionVars"
+            />
+          </el-form-item>
+          <el-form-item label="变更说明">
+            <el-input v-model="addVersionForm.changelog" placeholder="描述本次修改内容..." />
+          </el-form-item>
+          <el-form-item label="识别变量">
+            <div class="flex gap-2 flex-wrap">
+              <el-tag v-for="v in addVersionVars" :key="v" type="info" size="small" v-text="`{{${v}}}`" />
+              <span v-if="!addVersionVars.length" class="text-gray text-sm">暂未识别到变量</span>
+            </div>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="addVersionVisible = false">取消</el-button>
+          <el-button type="primary" :loading="addVersionSubmitting" @click="submitNewVersion">提交</el-button>
+        </template>
+      </el-dialog>
+    </el-dialog>
   </div>
 </template>
 
@@ -115,20 +195,20 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import { Plus } from '@element-plus/icons-vue'
 import { promptApi } from '@/api/ai'
 import { formatDate } from '@/utils/format'
-import type { PromptTemplate } from '@/types'
+import type { PromptTemplate, PromptVersion } from '@/types'
 
-const statusTagMap: Record<number, string> = { 0: 'info', 1: 'success', 2: 'warning' }
-const statusLabelMap: Record<number, string> = { 0: '草稿', 1: '已发布', 2: '归档' }
+const statusTagMap: Record<string, string> = { draft: 'info', published: 'success', archived: 'warning' }
+const statusLabelMap: Record<string, string> = { draft: '草稿', published: '已发布', archived: '归档' }
 
 const loading = ref(false)
 const tableData = ref<PromptTemplate[]>([])
 const total = ref(0)
-const query = reactive({ page: 1, page_size: 10 })
+const query = reactive({ page: 1, page_size: 10, category: '' })
 
 async function fetchList() {
   loading.value = true
   try {
-    const res = await promptApi.list(query)
+    const res = await promptApi.list({ ...query, category: query.category || undefined })
     tableData.value = res.data.items
     total.value = res.data.total
   } finally {
@@ -137,14 +217,17 @@ async function fetchList() {
 }
 
 async function handlePublish(row: PromptTemplate) {
-  await ElMessageBox.confirm(`发布模板「${row.name}」？发布后将生成版本快照。`, '确认', { type: 'info' })
-  await promptApi.publish(row.id)
+  await ElMessageBox.confirm(`发布模板「${row.name}」v${row.current_version}？`, '确认', { type: 'info' })
+  await promptApi.publishVersion(row.id, row.current_version)
   ElMessage.success('发布成功')
   fetchList()
 }
 
-function openVersions(_row: PromptTemplate) {
-  ElMessage.info('版本历史功能开发中...')
+async function handleDelete(row: PromptTemplate) {
+  await ElMessageBox.confirm(`确定删除模板「${row.name}」？`, '警告', { type: 'warning' })
+  await promptApi.delete(row.id)
+  ElMessage.success('已删除')
+  fetchList()
 }
 
 // 编辑
@@ -197,7 +280,7 @@ async function handleSubmit() {
   }
 }
 
-// 预览
+// 渲染预览
 const previewVisible = ref(false)
 const previewTemplate = ref<PromptTemplate | null>(null)
 const previewVars = ref<Record<string, string>>({})
@@ -222,11 +305,97 @@ async function doPreview() {
   }
 }
 
+// 版本管理
+const versionsVisible = ref(false)
+const versionsLoading = ref(false)
+const currentTemplate = ref<PromptTemplate | null>(null)
+const versionList = ref<PromptVersion[]>([])
+const versionContentVisible = ref(false)
+const versionContentPreview = ref('')
+
+async function openVersions(row: PromptTemplate) {
+  currentTemplate.value = row
+  versionsVisible.value = true
+  versionsLoading.value = true
+  try {
+    const res = await promptApi.versions(row.id)
+    versionList.value = res.data
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+function previewVersion(row: PromptVersion) {
+  versionContentPreview.value = row.content
+  versionContentVisible.value = true
+}
+
+async function publishOneVersion(row: PromptVersion) {
+  if (!currentTemplate.value) return
+  await ElMessageBox.confirm(`发布版本 v${row.version}？`, '确认', { type: 'info' })
+  await promptApi.publishVersion(currentTemplate.value.id, row.version)
+  ElMessage.success('发布成功')
+  // 刷新版本列表和模板列表
+  const res = await promptApi.versions(currentTemplate.value.id)
+  versionList.value = res.data
+  fetchList()
+}
+
+async function rollbackToVersion(row: PromptVersion) {
+  if (!currentTemplate.value) return
+  await ElMessageBox.confirm(`回滚到版本 v${row.version}？当前内容将被覆盖。`, '确认', { type: 'warning' })
+  await promptApi.rollbackVersion(currentTemplate.value.id, row.version)
+  ElMessage.success('已回滚')
+  versionsVisible.value = false
+  fetchList()
+}
+
+// 提交新版本
+const addVersionVisible = ref(false)
+const addVersionSubmitting = ref(false)
+const addVersionFormRef = ref<FormInstance>()
+const addVersionVars = ref<string[]>([])
+const addVersionForm = reactive({ content: '', changelog: '', variables: [] as string[] })
+
+function openAddVersion() {
+  Object.assign(addVersionForm, { content: currentTemplate.value?.content ?? '', changelog: '', variables: [] })
+  addVersionVars.value = currentTemplate.value?.variables ?? []
+  addVersionVisible.value = true
+}
+
+function extractAddVersionVars() {
+  const matches = addVersionForm.content.match(/\{\{(\w+)\}\}/g) ?? []
+  const vars = [...new Set(matches.map(m => m.replace(/\{\{|\}\}/g, '')))]
+  addVersionVars.value = vars
+  addVersionForm.variables = vars
+}
+
+async function submitNewVersion() {
+  if (!currentTemplate.value) return
+  await addVersionFormRef.value?.validate()
+  addVersionSubmitting.value = true
+  try {
+    await promptApi.addVersion(currentTemplate.value.id, {
+      content: addVersionForm.content,
+      variables: addVersionForm.variables,
+      changelog: addVersionForm.changelog,
+    })
+    ElMessage.success('新版本已提交')
+    addVersionVisible.value = false
+    const res = await promptApi.versions(currentTemplate.value.id)
+    versionList.value = res.data
+    fetchList()
+  } finally {
+    addVersionSubmitting.value = false
+  }
+}
+
 onMounted(fetchList)
 </script>
 
 <style lang="scss" scoped>
 .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.header-left { display: flex; align-items: center; }
 .card-title { font-size: 15px; font-weight: 600; }
 .mt-4 { margin-top: 16px; }
 .mt-3 { margin-top: 12px; }
@@ -246,4 +415,7 @@ onMounted(fetchList)
   overflow: auto;
   pre { font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
 }
+
+.version-toolbar { display: flex; justify-content: flex-end; }
+.version-content-pre { font-size: 13px; line-height: 1.6; white-space: pre-wrap; background: #f6f6f6; border-radius: 6px; padding: 12px; max-height: 400px; overflow: auto; }
 </style>
