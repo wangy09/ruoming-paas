@@ -48,6 +48,8 @@ MEMORY_LABEL_MAP: dict[str, str] = {
     "buffer": "全量",
     "summary": "摘要",
     "vector": "向量",
+    "entity": "实体",
+    "kv": "键值",
 }
 
 

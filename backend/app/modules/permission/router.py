@@ -118,7 +118,7 @@ async def get_permission_tree(
 @router.get("/roles", response_model=ApiResponse, summary="角色列表")
 async def list_roles(
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=200),
+    page_size: int = Query(default=50, ge=1, le=1000),
     keyword: str | None = Query(default=None),
     current_user=Depends(require_permissions("system:role:view")),
     db: AsyncSession = Depends(get_db),
@@ -236,6 +236,18 @@ async def delete_role(
     return ok(message="删除成功")
 
 
+@router.get("/roles/{role_id}/permissions", response_model=ApiResponse, summary="获取角色已分配的权限")
+async def get_role_permissions(
+    role_id: int,
+    current_user=Depends(require_permissions("system:role:view")),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse:
+    result = await db.execute(
+        select(SysRolePermission.permission_id)
+        .where(SysRolePermission.role_id == role_id)
+    )
+    permission_ids = [row[0] for row in result.all()]
+    return ok({"permission_ids": permission_ids})
 @router.post("/roles/{role_id}/permissions", response_model=ApiResponse, summary="给角色分配权限")
 async def assign_role_permissions(
     role_id: int,

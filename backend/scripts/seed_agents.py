@@ -7,6 +7,10 @@
     python -m scripts.seed_agents
 或：
     python scripts/seed_agents.py
+
+可选参数：
+    --force       强制重建：删除已存在的同名 Agent 后重新创建
+    --reset       完全重置：删除所有 Agent 后重新创建
 """
 import asyncio
 import os
@@ -104,71 +108,150 @@ AGENT_TEMPLATES = [
 ]
 
 
-async def seed_agents() -> None:
+def parse_args() -> dict:
+    """解析命令行参数"""
+    args = {"force": False, "reset": False}
+    for arg in sys.argv[1:]:
+        if arg == "--force":
+            args["force"] = True
+        elif arg == "--reset":
+            args["reset"] = True
+    return args
+
+
+async def find_admin(db) -> tuple[int | None, int | None]:
+    """查找超管用户，返回 (creator_id, tenant_id)"""
     from sqlalchemy import select
-    from app.config import settings
+    from app.modules.user.models import SysUser
+
+    # 1. 优先查找 is_superplatform
+    result = await db.execute(
+        select(SysUser).where(SysUser.is_superplatform == True)  # noqa: E712
+    )
+    admin = result.scalar_one_or_none()
+    if admin:
+        return admin.id, admin.tenant_id
+
+    # 2. 兜底：username='admin'
+    result = await db.execute(
+        select(SysUser).where(SysUser.username == "admin")
+    )
+    admin = result.scalar_one_or_none()
+    if admin:
+        return admin.id, admin.tenant_id
+
+    return None, None
+
+
+async def find_model_config(db) -> int | None:
+    """查找可用的模型配置 ID"""
+    from sqlalchemy import select
+    from app.ai.llm.models import AiModelConfig
+
+    # 1. 优先 is_default=True
+    result = await db.execute(
+        select(AiModelConfig)
+        .where(AiModelConfig.status == 1)
+        .where(AiModelConfig.is_default == True)  # noqa: E712
+        .order_by(AiModelConfig.id.asc())
+        .limit(1)
+    )
+    model = result.scalar_one_or_none()
+    if model:
+        return model.id
+
+    # 2. 兜底：任意 status=1 的模型
+    result = await db.execute(
+        select(AiModelConfig)
+        .where(AiModelConfig.status == 1)
+        .order_by(AiModelConfig.id.asc())
+        .limit(1)
+    )
+    model = result.scalar_one_or_none()
+    if model:
+        return model.id
+
+    return None
+
+
+async def seed_agents() -> None:
+    from sqlalchemy import select, delete
     from app.core.logging import setup_logging
     from app.database import AsyncSessionFactory
     from app.ai.agent.models import AiAgent
     from app.ai.llm.models import AiModelConfig
     from app.modules.user.models import SysUser
 
+    args = parse_args()
+    force = args["force"]
+    reset = args["reset"]
+
     setup_logging()
     import structlog
     logger = structlog.get_logger(__name__)
 
+    print("\n" + "=" * 70)
+    print("若茗 PaaS - AI Agent 种子数据初始化")
+    if reset:
+        print("  ⚠️  模式: --reset (清空所有 Agent 后重建)")
+    elif force:
+        print("  ⚠️  模式: --force (覆盖同名 Agent)")
+    else:
+        print("  ℹ️  模式: 默认 (跳过已存在的 Agent)")
+    print("=" * 70)
+
     async with AsyncSessionFactory() as db:
         # ── 1. 找到超管用户（创建人） ─────────────────────────────────
-        admin_result = await db.execute(
-            select(SysUser).where(SysUser.is_superplatform == True)  # noqa: E712
-        )
-        admin = admin_result.scalar_one_or_none()
-        if not admin:
-            logger.error("admin_not_found", msg="未找到超管用户，请先执行 init_data.py")
+        creator_id, tenant_id = await find_admin(db)
+        if not creator_id:
+            print("\n❌ 错误：未找到超管用户，请先执行 init_data.py")
             return
-        creator_id = admin.id
-        tenant_id = admin.tenant_id  # 平台级用户 tenant_id 通常为 None
-        logger.info("creator_found", user_id=creator_id, tenant_id=tenant_id)
+        print(f"\n✓ 找到超管用户: id={creator_id}, tenant_id={tenant_id}")
 
         # ── 2. 找一个默认模型配置（用作 Agent 的 model_config_id） ────
-        model_result = await db.execute(
-            select(AiModelConfig)
-            .where(AiModelConfig.status == 1)
-            .where(AiModelConfig.is_default == True)  # noqa: E712
-            .order_by(AiModelConfig.id.asc())
-            .limit(1)
-        )
-        model = model_result.scalar_one_or_none()
-        if not model:
-            # 兜底：取任意一个启用的模型
-            fallback_result = await db.execute(
-                select(AiModelConfig)
-                .where(AiModelConfig.status == 1)
-                .order_by(AiModelConfig.id.asc())
-                .limit(1)
-            )
-            model = fallback_result.scalar_one_or_none()
-        if not model:
-            logger.warning(
-                "no_model_config",
-                msg="未找到可用模型配置，将以 model_config_id=NULL 创建（Agent 执行时需先配置模型）",
-            )
-            model_id = None
+        model_id = await find_model_config(db)
+        if not model_id:
+            print("⚠️  警告：未找到可用模型配置，将以 model_config_id=NULL 创建")
+            print("   后续可在前端「模型管理」中配置模型后，再编辑 Agent 绑定。")
         else:
-            model_id = model.id
-            logger.info("model_config_used", model_id=model_id, model_name=model.name)
+            print(f"✓ 找到默认模型: model_config_id={model_id}")
 
-        # ── 3. 为每个场景创建 Agent（已存在则跳过） ─────────────────
-        created, skipped = 0, 0
+        # ── 3. --reset 模式：清空所有 Agent ─────────────────────────────
+        if reset:
+            del_result = await db.execute(
+                delete(AiAgent).where(AiAgent.id > 0)
+            )
+            await db.commit()
+            print(f"\n🗑️  已清空所有 Agent（删除 {del_result.rowcount} 条）")
+
+        # ── 4. 为每个场景创建 Agent ─────────────────────────────────
+        created, updated, skipped = 0, 0, 0
         for tpl in AGENT_TEMPLATES:
             exists_result = await db.execute(
                 select(AiAgent).where(AiAgent.name == tpl["name"])
             )
-            if exists_result.scalar_one_or_none():
+            existing = exists_result.scalar_one_or_none()
+
+            if existing and not force:
                 logger.info("agent_skip", name=tpl["name"], reason="已存在")
                 skipped += 1
                 continue
 
+            if existing and force:
+                # 更新已存在的 Agent
+                existing.description = tpl["description"]
+                existing.model_config_id = model_id
+                existing.system_prompt = tpl["system_prompt"]
+                existing.default_scene = tpl["default_scene"]
+                existing.temperature = tpl["temperature"]
+                existing.max_tokens = tpl["max_tokens"]
+                existing.memory_type = tpl["memory_type"]
+                existing.status = 1
+                updated += 1
+                logger.info("agent_updated", name=tpl["name"], scene=tpl["default_scene"])
+                continue
+
+            # 创建新 Agent
             agent = AiAgent(
                 name=tpl["name"],
                 description=tpl["description"],
@@ -197,17 +280,16 @@ async def seed_agents() -> None:
 
         await db.commit()
 
-        # ── 4. 输出汇总 ──────────────────────────────────────────────
-        print("\n" + "=" * 60)
-        print("✅ Agent 种子数据初始化完成")
-        print(f"   新建：{created} 个  |  跳过（已存在）：{skipped} 个")
-        print("=" * 60)
+        # ── 5. 输出汇总 ──────────────────────────────────────────────
+        print("\n" + "-" * 70)
+        print(f"✅ Agent 种子数据初始化完成")
+        print(f"   新建: {created} 个  |  更新: {updated} 个  |  跳过: {skipped} 个")
+        print("-" * 70)
         print("\n场景分布：")
         for tpl in AGENT_TEMPLATES:
-            marker = "新建" if created > 0 else "已存在"
-            print(f"  • [{tpl['default_scene']:>12}] {tpl['name']:<14} (temp={tpl['temperature']})  {marker}")
+            print(f"  • [{tpl['default_scene']:>12}] {tpl['name']:<14} (temp={tpl['temperature']}, memory={tpl['memory_type']})")
         print("\n下一步：登录前端 → AI 管理 → Agent 管理，查看与调试。")
-        print("=" * 60 + "\n")
+        print("=" * 70 + "\n")
 
 
 if __name__ == "__main__":

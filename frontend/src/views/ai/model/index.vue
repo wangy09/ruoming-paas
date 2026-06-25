@@ -107,7 +107,19 @@
           <el-input v-model="form.base_url" :placeholder="baseUrlPlaceholder" name="base_url" autocomplete="off" />
         </el-form-item>
         <el-form-item label="API Key">
-          <el-input v-model="form.api_key" type="password" show-password placeholder="留空则使用全局配置" name="api_key" autocomplete="new-password" />
+          <template #label>
+            API Key
+            <el-tag v-if="editId && rowHasApiKey" type="success" size="small" class="ml-2">已配置</el-tag>
+          </template>
+          <el-input
+            v-model="form.api_key"
+            type="password"
+            show-password
+            :placeholder="editId ? '留空则保持原配置' : '请输入 API Key'"
+            name="api_key"
+            autocomplete="new-password"
+          />
+          <div v-if="editId && rowHasApiKey" class="text-gray text-xs mt-1">已配置 API Key，如需修改请填写新值</div>
         </el-form-item>
         <el-form-item label="上下文窗口">
           <el-input-number v-model="form.context_length" :min="512" :max="131072" :step="512" />
@@ -186,6 +198,7 @@ async function handleDelete(row: AiModelConfig) {
 const dialogVisible = ref(false)
 const editId = ref<number | null>(null)
 const submitting = ref(false)
+const rowHasApiKey = ref(false)
 const formRef = ref<FormInstance>()
 const form = reactive({
   provider: 'zhuilu',
@@ -234,6 +247,7 @@ function onProviderChange(val: string) {
 
 function openDialog(row?: AiModelConfig) {
   editId.value = row?.id ?? null
+  rowHasApiKey.value = row?.has_api_key ?? false
   Object.assign(form, {
     provider: row?.provider ?? 'zhuilu',
     is_embed: row?.is_embed ?? false,

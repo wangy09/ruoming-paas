@@ -29,6 +29,13 @@ from app.modules.user.models import SysUser
 router = APIRouter(prefix="/ai/models", tags=["AI-模型管理"])
 
 
+def _to_info(config: AiModelConfig) -> ModelConfigInfo:
+    """将 ORM 模型转换为 schema，并补充 has_api_key 字段"""
+    info = ModelConfigInfo.model_validate(config)
+    info.has_api_key = bool(config.api_key and config.api_key.strip())
+    return info
+
+
 @router.get("", response_model=ApiResponse[PageData[ModelConfigInfo]], summary="模型配置列表")
 async def list_model_configs(
     page_params: PageParams = Depends(),
@@ -50,7 +57,7 @@ async def list_model_configs(
     result = await db.execute(stmt)
     items = result.scalars().all()
 
-    return paged(items=[ModelConfigInfo.model_validate(i) for i in items], total=total, page=page_params.page, page_size=page_params.page_size)
+    return paged(items=[_to_info(i) for i in items], total=total, page=page_params.page, page_size=page_params.page_size)
 
 
 @router.post("", response_model=ApiResponse[ModelConfigInfo], summary="添加模型配置", status_code=201)
@@ -97,7 +104,7 @@ async def create_model_config(
     db.add(config)
     await db.commit()
     await db.refresh(config)
-    return created(ModelConfigInfo.model_validate(config))
+    return created(_to_info(config))
 
 
 @router.put("/{config_id}", response_model=ApiResponse[ModelConfigInfo], summary="修改模型配置")
@@ -126,7 +133,7 @@ async def update_model_config(
     # 通知所有 Worker 失效该 Provider 缓存
     await LLMService.notify_config_changed(config_id)
 
-    return ok(ModelConfigInfo.model_validate(config))
+    return ok(_to_info(config))
 
 
 @router.delete("/{config_id}", response_model=ApiResponse, summary="删除模型配置")

@@ -18,6 +18,9 @@ export const permissionApi = {
   assignPermissions: (roleId: number, permissionIds: number[]) =>
     post<ApiResponse>(`/api/v1/roles/${roleId}/permissions`, { permission_ids: permissionIds }),
 
+  getRolePermissions: (roleId: number) =>
+    get<ApiResponse<{ permission_ids: number[] }>>(`/api/v1/roles/${roleId}/permissions`),
+
   // 权限
   permissionTree: () =>
     get<ApiResponse<PermissionItem[]>>('/api/v1/permissions/tree'),

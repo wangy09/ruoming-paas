@@ -38,6 +38,11 @@ class UserPasswordUpdate(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
 
 
+class UserRoleAssign(BaseModel):
+    """分配角色请求"""
+    role_ids: list[int] = Field(..., description="角色 ID 列表")
+
+
 class UserInfo(BaseModel):
     """用户信息响应"""
 
@@ -50,10 +55,11 @@ class UserInfo(BaseModel):
     status: int
     is_superplatform: bool
     dept_id: int | None
-    dept_name: str | None = None  # 部门名称（JOIN 查询）
+    dept_name: str | None = None
     tenant_id: int | None
     last_login: datetime | None
     created_at: datetime
+    roles: list[dict] = Field(default_factory=list, description="用户角色列表")
 
     class Config:
         from_attributes = True

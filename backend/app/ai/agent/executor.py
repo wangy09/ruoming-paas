@@ -80,6 +80,7 @@ class AgentRunner:
                     has_attachment,
                     tenant_id,
                     user_id,
+                    conversation_id,
                 ),
                 timeout=timeout,
             )
@@ -206,6 +207,7 @@ class AgentRunner:
         has_attachment: bool,
         tenant_id: int | None,
         user_id: int | None,
+        conversation_id: int | None = None,
     ) -> AgentRunResult:
         start_ms = int(time.time() * 1000)
 
@@ -240,6 +242,7 @@ class AgentRunner:
             model_config_id=model_config_id,
             temperature=effective.get("temperature", self.agent.temperature),
             max_tokens=effective.get("max_tokens", self.agent.max_tokens),
+            conversation_id=conversation_id,
         )
 
         latency_ms = int(time.time() * 1000) - start_ms
@@ -397,71 +400,85 @@ class AgentRunner:
 
     # ── LLM 推理 ──────────────────────────────────────────────────────────────
 
-    async def _get_memories(self, history: list[dict]) -> list[dict]:
+    async def _get_memories(self, history: list[dict], conversation_id: int | None = None) -> list[dict]:
         """
         根据 memory_type 获取记忆。
         - buffer: 返回最近 max_rounds * 2 条消息
-        - summary: 返回摘要 + 最近 rounds 条消息
-        - vector: （未来扩展）基于语义检索相关历史
+        - summary: 返回摘要 + 最近 rounds 条消息（摘要持久化到数据库）
+        - vector: 基于数据库中已存储的 embedding 语义检索相关历史
+        - entity: 从对话中提取实体，注入上下文供后续引用
+        - kv: 键值记忆（通过工具调用）
         """
         memory_type = getattr(self.agent, 'memory_type', 'buffer') or 'buffer'
         max_rounds = getattr(self.agent, 'max_rounds', 10) or 10
 
         if memory_type == 'buffer' or not history:
-            # buffer 模式：保留最近 N 轮对话
             return history[-max_rounds * 2:] if history else []
 
         if memory_type == 'summary':
-            # summary 模式：超出 max_rounds 时，用 LLM 将早期历史压缩为摘要
             if len(history) <= max_rounds * 2:
                 return history
-
             recent = history[-max_rounds * 2:]
             early = history[: len(history) - max_rounds * 2]
-
-            # 调用 LLM 生成早期对话摘要
-            summary_content = await self._summarize_history(early)
+            summary_content = await self._summarize_history(early, conversation_id)
             return [{"role": "system", "content": f"以下是此前对话的摘要：\n{summary_content}"}] + recent
 
         if memory_type == 'vector':
-            # vector 模式：使用 embedding 相似度检索与当前问题最相关的历史消息
-            # 需要从调用者传入 user_message，此处从 history 末尾取最后一条 user 消息作为查询
             query = ""
             for msg in reversed(history):
                 if msg.get("role") == "user":
                     query = msg.get("content", "")
                     break
             if query:
-                relevant = await self._search_vector_memory(history, query, top_k=max_rounds)
+                relevant = await self._search_vector_memory(history, query, top_k=max_rounds, conversation_id=conversation_id)
                 if relevant:
                     return relevant
-            # 降级为 buffer
             return history[-max_rounds * 2:] if history else []
 
-        # 默认 buffer
+        if memory_type == 'entity':
+            query = history[-1]['content'] if history else ""
+            entity_context = await self._inject_entity_memory(query, conversation_id)
+            base_memories = history[-max_rounds * 2:] if history else []
+            if entity_context:
+                return [{"role": "system", "content": entity_context}] + base_memories
+            return base_memories
+
         return history[-max_rounds * 2:] if history else []
 
-    async def _summarize_history(self, early_history: list[dict]) -> str:
+    async def _summarize_history(self, early_history: list[dict], conversation_id: int | None = None) -> str:
         """
         用 LLM 将早期对话历史压缩为摘要。
-        summary 记忆模式的核心实现：超出 max_rounds 的历史通过 LLM 摘要后注入 system 消息。
+        支持增量更新：优先读取数据库中已保存的摘要，只对新增内容做增量摘要。
         """
         try:
             from app.ai.llm.providers.base import ChatMessage
             from app.ai.llm.service import LLMService
+            from app.ai.conversation.models import AiConversation
 
-            # 将早期历史格式化为可阅读的对话文本
+            existing_summary = ""
+            if conversation_id:
+                conv = await self.db.get(AiConversation, conversation_id)
+                if conv and conv.memory_summary:
+                    existing_summary = conv.memory_summary
+
             history_text = "\n".join(
                 f"{'用户' if m['role'] == 'user' else 'AI'}: {m.get('content', '')}"
                 for m in early_history
                 if m.get("role") in ("user", "assistant")
             )
 
-            summarize_prompt = (
-                "请将以下对话历史压缩为简洁的摘要（100字以内），"
-                "保留关键信息和结论，忽略重复内容：\n\n"
-                f"{history_text}"
-            )
+            if existing_summary:
+                summarize_prompt = (
+                    f"已有对话摘要：\n{existing_summary}\n\n"
+                    "请基于上述摘要，追加以下新对话内容，生成更新后的完整摘要（150字以内）：\n\n"
+                    f"{history_text}"
+                )
+            else:
+                summarize_prompt = (
+                    "请将以下对话历史压缩为简洁的摘要（100字以内），"
+                    "保留关键信息和结论，忽略重复内容：\n\n"
+                    f"{history_text}"
+                )
 
             llm_svc = LLMService()
             result = await llm_svc.chat(
@@ -470,28 +487,34 @@ class AgentRunner:
                 db=self.db,
                 temperature=0,
                 call_type="memory_summary",
-                use_cache=True,  # 相同历史可复用缓存
+                use_cache=True,
             )
+
+            if conversation_id:
+                conv = await self.db.get(AiConversation, conversation_id)
+                if conv:
+                    conv.memory_summary = result.content
+                    await self.db.flush()
+
             return result.content
         except Exception as e:
             logger.warning("memory_summary_failed", error=str(e))
-            # 降级：返回条数提示
             return f"[早期对话共 {len(early_history)} 条消息，摘要生成失败，已省略]"
 
     async def _search_vector_memory(
-        self, history: list[dict], query: str, top_k: int = 6
+        self, history: list[dict], query: str, top_k: int = 6, conversation_id: int | None = None
     ) -> list[dict]:
         """
         vector 记忆模式：用 embedding 相似度从对话历史中检索最相关的消息对。
-        将每条 user-assistant 消息对向量化，按相似度排序后返回 top_k 条。
+        优先从数据库读取已存储的 embedding，缺失时才重新计算并存储。
         """
         try:
             from app.ai.llm.service import LLMService
+            from app.ai.conversation.models import AiMessage
             import numpy as np
 
             llm_svc = LLMService()
 
-            # 提取所有 user-assistant 消息对（成对处理）
             pairs: list[tuple[dict, dict | None]] = []
             i = 0
             while i < len(history):
@@ -506,22 +529,63 @@ class AgentRunner:
             if not pairs:
                 return history[-top_k * 2:]
 
-            # 批量向量化（每对用 user 内容做索引）
             texts = [p[0].get("content", "") for p in pairs]
-            embeddings = await llm_svc.embed(texts, None, self.db)
+            embeddings = []
+            need_embed_indices = []
+
+            if conversation_id:
+                from sqlalchemy import select
+
+                msg_ids = [p[0].get("id") for p in pairs if p[0].get("id")]
+                if msg_ids:
+                    result = await self.db.execute(
+                        select(AiMessage.id, AiMessage.embedding).where(
+                            AiMessage.id.in_(msg_ids), AiMessage.embedding.is_not(None)
+                        )
+                    )
+                    stored_embeddings = {row[0]: row[1] for row in result}
+
+                    for idx, p in enumerate(pairs):
+                        msg_id = p[0].get("id")
+                        if msg_id and stored_embeddings.get(msg_id):
+                            embeddings.append(stored_embeddings[msg_id])
+                        else:
+                            embeddings.append(None)
+                            need_embed_indices.append(idx)
+                else:
+                    embeddings = [None] * len(pairs)
+                    need_embed_indices = list(range(len(pairs)))
+            else:
+                embeddings = [None] * len(pairs)
+                need_embed_indices = list(range(len(pairs)))
+
+            if need_embed_indices:
+                need_texts = [texts[idx] for idx in need_embed_indices]
+                new_embeddings = await llm_svc.embed(need_texts, None, self.db)
+
+                for idx, emb_idx in enumerate(need_embed_indices):
+                    embeddings[emb_idx] = new_embeddings[idx]
+
+                    if conversation_id and pairs[emb_idx][0].get("id"):
+                        msg = await self.db.get(AiMessage, pairs[emb_idx][0]["id"])
+                        if msg:
+                            msg.embedding = new_embeddings[idx]
+
+                await self.db.flush()
+
             query_embedding = (await llm_svc.embed([query], None, self.db))[0]
 
-            # 余弦相似度排序
             q = np.array(query_embedding)
             scores = []
             for idx, emb in enumerate(embeddings):
+                if emb is None:
+                    continue
                 e = np.array(emb)
                 score = float(np.dot(q, e) / (np.linalg.norm(q) * np.linalg.norm(e) + 1e-9))
                 scores.append((score, idx))
 
             scores.sort(key=lambda x: x[0], reverse=True)
 
-            # 取 top_k 对，按原始顺序重建（保持对话时序）
             selected_indices = sorted({idx for _, idx in scores[:top_k]})
             result_msgs: list[dict] = []
             for idx in selected_indices:
@@ -530,13 +594,93 @@ class AgentRunner:
                 if assistant_msg:
                     result_msgs.append(assistant_msg)
 
-            return result_msgs
+            return result_msgs if result_msgs else history[-top_k * 2:]
         except ImportError:
             logger.warning("numpy_not_installed", note="vector 记忆需要安装 numpy")
             return history[-top_k * 2:] if history else []
         except Exception as e:
             logger.warning("vector_memory_search_failed", error=str(e))
             return history[-top_k * 2:] if history else []
+
+    async def _extract_entities(self, user_message: str, message_id: int | None = None, conversation_id: int | None = None) -> None:
+        """从用户消息中提取实体并保存到数据库"""
+        try:
+            from app.ai.llm.providers.base import ChatMessage
+            from app.ai.llm.service import LLMService
+            from app.ai.conversation.models import AiEntityMemory
+            import json
+
+            extract_prompt = (
+                "请从以下对话中提取实体，格式为 JSON 数组：\n"
+                "[{\"entity_name\": \"实体名\", \"entity_type\": \"类型\", \"entity_value\": \"值\", \"context\": \"上下文\"}]\n"
+                "支持的类型：person(人名), company(公司), date(日期), number(数字), location(地点), other(其他)\n\n"
+                f"对话：{user_message}"
+            )
+
+            llm_svc = LLMService()
+            result = await llm_svc.chat(
+                messages=[ChatMessage(role="user", content=extract_prompt)],
+                model_config_id=self.agent.model_config_id,
+                db=self.db,
+                temperature=0,
+                call_type="entity_extraction",
+            )
+
+            try:
+                entities = json.loads(result.content)
+                for entity in entities:
+                    if entity.get("entity_name"):
+                        mem = AiEntityMemory(
+                            conversation_id=conversation_id or 0,
+                            entity_name=entity["entity_name"],
+                            entity_type=entity.get("entity_type"),
+                            entity_value=entity.get("entity_value"),
+                            context=entity.get("context"),
+                            source_message_id=message_id,
+                        )
+                        self.db.add(mem)
+                await self.db.flush()
+            except json.JSONDecodeError:
+                pass
+        except Exception as e:
+            logger.warning("entity_extraction_failed", error=str(e))
+
+    async def _inject_entity_memory(self, query: str, conversation_id: int | None = None) -> str:
+        """检索与当前查询相关的实体，注入到对话上下文"""
+        if not conversation_id or not query:
+            return ""
+
+        try:
+            from sqlalchemy import select
+            from app.ai.conversation.models import AiEntityMemory
+
+            entity_names = query.split()
+            conditions = []
+            for name in entity_names:
+                conditions.append(AiEntityMemory.entity_name.ilike(f"%{name}%"))
+                conditions.append(AiEntityMemory.entity_value.ilike(f"%{name}%"))
+
+            if conditions:
+                from sqlalchemy import or_
+                result = await self.db.execute(
+                    select(AiEntityMemory).where(
+                        AiEntityMemory.conversation_id == conversation_id,
+                        AiEntityMemory.is_deleted == False,
+                        or_(*conditions),
+                    ).limit(10)
+                )
+                entities = result.scalars().all()
+
+                if entities:
+                    entity_text = "\n".join([
+                        f"- {e.entity_name}({e.entity_type or 'unknown'}): {e.entity_value or ''} - {e.context or ''}"
+                        for e in entities
+                    ])
+                    return f"【已知信息】\n{entity_text}\n\n"
+        except Exception as e:
+            logger.warning("entity_search_failed", error=str(e))
+
+        return ""
 
     async def _invoke_llm(
         self,
@@ -546,6 +690,7 @@ class AgentRunner:
         model_config_id: int | None,
         temperature: float,
         max_tokens: int,
+        conversation_id: int | None = None,
     ) -> tuple[str, list[Any], int]:
         """
         调用 LLM 进行推理（当 tool_ids 为空时直接对话，有工具则走 Agent 链）。
@@ -557,7 +702,7 @@ class AgentRunner:
         llm_svc = LLMService()
 
         # 根据 memory_type 获取记忆
-        memories = await self._get_memories(history)
+        memories = await self._get_memories(history, conversation_id)
 
         # 构建消息列表
         messages: list[ChatMessage] = []

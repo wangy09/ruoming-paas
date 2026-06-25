@@ -480,20 +480,81 @@ class LLMService:
 
     # ── 向量化 ────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _make_embed_cache_key(model_config_id: int, text: str) -> str:
+        """生成 embedding 缓存 key"""
+        digest = hashlib.sha256(f"{model_config_id}:{text}".encode()).hexdigest()
+        return f"llm:embed_cache:{digest}"
+
+    @classmethod
+    async def _get_embed_from_cache(cls, cache_keys: list[str]) -> dict[str, list[float]]:
+        """批量从 Redis 缓存中获取 embedding"""
+        try:
+            redis = await _get_redis()
+            if cache_keys:
+                result = await redis.mget(cache_keys)
+                return {cache_keys[i]: json.loads(result[i]) for i in range(len(cache_keys)) if result[i]}
+        except Exception as e:
+            logger.debug("embed_cache_get_failed", error=str(e))
+        return {}
+
+    @classmethod
+    async def _set_embed_to_cache(cls, items: list[tuple[str, list[float]]], ttl: int = 86400) -> None:
+        """批量写入 embedding 缓存（默认 24 小时）"""
+        try:
+            redis = await _get_redis()
+            pipe = redis.pipeline()
+            for key, value in items:
+                pipe.set(key, json.dumps(value), ex=ttl)
+            await pipe.execute()
+        except Exception as e:
+            logger.debug("embed_cache_set_failed", error=str(e))
+
     async def embed(
         self,
         texts: list[str],
         model_config_id: int | None,
         db: AsyncSession,
+        use_cache: bool = True,
     ) -> list[list[float]]:
-        """文本向量化，model_config_id=None 时使用默认嵌入模型"""
+        """
+        文本向量化，model_config_id=None 时使用默认嵌入模型。
+        支持 Redis 缓存，相同文本不会重复向量化。
+        """
         if model_config_id:
             config = await self._load_config(model_config_id, db)
             provider = await self.get_provider(model_config_id, db)
         else:
             provider, config = await self.get_default_provider(db, embed=True)
+            model_config_id = config.id
 
-        return await provider.embed(texts, config.model_id)
+        results: list[list[float] | None] = [None] * len(texts)
+
+        if use_cache:
+            cache_keys = [self._make_embed_cache_key(model_config_id, text) for text in texts]
+            cached = await self._get_embed_from_cache(cache_keys)
+
+            for i, key in enumerate(cache_keys):
+                if key in cached:
+                    results[i] = cached[key]
+
+        need_embed = [(i, texts[i]) for i in range(len(texts)) if results[i] is None]
+
+        if need_embed:
+            need_texts = [t for _, t in need_embed]
+            embeddings = await provider.embed(need_texts, config.model_id)
+
+            for idx, (orig_idx, text) in enumerate(need_embed):
+                results[orig_idx] = embeddings[idx]
+
+            if use_cache:
+                cache_items = [
+                    (self._make_embed_cache_key(model_config_id, text), embeddings[idx])
+                    for idx, (orig_idx, text) in enumerate(need_embed)
+                ]
+                await self._set_embed_to_cache(cache_items)
+
+        return [r for r in results if r is not None]
 
     # ── 调用日志 ──────────────────────────────────────────────────────────────
 

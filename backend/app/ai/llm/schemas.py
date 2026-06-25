@@ -55,12 +55,14 @@ class ModelConfigInfo(BaseModel):
     is_default: bool
     is_embed: bool
     is_rerank: bool
+    is_fallback: bool
     max_tokens: int
     context_length: int
     remark: str | None
     status: int
     tenant_id: int | None
     created_at: datetime
+    has_api_key: bool = Field(default=False, description="是否已配置 API Key（不暴露明文）")
     # api_key 故意不包含，接口不返回密文
 
 

@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-async def init_data() -> None:
+async def init_data(reset: bool = False) -> None:
     from app.config import settings
     from app.core.logging import setup_logging
     from app.core.security import hash_password
@@ -20,7 +20,7 @@ async def init_data() -> None:
     )
     from app.modules.tenant.models import SysTenant
     from app.modules.user.models import SysUser
-    from sqlalchemy import select
+    from sqlalchemy import select, delete
 
     setup_logging()
 
@@ -32,9 +32,21 @@ async def init_data() -> None:
         existing = await db.execute(
             select(SysUser).where(SysUser.is_superplatform == True)  # noqa: E712
         )
-        if existing.scalar_one_or_none():
+        if existing.scalar_one_or_none() and not reset:
             logger.info("already_initialized", msg="种子数据已存在，跳过初始化")
             return
+
+        if reset:
+            logger.info("reset_mode", msg="进入重置模式，清理现有数据")
+            await db.execute(delete(SysUserRole))
+            await db.execute(delete(SysRolePermission))
+            await db.execute(delete(SysPermission))
+            await db.execute(delete(SysRole))
+            await db.execute(delete(SysTenant))
+            await db.execute(delete(SysUser))
+            await db.execute(text("DROP TABLE IF EXISTS sys_role"))
+            await db.flush()
+            logger.info("data_cleared", msg="现有数据已清理")
 
         # ── 2. 创建平台超管 ───────────────────────────────────────────
         admin = SysUser(
@@ -78,7 +90,8 @@ async def init_data() -> None:
             data_scope=1,
             status=1,
             sort=1,
-            tenant_id=None,  # 角色模板（平台级）
+            tenant_id=None,
+            is_system=True,
         )
         db.add(tenant_admin_role)
 
@@ -87,10 +100,11 @@ async def init_data() -> None:
             code="tenant:user",
             description="普通成员，基本查看权限",
             parent_id=0,
-            data_scope=5,   # 仅本人
+            data_scope=5,
             status=1,
             sort=10,
             tenant_id=None,
+            is_system=True,
         )
         db.add(normal_role)
         await db.flush()
@@ -178,6 +192,11 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "system:user:menu", "name": "重置密码", "code": "system:user:reset_pwd", "perm_type": "button", "sort": 5},
         {"parent_id": 0, "parent_code": "system:user:menu", "name": "分配角色", "code": "system:user:assign_role", "perm_type": "button", "sort": 6},
         {"parent_id": 0, "parent_code": "system:user:menu", "name": "导出用户", "code": "system:user:export", "perm_type": "button", "sort": 7},
+        # ── 用户列权限示例 ────────────────────────────────────────────────
+        {"parent_id": 0,  "parent_code": "system:user:menu","name": "用户手机号列", "code": "system:user:column:phone",
+         "perm_type": "column", "resource": "user_list", "sort": 1},
+        {"parent_id": 0,  "parent_code": "system:user:menu","name": "用户邮箱列", "code": "system:user:column:email",
+         "perm_type": "column", "resource": "user_list", "sort": 2},
         # 角色管理菜单
         {
             "parent_id": 0, "parent_code": "system", "name": "角色管理", "code": "system:role:menu",
@@ -189,6 +208,14 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "system:role:menu", "name": "编辑角色", "code": "system:role:update", "perm_type": "button", "sort": 3},
         {"parent_id": 0, "parent_code": "system:role:menu", "name": "删除角色", "code": "system:role:delete", "perm_type": "button", "sort": 4},
         {"parent_id": 0, "parent_code": "system:role:menu", "name": "分配权限", "code": "system:role:assign_perm", "perm_type": "button", "sort": 5},
+        # 角色授权菜单（独立页面）
+        {
+            "parent_id": 0, "parent_code": "system", "name": "角色授权", "code": "system:role_permission:menu",
+            "perm_type": "menu", "path": "/system/role-permission",
+            "component": "system/role-permission/index", "icon": "Key", "sort": 125, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "system:role_permission:menu", "name": "查看授权", "code": "system:role_permission:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "system:role_permission:menu", "name": "保存授权", "code": "system:role_permission:save", "perm_type": "button", "sort": 2},
         # 菜单管理（权限管理页面）
         {
             "parent_id": 0, "parent_code": "system", "name": "菜单管理", "code": "system:permission:menu",
@@ -289,11 +316,7 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "ai:tool:menu", "name": "新建工具", "code": "ai:tool:create", "perm_type": "button", "sort": 2},
         {"parent_id": 0, "parent_code": "ai:tool:menu", "name": "编辑工具", "code": "ai:tool:update", "perm_type": "button", "sort": 3},
         {"parent_id": 0, "parent_code": "ai:tool:menu", "name": "删除工具", "code": "ai:tool:delete", "perm_type": "button", "sort": 4},
-        # ── 列权限示例 ────────────────────────────────────────────────
-        {"parent_id": 0, "name": "用户手机号列", "code": "system:user:column:phone",
-         "perm_type": "column", "resource": "user_list", "sort": 1},
-        {"parent_id": 0, "name": "用户邮箱列", "code": "system:user:column:email",
-         "perm_type": "column", "resource": "user_list", "sort": 2},
+
     ]
 
     for p in perms:
@@ -379,4 +402,5 @@ async def init_dicts(db) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(init_data())
+    reset = "--reset" in sys.argv
+    asyncio.run(init_data(reset))

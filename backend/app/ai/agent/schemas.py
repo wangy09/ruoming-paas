@@ -23,15 +23,15 @@ class AgentCreate(BaseModel):
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(2048, ge=128, le=131072)
     node_timeout_sec: int = Field(60, ge=5, le=600)
-    memory_type: str = Field("buffer", description="buffer / summary / vector")
+    memory_type: str = Field("buffer", description="buffer / summary / vector / entity / kv")
     tool_ids: list[int] = Field(default_factory=list)
     kb_ids: list[int] = Field(default_factory=list)
 
     @field_validator("memory_type")
     @classmethod
     def validate_memory_type(cls, v: str) -> str:
-        if v not in {"buffer", "summary", "vector"}:
-            raise ValueError("memory_type 必须是 buffer / summary / vector 之一")
+        if v not in {"buffer", "summary", "vector", "entity", "kv"}:
+            raise ValueError("memory_type 必须是 buffer / summary / vector / entity / kv 之一")
         return v
 
 

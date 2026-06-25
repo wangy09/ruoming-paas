@@ -34,6 +34,9 @@ class AiConversation(BaseModel):
     last_msg_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, comment="最后一条消息时间"
     )
+    memory_summary: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="记忆摘要（summary 模式使用）"
+    )
 
 
 class AiMessage(Base):
@@ -59,9 +62,46 @@ class AiMessage(Base):
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="输出 Token 数")
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="总 Token 数")
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="推理延迟（毫秒）")
+    embedding: Mapped[list[float] | None] = mapped_column(
+        JSONB, nullable=True, comment="消息内容的 embedding 向量（vector 记忆模式使用）"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="NOW()", comment="创建时间"
     )
+
+
+class AiEntityMemory(BaseModel):
+    """
+    实体记忆表（ai_entity_memory）。
+    从对话中自动提取实体及其属性，支持后续引用。
+    """
+
+    __tablename__ = "ai_entity_memory"
+
+    conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True, comment="所属对话 ID")
+    entity_name: Mapped[str] = mapped_column(nullable=False, comment="实体名称")
+    entity_type: Mapped[str] = mapped_column(
+        nullable=True, comment="实体类型：person/company/date/number/location/other"
+    )
+    entity_value: Mapped[str] = mapped_column(nullable=True, comment="实体值")
+    context: Mapped[str] = mapped_column(Text, nullable=True, comment="上下文描述")
+    source_message_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, index=True, comment="来源消息 ID"
+    )
+
+
+class AiKeyValueMemory(BaseModel):
+    """
+    键值记忆表（ai_kv_memory）。
+    允许 Agent 主动读写键值对，存储任务状态和中间结果。
+    """
+
+    __tablename__ = "ai_kv_memory"
+
+    conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True, comment="所属对话 ID")
+    key: Mapped[str] = mapped_column(nullable=False, comment="键")
+    value: Mapped[str] = mapped_column(nullable=True, comment="值（JSON 序列化）")
+    description: Mapped[str] = mapped_column(nullable=True, comment="描述")
 
 
 class AiCallLog(Base):

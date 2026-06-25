@@ -32,7 +32,16 @@ class UserService:
                 SysUser.is_deleted == False,  # noqa: E712
             )
         )
-        return result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+        if user:
+            role_result = await self.db.execute(
+                select(SysRole.id, SysRole.name, SysRole.code)
+                .join(SysUserRole, SysRole.id == SysUserRole.role_id)
+                .where(SysUserRole.user_id == user_id)
+                .where(SysRole.is_deleted == False)  # noqa: E712
+            )
+            user.roles = [{"id": r[0], "name": r[1], "code": r[2]} for r in role_result.all()]
+        return user
 
     async def get_list(
         self,
@@ -52,27 +61,21 @@ class UserService:
             SysDept, SysUser.dept_id == SysDept.id
         ).where(SysUser.is_deleted == False)  # noqa: E712
 
-        # 租户过滤（非超管）
         if self.tenant_id is not None:
             query = query.where(SysUser.tenant_id == self.tenant_id)
 
-        # 数据权限过滤
         if data_scope:
             allowed_dept_ids = data_scope.get("allowed_dept_ids")
             allowed_user_ids = data_scope.get("allowed_user_ids")
             ds = data_scope.get("data_scope")
 
             if ds == 5:
-                # 仅本人
                 if allowed_user_ids:
                     query = query.where(SysUser.id.in_(allowed_user_ids))
             elif allowed_dept_ids is not None and len(allowed_dept_ids) > 0:
-                # 部门过滤
                 query = query.where(SysUser.dept_id.in_(allowed_dept_ids))
             elif allowed_dept_ids is not None and len(allowed_dept_ids) == 0:
-                # 没有可访问的部门，返回空
                 return [], 0
-            # ds=1 全部数据，不加过滤
 
         if keyword:
             query = query.where(
@@ -88,22 +91,34 @@ class UserService:
         if dept_id is not None:
             query = query.where(SysUser.dept_id == dept_id)
 
-        # 总数
         count_result = await self.db.execute(
             select(func.count(SysUser.id)).select_from(query.subquery())
         )
         total = count_result.scalar_one()
 
-        # 数据
         query = query.order_by(SysUser.created_at.desc())
         query = query.offset((page - 1) * page_size).limit(page_size)
         result = await self.db.execute(query)
         rows = list(result.all())
 
-        # 将部门名称附加到用户对象
+        user_ids = [row[0].id for row in rows]
+        role_map: dict[int, list[dict]] = {uid: [] for uid in user_ids}
+
+        if user_ids:
+            role_query = (
+                select(SysUserRole.user_id, SysRole.id, SysRole.name, SysRole.code)
+                .join(SysRole, SysUserRole.role_id == SysRole.id)
+                .where(SysUserRole.user_id.in_(user_ids))
+                .where(SysRole.is_deleted == False)  # noqa: E712
+            )
+            role_result = await self.db.execute(role_query)
+            for ur_id, r_id, r_name, r_code in role_result.all():
+                role_map[ur_id].append({"id": r_id, "name": r_name, "code": r_code})
+
         items = []
         for user, dept_name in rows:
             user.dept_name = dept_name
+            user.roles = role_map.get(user.id, [])
             items.append(user)
 
         return items, total

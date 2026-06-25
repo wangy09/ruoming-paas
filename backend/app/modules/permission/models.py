@@ -35,6 +35,9 @@ class SysRole(BaseModel):
     )
     sort: Mapped[int] = mapped_column(Integer, default=0, server_default="0", comment="显示排序")
     remark: Mapped[str | None] = mapped_column(Text, comment="备注")
+    is_system: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", comment="系统内置角色（不可删除）"
+    )
 
 
 class SysPermission(BaseModel):

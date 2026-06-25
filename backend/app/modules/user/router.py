@@ -2,7 +2,7 @@
 若茗 PaaS - 用户路由
 Author: ruoming
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,7 @@ from app.modules.user.schemas import (
     UserInfo,
     UserListParams,
     UserPasswordUpdate,
+    UserRoleAssign,
     UserUpdate,
 )
 from app.modules.user.service import UserService
@@ -159,11 +160,11 @@ async def change_password(
 )
 async def assign_user_roles(
     user_id: int,
-    role_ids: list[int],
+    data: UserRoleAssign,
     current_user=Depends(require_permissions("system:user:assign_role")),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
     tenant_id = None if current_user.is_superplatform else current_user.tenant_id
     svc = UserService(db, tenant_id)
-    await svc.assign_roles(user_id, role_ids)
+    await svc.assign_roles(user_id, data.role_ids)
     return ok(message="角色分配成功")

@@ -178,11 +178,13 @@ export interface AiModelConfig {
   is_default: boolean
   is_embed: boolean
   is_rerank: boolean
+  is_fallback: boolean
   max_tokens: number
   context_length: number
   status: number
   tenant_id?: number
   created_at: string
+  has_api_key: boolean
 }
 
 export interface AiModelCreate {
