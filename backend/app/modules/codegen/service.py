@@ -6,16 +6,27 @@
 from __future__ import annotations
 
 import re
+import os
+from pathlib import Path
 from string import Template
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundException
-from app.modules.codegen.schemas import ColumnInfo, GeneratedFile, GeneratePreviewRequest, TableInfo
+from app.modules.codegen.schemas import (
+    ColumnInfo,
+    GeneratedFile,
+    GeneratedWriteResult,
+    GeneratePreviewRequest,
+    GenerateWriteRequest,
+    TableInfo,
+)
 
 
 COMMON_FIELDS = {"id", "created_at", "updated_at", "is_deleted", "tenant_id"}
+BACKEND_PREFIX = "backend/"
+FRONTEND_PREFIX = "frontend/"
 
 
 class CodegenService:
@@ -111,6 +122,15 @@ class CodegenService:
         return columns
 
     async def preview(self, request: GeneratePreviewRequest) -> dict:
+        table, columns, files = await self._build_files(request)
+        return {"table": table, "columns": columns, "files": files}
+
+    async def write(self, request: GenerateWriteRequest) -> dict:
+        table, columns, files = await self._build_files(request)
+        results = [self._write_file(file, overwrite=request.overwrite) for file in files]
+        return {"table": table, "columns": columns, "files": files, "results": results}
+
+    async def _build_files(self, request: GeneratePreviewRequest) -> tuple[TableInfo, list[ColumnInfo], list[GeneratedFile]]:
         table = await self.get_table(request.table_name)
         columns = await self.list_columns(request.table_name)
 
@@ -137,6 +157,7 @@ class CodegenService:
         }
 
         files = [
+            GeneratedFile(path=f"backend/app/modules/{module_name}/__init__.py", language="python", content=""),
             GeneratedFile(path=f"backend/app/modules/{module_name}/models.py", language="python", content=self._tpl_model(context)),
             GeneratedFile(path=f"backend/app/modules/{module_name}/schemas.py", language="python", content=self._tpl_schemas(context)),
             GeneratedFile(path=f"backend/app/modules/{module_name}/service.py", language="python", content=self._tpl_service(context)),
@@ -144,7 +165,56 @@ class CodegenService:
             GeneratedFile(path=f"frontend/src/api/{module_name}.ts", language="typescript", content=self._tpl_api(context)),
             GeneratedFile(path=f"frontend/src/views/{module_name}/index.vue", language="vue", content=self._tpl_vue(context)),
         ]
-        return {"table": table, "columns": columns, "files": files}
+        return table, columns, files
+
+    def _write_file(self, file: GeneratedFile, overwrite: bool) -> GeneratedWriteResult:
+        target = self._resolve_output_path(file.path)
+        if target is None:
+            return GeneratedWriteResult(
+                path=file.path,
+                status="unavailable",
+                message="当前后端运行环境无法访问该路径，请配置 CODEGEN_WORKSPACE_ROOT 或挂载仓库根目录",
+            )
+
+        if target.exists() and not overwrite:
+            return GeneratedWriteResult(
+                path=file.path,
+                status="skipped",
+                message="文件已存在，未开启覆盖",
+            )
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        existed = target.exists()
+        target.write_text(file.content, encoding="utf-8")
+        return GeneratedWriteResult(
+            path=file.path,
+            status="overwritten" if existed else "created",
+            message="已覆盖" if existed else "已创建",
+        )
+
+    @staticmethod
+    def _resolve_output_path(logical_path: str) -> Path | None:
+        if logical_path.startswith("/") or ".." in Path(logical_path).parts:
+            return None
+
+        configured_root = os.getenv("CODEGEN_WORKSPACE_ROOT")
+        if configured_root:
+            root = Path(configured_root).resolve()
+            target = (root / logical_path).resolve()
+            if root == target or root in target.parents:
+                return target
+            return None
+
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if (parent / "backend").is_dir() and (parent / "frontend").is_dir():
+                return (parent / logical_path).resolve()
+
+        backend_root = next((parent for parent in current.parents if (parent / "app").is_dir() and (parent / "scripts").is_dir()), None)
+        if backend_root and logical_path.startswith(BACKEND_PREFIX):
+            return (backend_root / logical_path[len(BACKEND_PREFIX):]).resolve()
+
+        return None
 
     @staticmethod
     def _python_type(data_type: str, udt_name: str) -> str:

@@ -9,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import require_permissions
 from app.core.response import ApiResponse, ok
 from app.database import get_db
-from app.modules.codegen.schemas import ColumnInfo, GeneratePreviewRequest, GeneratePreviewResponse, TableInfo
+from app.modules.codegen.schemas import (
+    ColumnInfo,
+    GeneratePreviewRequest,
+    GeneratePreviewResponse,
+    GenerateWriteRequest,
+    GenerateWriteResponse,
+    TableInfo,
+)
 from app.modules.codegen.service import CodegenService
 from app.modules.user.models import SysUser
 
@@ -44,3 +51,13 @@ async def preview_code(
 ) -> ApiResponse[GeneratePreviewResponse]:
     svc = CodegenService(db)
     return ok(await svc.preview(body))
+
+
+@router.post("/write", response_model=ApiResponse[GenerateWriteResponse], summary="写入生成代码")
+async def write_code(
+    body: GenerateWriteRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:write"))],
+) -> ApiResponse[GenerateWriteResponse]:
+    svc = CodegenService(db)
+    return ok(await svc.write(body), message="生成完成")

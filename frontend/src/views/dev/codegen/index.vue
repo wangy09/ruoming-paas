@@ -40,15 +40,25 @@
           <template #header>
             <div class="card-header">
               <span>生成配置</span>
-              <el-button
-                type="primary"
-                :loading="previewLoading"
-                :disabled="!form.table_name"
-                v-permission="'dev:codegen:preview'"
-                @click="generatePreview"
-              >
-                生成预览
-              </el-button>
+              <div class="header-actions">
+                <el-button
+                  :loading="previewLoading"
+                  :disabled="!form.table_name"
+                  v-permission="'dev:codegen:preview'"
+                  @click="generatePreview"
+                >
+                  生成预览
+                </el-button>
+                <el-button
+                  type="primary"
+                  :loading="writeLoading"
+                  :disabled="!form.table_name"
+                  v-permission="'dev:codegen:write'"
+                  @click="writeFiles"
+                >
+                  写入文件
+                </el-button>
+              </div>
             </div>
           </template>
 
@@ -77,6 +87,15 @@
               <el-col :span="24">
                 <el-form-item label="API 前缀">
                   <el-input v-model="form.api_prefix" placeholder="如 /api/v1/customer-orders" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="24">
+                <el-form-item label="写入策略">
+                  <el-switch
+                    v-model="overwrite"
+                    active-text="覆盖已存在文件"
+                    inactive-text="已存在则跳过"
+                  />
                 </el-form-item>
               </el-col>
             </el-row>
@@ -122,24 +141,58 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <el-dialog v-model="resultVisible" title="生成结果" width="760px">
+      <el-alert
+        title="后端会做路径安全校验。当前 Docker 开发环境只挂载 backend，frontend 文件可能显示为路径不可用。"
+        type="info"
+        show-icon
+        :closable="false"
+        class="result-tip"
+      />
+      <el-table :data="writeResults" border stripe max-height="420">
+        <el-table-column prop="path" label="文件路径" min-width="320" show-overflow-tooltip />
+        <el-table-column prop="status" label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)">
+              {{ statusText(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="message" label="说明" min-width="220" show-overflow-tooltip />
+      </el-table>
+      <template #footer>
+        <el-button type="primary" @click="resultVisible = false">知道了</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
-import { codegenApi, type CodegenColumn, type CodegenTable, type GeneratedFile } from '@/api/codegen'
+import {
+  codegenApi,
+  type CodegenColumn,
+  type CodegenTable,
+  type GeneratedFile,
+  type GeneratedWriteResult,
+} from '@/api/codegen'
 
 const loadingTables = ref(false)
 const columnsLoading = ref(false)
 const previewLoading = ref(false)
+const writeLoading = ref(false)
 const keyword = ref('')
 const tables = ref<CodegenTable[]>([])
 const columns = ref<CodegenColumn[]>([])
 const files = ref<GeneratedFile[]>([])
+const writeResults = ref<GeneratedWriteResult[]>([])
 const activeTab = ref('columns')
 const activeFile = ref('')
+const overwrite = ref(false)
+const resultVisible = ref(false)
 
 const form = reactive({
   table_name: '',
@@ -197,6 +250,40 @@ async function generatePreview() {
   }
 }
 
+async function writeFiles() {
+  if (!form.table_name || !form.module_name) {
+    ElMessage.warning('请选择数据表并填写模块名')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      overwrite.value
+        ? '将生成代码并覆盖已存在文件，确定继续？'
+        : '将生成代码并写入文件，已存在文件会自动跳过，确定继续？',
+      '写入确认',
+      { type: overwrite.value ? 'warning' : 'info' }
+    )
+  } catch {
+    return
+  }
+
+  writeLoading.value = true
+  try {
+    const res = await codegenApi.write({ ...form, overwrite: overwrite.value })
+    files.value = res.data?.files ?? []
+    writeResults.value = res.data?.results ?? []
+    activeFile.value = files.value[0]?.path || ''
+    activeTab.value = 'preview'
+    resultVisible.value = true
+    ElMessage.success('生成完成')
+  } catch (error) {
+    ElMessage.error(`写入失败：${getErrorMessage(error)}`)
+  } finally {
+    writeLoading.value = false
+  }
+}
+
 async function copyCode(content: string) {
   await navigator.clipboard.writeText(content)
   ElMessage.success('已复制')
@@ -219,6 +306,34 @@ function shortPath(path: string) {
   return parts.slice(-2).join('/')
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  return '请查看接口错误详情'
+}
+
+function statusTagType(status: GeneratedWriteResult['status']) {
+  const map = {
+    created: 'success',
+    overwritten: 'warning',
+    skipped: 'info',
+    unavailable: 'danger',
+    error: 'danger',
+  } as const
+  return map[status] || 'info'
+}
+
+function statusText(status: GeneratedWriteResult['status']) {
+  const map = {
+    created: '已创建',
+    overwritten: '已覆盖',
+    skipped: '已跳过',
+    unavailable: '路径不可用',
+    error: '失败',
+  }
+  return map[status] || status
+}
+
 onMounted(loadTables)
 </script>
 
@@ -239,6 +354,11 @@ onMounted(loadTables)
   align-items: center;
   justify-content: space-between;
   font-weight: 600;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .table-list {
@@ -315,5 +435,9 @@ onMounted(loadTables)
   color: #e2e8f0;
   font-size: 13px;
   line-height: 1.55;
+}
+
+.result-tip {
+  margin-bottom: 12px;
 }
 </style>

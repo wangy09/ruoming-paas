@@ -47,6 +47,12 @@ class GeneratePreviewRequest(BaseModel):
         return value
 
 
+class GenerateWriteRequest(GeneratePreviewRequest):
+    """写入生成文件请求"""
+
+    overwrite: bool = Field(False, description="是否覆盖已存在文件")
+
+
 class GeneratedFile(BaseModel):
     """生成文件预览"""
 
@@ -55,9 +61,23 @@ class GeneratedFile(BaseModel):
     content: str
 
 
+class GeneratedWriteResult(BaseModel):
+    """生成文件写入结果"""
+
+    path: str
+    status: str = Field(..., description="created/skipped/overwritten/unavailable/error")
+    message: str
+
+
 class GeneratePreviewResponse(BaseModel):
     """生成代码预览响应"""
 
     table: TableInfo
     columns: list[ColumnInfo]
     files: list[GeneratedFile]
+
+
+class GenerateWriteResponse(GeneratePreviewResponse):
+    """生成代码写入响应"""
+
+    results: list[GeneratedWriteResult]

@@ -29,10 +29,20 @@ export interface CodegenPreviewParams {
   api_prefix?: string
 }
 
+export interface CodegenWriteParams extends CodegenPreviewParams {
+  overwrite: boolean
+}
+
 export interface GeneratedFile {
   path: string
   language: string
   content: string
+}
+
+export interface GeneratedWriteResult {
+  path: string
+  status: 'created' | 'skipped' | 'overwritten' | 'unavailable' | 'error'
+  message: string
 }
 
 export const codegenApi = {
@@ -42,4 +52,6 @@ export const codegenApi = {
     request.get(`/api/v1/codegen/tables/${tableName}/columns`),
   preview: (data: CodegenPreviewParams) =>
     request.post('/api/v1/codegen/preview', data),
+  write: (data: CodegenWriteParams) =>
+    request.post('/api/v1/codegen/write', data),
 }

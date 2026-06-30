@@ -306,6 +306,7 @@ def _get_default_permissions() -> list[dict]:
         },
         {"parent_id": 0, "parent_code": "dev:codegen:menu", "name": "查看代码生成", "code": "dev:codegen:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "dev:codegen:menu", "name": "生成代码预览", "code": "dev:codegen:preview", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "dev:codegen:menu", "name": "写入生成文件", "code": "dev:codegen:write", "perm_type": "button", "sort": 3},
         # ── AI 管理（根菜单）─────────────────────────────────────────
         {
             "parent_id": 0, "name": "AI 管理", "code": "ai",
