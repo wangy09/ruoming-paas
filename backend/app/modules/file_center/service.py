@@ -195,4 +195,5 @@ class FileCenterService:
         ext = self._file_ext(filename)
         allowed = {item.lower().lstrip(".") for item in settings.ALLOWED_UPLOAD_EXTENSIONS}
         if allowed and ext not in allowed:
-            raise ValidationException(f"不支持的文件类型：{ext or '无扩展名'}")
+            allowed_text = "、".join(sorted(allowed))
+            raise ValidationException(f"不支持的文件类型：{ext or '无扩展名'}，允许的类型：{allowed_text}")
