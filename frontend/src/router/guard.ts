@@ -16,6 +16,8 @@ export function setupRouterGuard(router: Router) {
     const permStore = usePermissionStore()
     const appStore = useAppStore()
 
+    await appStore.loadPublicConfig()
+
     // 设置页面标题
     document.title = to.meta.title
       ? `${to.meta.title} - ${appStore.appTitle}`
@@ -44,7 +46,7 @@ export function setupRouterGuard(router: Router) {
       try {
         await permStore.loadPermissions()
         // 动态路由注册后，检查并补全恢复的标签页信息
-        appStore.visitedViews.forEach(view => {
+        appStore.visitedViews.forEach((view: { path: string; title?: string }) => {
           const resolved = router.resolve(view.path)
           if (resolved.matched.length && resolved.meta.title && !view.title) {
             view.title = resolved.meta.title as string

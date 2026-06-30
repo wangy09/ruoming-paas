@@ -14,6 +14,16 @@ class ConfigCreate(BaseModel):
     config_val: str | None = Field(None, description="配置值")
     val_type: str = Field("string", description="值类型：string/int/bool/json")
     is_encrypted: bool = Field(False, description="是否加密存储")
+    category: str | None = Field(None, description="配置分类")
+    config_type: str = Field("input", description="表单控件类型")
+    default_value: str | None = None
+    options: list[dict[str, Any]] | dict[str, Any] | None = None
+    required: bool = False
+    regex: str | None = None
+    min_value: int | None = None
+    max_value: int | None = None
+    sort: int = 0
+    status: int = 1
     label: str | None = None
     description: str | None = None
     is_public: bool = False
@@ -24,6 +34,18 @@ class ConfigCreate(BaseModel):
 class ConfigUpdate(BaseModel):
     """更新配置项"""
     config_val: str | None = None
+    val_type: str | None = None
+    is_encrypted: bool | None = None
+    category: str | None = None
+    config_type: str | None = None
+    default_value: str | None = None
+    options: list[dict[str, Any]] | dict[str, Any] | None = None
+    required: bool | None = None
+    regex: str | None = None
+    min_value: int | None = None
+    max_value: int | None = None
+    sort: int | None = None
+    status: int | None = None
     label: str | None = None
     description: str | None = None
     is_public: bool | None = None
@@ -38,14 +60,35 @@ class ConfigOut(BaseModel):
     scope: str
     config_key: str
     config_val: str | None
+    display_val: str | None = None
     val_type: str
     is_encrypted: bool
+    category: str | None = None
+    config_type: str
+    default_value: str | None = None
+    options: list[dict[str, Any]] | dict[str, Any] | None = None
+    required: bool
+    regex: str | None = None
+    min_value: int | None = None
+    max_value: int | None = None
+    sort: int
+    status: int
     label: str | None
     description: str | None
     is_public: bool
     app_key: str | None
     user_id: int | None
     tenant_id: int | None
+
+
+class PublicConfigOut(BaseModel):
+    """前端公开配置输出"""
+
+    config_key: str
+    config_val: str | None
+    val_type: str
+    category: str | None = None
+    label: str | None = None
 
 
 class ConfigHistoryOut(BaseModel):

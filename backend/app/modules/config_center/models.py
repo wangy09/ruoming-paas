@@ -2,7 +2,8 @@
 若茗 PaaS - 配置中心 ORM 模型（四级分层：全局→租户→应用→用户）
 Author: ruoming
 """
-from sqlalchemy import BigInteger, Boolean, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Integer, SmallInteger, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.base_model import BaseModel
@@ -49,6 +50,27 @@ class SysConfig(BaseModel):
     )
     is_encrypted: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", comment="是否加密存储"
+    )
+    category: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True, comment="配置分类：system/security/file/ai/message/login"
+    )
+    config_type: Mapped[str] = mapped_column(
+        String(32),
+        default="input",
+        server_default="input",
+        comment="表单控件类型：input/textarea/switch/select/json/password/number",
+    )
+    default_value: Mapped[str | None] = mapped_column(Text, nullable=True, comment="默认值")
+    options: Mapped[list | dict | None] = mapped_column(JSONB, nullable=True, comment="选项 JSON")
+    required: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", comment="是否必填"
+    )
+    regex: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="正则校验")
+    min_value: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="最小值")
+    max_value: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="最大值")
+    sort: Mapped[int] = mapped_column(Integer, default=0, server_default="0", comment="排序")
+    status: Mapped[int] = mapped_column(
+        SmallInteger, default=1, server_default="1", index=True, comment="状态：1启用 0停用"
     )
 
     # 元信息

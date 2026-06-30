@@ -12,13 +12,15 @@ Author: ruoming
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import asc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import ValidationException
 from app.core.redis import get_redis_client
 from app.modules.config_center.models import SysConfig
 
@@ -73,6 +75,7 @@ class ConfigCenterService:
         tenant_id: int | None = None,
         app_key: str | None = None,
         user_id: int | None = None,
+        public_only: bool = False,
     ) -> dict[str, str]:
         """
         按四级优先级合并返回配置字典。
@@ -96,7 +99,7 @@ class ConfigCenterService:
         for scope, t_id, a_key, u_id in scopes:
             if not remaining:
                 break
-            rows = await self._query_scope(scope, list(remaining), t_id, a_key, u_id)
+            rows = await self._query_scope(scope, list(remaining), t_id, a_key, u_id, public_only=public_only)
             for row in rows:
                 if row.config_key in remaining:
                     val = self._decrypt_if_needed(row)
@@ -114,9 +117,10 @@ class ConfigCenterService:
         app_key: str | None = None,
         user_id: int | None = None,
         default: str | None = None,
+        public_only: bool = False,
     ) -> str | None:
         """获取单个配置值，指定具体层级"""
-        rows = await self._query_scope(scope, [config_key], tenant_id, app_key, user_id)
+        rows = await self._query_scope(scope, [config_key], tenant_id, app_key, user_id, public_only=public_only)
         if rows:
             return self._decrypt_if_needed(rows[0])
         return default
@@ -132,10 +136,21 @@ class ConfigCenterService:
         user_id: int | None = None,
         val_type: str = "string",
         is_encrypted: bool = False,
+        category: str | None = None,
+        config_type: str = "input",
+        default_value: str | None = None,
+        options: list | dict | None = None,
+        required: bool = False,
+        regex: str | None = None,
+        min_value: int | None = None,
+        max_value: int | None = None,
+        sort: int = 0,
+        status: int = 1,
         label: str | None = None,
         description: str | None = None,
         is_public: bool = False,
         changed_by: int | None = None,
+        keep_encrypted_value: bool = False,
     ) -> SysConfig:
         """
         设置配置值（不存在则创建，已存在则更新）。
@@ -146,11 +161,22 @@ class ConfigCenterService:
         result = await self.db.execute(stmt)
         existing: SysConfig | None = result.scalar_one_or_none()
 
-        old_value = self._decrypt_if_needed(existing) if existing else None
+        old_value = "******" if existing and existing.is_encrypted else (self._decrypt_if_needed(existing) if existing else None)
+        self._validate_config_value(
+            config_val,
+            val_type=val_type,
+            required=required,
+            regex=regex,
+            min_value=min_value,
+            max_value=max_value,
+            skip_empty=bool(existing and keep_encrypted_value),
+        )
 
         # 加密处理
         store_val = config_val
-        if is_encrypted:
+        if existing and keep_encrypted_value:
+            store_val = existing.config_val or ""
+        elif is_encrypted:
             from app.core.security import encrypt_value
             store_val = encrypt_value(config_val)
 
@@ -158,6 +184,16 @@ class ConfigCenterService:
             existing.config_val = store_val
             existing.val_type = val_type
             existing.is_encrypted = is_encrypted
+            existing.category = category
+            existing.config_type = config_type
+            existing.default_value = default_value
+            existing.options = options
+            existing.required = required
+            existing.regex = regex
+            existing.min_value = min_value
+            existing.max_value = max_value
+            existing.sort = sort
+            existing.status = status
             if label is not None:
                 existing.label = label
             if description is not None:
@@ -175,6 +211,16 @@ class ConfigCenterService:
                 config_val=store_val,
                 val_type=val_type,
                 is_encrypted=is_encrypted,
+                category=category,
+                config_type=config_type,
+                default_value=default_value,
+                options=options,
+                required=required,
+                regex=regex,
+                min_value=min_value,
+                max_value=max_value,
+                sort=sort,
+                status=status,
                 label=label,
                 description=description,
                 is_public=is_public,
@@ -191,7 +237,7 @@ class ConfigCenterService:
             scope_type=scope,
             scope_id=tenant_id or user_id,
             old_value=old_value,
-            new_value=config_val,  # 存明文
+            new_value="******" if is_encrypted or keep_encrypted_value else config_val,
             changed_by=changed_by,
         )
 
@@ -231,6 +277,11 @@ class ConfigCenterService:
         tenant_id: int | None = None,
         app_key: str | None = None,
         user_id: int | None = None,
+        category: str | None = None,
+        keyword: str | None = None,
+        is_public: bool | None = None,
+        is_encrypted: bool | None = None,
+        status: int | None = None,
     ) -> list[SysConfig]:
         """列出某层级下所有配置"""
         stmt = (
@@ -246,8 +297,54 @@ class ConfigCenterService:
             stmt = stmt.where(SysConfig.app_key == app_key)
         if user_id is not None:
             stmt = stmt.where(SysConfig.user_id == user_id)
+        if category:
+            stmt = stmt.where(SysConfig.category == category)
+        if keyword:
+            like = f"%{keyword}%"
+            stmt = stmt.where(
+                SysConfig.config_key.ilike(like)
+                | SysConfig.label.ilike(like)
+                | SysConfig.description.ilike(like)
+            )
+        if is_public is not None:
+            stmt = stmt.where(SysConfig.is_public == is_public)
+        if is_encrypted is not None:
+            stmt = stmt.where(SysConfig.is_encrypted == is_encrypted)
+        if status is not None:
+            stmt = stmt.where(SysConfig.status == status)
+        stmt = stmt.order_by(asc(SysConfig.sort), asc(SysConfig.id))
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    def to_output(row: SysConfig) -> dict[str, Any]:
+        """输出给管理端，敏感配置只展示脱敏值。"""
+        data = {
+            "id": row.id,
+            "scope": row.scope,
+            "config_key": row.config_key,
+            "config_val": None if row.is_encrypted else (row.config_val or ""),
+            "display_val": "******" if row.is_encrypted and row.config_val else (row.config_val or ""),
+            "val_type": row.val_type,
+            "is_encrypted": row.is_encrypted,
+            "category": row.category,
+            "config_type": row.config_type,
+            "default_value": row.default_value,
+            "options": row.options,
+            "required": row.required,
+            "regex": row.regex,
+            "min_value": row.min_value,
+            "max_value": row.max_value,
+            "sort": row.sort,
+            "status": row.status,
+            "label": row.label,
+            "description": row.description,
+            "is_public": row.is_public,
+            "app_key": row.app_key,
+            "user_id": row.user_id,
+            "tenant_id": row.tenant_id,
+        }
+        return data
 
     # ── 类型转换辅助 ──────────────────────────────────────────────────────────
 
@@ -277,8 +374,12 @@ class ConfigCenterService:
         tenant_id: int | None,
         app_key: str | None,
         user_id: int | None,
+        public_only: bool = False,
     ) -> list[SysConfig]:
         stmt = self._build_scope_stmt(scope, keys, tenant_id, app_key, user_id)
+        stmt = stmt.where(SysConfig.status == 1)
+        if public_only:
+            stmt = stmt.where(SysConfig.is_public == True).where(SysConfig.is_encrypted == False)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
@@ -311,6 +412,42 @@ class ConfigCenterService:
             stmt = stmt.where(SysConfig.tenant_id == tenant_id)
             stmt = stmt.where(SysConfig.user_id == user_id)
         return stmt
+
+    def _validate_config_value(
+        self,
+        value: str,
+        *,
+        val_type: str,
+        required: bool,
+        regex: str | None,
+        min_value: int | None,
+        max_value: int | None,
+        skip_empty: bool = False,
+    ) -> None:
+        if skip_empty and value == "":
+            return
+        if required and value == "":
+            raise ValidationException("配置值不能为空")
+        if value == "":
+            return
+        if val_type == "json":
+            try:
+                json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValidationException(f"JSON 格式不正确：{exc.msg}") from exc
+        if val_type in {"int", "number"}:
+            try:
+                num = int(value) if val_type == "int" else float(value)
+            except ValueError as exc:
+                raise ValidationException("配置值必须是数字") from exc
+            if min_value is not None and num < min_value:
+                raise ValidationException(f"配置值不能小于 {min_value}")
+            if max_value is not None and num > max_value:
+                raise ValidationException(f"配置值不能大于 {max_value}")
+        if val_type == "bool" and value.lower() not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
+            raise ValidationException("布尔配置值必须是 true/false")
+        if regex and not re.fullmatch(regex, value):
+            raise ValidationException("配置值不符合正则校验规则")
 
     @staticmethod
     def _decrypt_if_needed(row: SysConfig | None) -> str:

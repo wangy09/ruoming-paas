@@ -5,11 +5,13 @@ Author: ruoming
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user, require_permissions
-from app.core.response import PageData, ok, paged
+from app.core.deps import get_current_user, get_current_user_optional, require_permissions
+from app.core.exceptions import NotFoundException
+from app.core.response import ok, paged
 from app.database import get_db
+from app.modules.config_center.models import SysConfig
 from app.modules.user.models import SysUser
-from app.modules.config_center.schemas import ConfigCreate, ConfigOut, ConfigUpdate
+from app.modules.config_center.schemas import ConfigCreate, ConfigOut, ConfigUpdate, PublicConfigOut
 from app.modules.config_center.service import ConfigCenterService
 
 router = APIRouter(prefix="/config-center", tags=["配置中心"])
@@ -28,15 +30,61 @@ async def get_merged_config(
         keys=keys,
         tenant_id=current_user.tenant_id,
         app_key=app_key,
-        user_id=current_user.user_id,
+        user_id=current_user.id,
+        public_only=True,
     )
     return ok(data=values)
 
 
+@router.get("/public", summary="公开配置列表")
+async def get_public_configs(
+    keys: list[str] = Query(default=[], description="配置键列表，为空时返回当前层级全部公开配置"),
+    category: str | None = Query(None, description="配置分类"),
+    app_key: str | None = Query(None, description="模块标识"),
+    db: AsyncSession = Depends(get_db),
+    current_user: SysUser | None = Depends(get_current_user_optional),
+):
+    """只返回 is_public=true 且未加密、已启用的配置，供前端安全下发。"""
+    svc = ConfigCenterService(db)
+    tenant_id = current_user.tenant_id if current_user else None
+    user_id = current_user.id if current_user else None
+    if keys:
+        values = await svc.get_merged(
+            keys=keys,
+            tenant_id=tenant_id,
+            app_key=app_key,
+            user_id=user_id,
+            public_only=True,
+        )
+        return ok(data=values)
+
+    items = await svc.list_by_scope(
+        scope="tenant" if tenant_id else "global",
+        tenant_id=tenant_id,
+        app_key=app_key,
+        category=category,
+        is_public=True,
+        is_encrypted=False,
+        status=1,
+    )
+    return ok(data=[PublicConfigOut(
+        config_key=i.config_key,
+        config_val=i.config_val,
+        val_type=i.val_type,
+        category=i.category,
+        label=i.label,
+    ) for i in items])
+
+
 @router.get("", summary="配置列表")
 async def list_configs(
-    scope: str = Query("tenant", description="层级：global/tenant/app/user"),
+    scope: str = Query("global", description="层级：global/tenant/app/user"),
     app_key: str | None = Query(None),
+    category: str | None = Query(None),
+    keyword: str | None = Query(None),
+    is_public: bool | None = Query(None),
+    is_encrypted: bool | None = Query(None),
+    status: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: SysUser = Depends(require_permissions("config:list")),
 ):
@@ -45,8 +93,13 @@ async def list_configs(
         scope=scope,
         tenant_id=current_user.tenant_id,
         app_key=app_key,
+        category=category,
+        keyword=keyword,
+        is_public=is_public,
+        is_encrypted=is_encrypted,
+        status=status,
     )
-    return ok(data=[ConfigOut.model_validate(i) for i in items])
+    return ok(data=[ConfigOut.model_validate(svc.to_output(i)) for i in items])
 
 
 @router.post("", summary="创建配置项")
@@ -65,76 +118,22 @@ async def create_config(
         user_id=body.user_id,
         val_type=body.val_type,
         is_encrypted=body.is_encrypted,
+        category=body.category,
+        config_type=body.config_type,
+        default_value=body.default_value,
+        options=body.options,
+        required=body.required,
+        regex=body.regex,
+        min_value=body.min_value,
+        max_value=body.max_value,
+        sort=body.sort,
+        status=body.status,
         label=body.label,
         description=body.description,
         is_public=body.is_public,
-        changed_by=current_user.user_id,
+        changed_by=current_user.id,
     )
-    return ok(data=ConfigOut.model_validate(obj))
-
-
-@router.put("/{config_id}", summary="更新配置项")
-async def update_config(
-    config_id: int,
-    body: ConfigUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: SysUser = Depends(require_permissions("config:update")),
-):
-    from sqlalchemy import select
-    from app.modules.config_center.models import SysConfig
-
-    result = await db.execute(
-        select(SysConfig).where(SysConfig.id == config_id).where(SysConfig.is_deleted == False)
-    )
-    obj = result.scalar_one_or_none()
-    if not obj:
-        from app.core.exceptions import NotFoundException
-        raise NotFoundException("配置项不存在")
-
-    svc = ConfigCenterService(db)
-    updated = await svc.set(
-        config_key=obj.config_key,
-        config_val=body.config_val if body.config_val is not None else (obj.config_val or ""),
-        scope=obj.scope,
-        tenant_id=obj.tenant_id,
-        app_key=obj.app_key,
-        user_id=obj.user_id,
-        val_type=obj.val_type,
-        is_encrypted=obj.is_encrypted,
-        label=body.label if body.label is not None else obj.label,
-        description=body.description if body.description is not None else obj.description,
-        is_public=body.is_public if body.is_public is not None else obj.is_public,
-        changed_by=current_user.user_id,
-    )
-    return ok(data=ConfigOut.model_validate(updated))
-
-
-@router.delete("/{config_id}", summary="删除配置项")
-async def delete_config(
-    config_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: SysUser = Depends(require_permissions("config:delete")),
-):
-    from sqlalchemy import select
-    from app.modules.config_center.models import SysConfig
-
-    result = await db.execute(
-        select(SysConfig).where(SysConfig.id == config_id).where(SysConfig.is_deleted == False)
-    )
-    obj = result.scalar_one_or_none()
-    if not obj:
-        from app.core.exceptions import NotFoundException
-        raise NotFoundException("配置项不存在")
-
-    svc = ConfigCenterService(db)
-    await svc.delete(
-        config_key=obj.config_key,
-        scope=obj.scope,
-        tenant_id=obj.tenant_id,
-        app_key=obj.app_key,
-        user_id=obj.user_id,
-    )
-    return ok(message="删除成功")
+    return ok(data=ConfigOut.model_validate(svc.to_output(obj)))
 
 
 @router.get("/history", summary="配置变更历史")
@@ -170,3 +169,76 @@ async def get_config_history(
     rows = [dict(r._mapping) for r in data_result]
 
     return paged(items=rows, total=total, page=page, page_size=page_size)
+
+
+@router.put("/{config_id}", summary="更新配置项")
+async def update_config(
+    config_id: int,
+    body: ConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: SysUser = Depends(require_permissions("config:update")),
+):
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(SysConfig).where(SysConfig.id == config_id).where(SysConfig.is_deleted == False)
+    )
+    obj = result.scalar_one_or_none()
+    if not obj:
+        raise NotFoundException("配置项不存在")
+
+    svc = ConfigCenterService(db)
+    next_val = body.config_val if body.config_val is not None else ("" if obj.is_encrypted else (obj.config_val or ""))
+    keep_encrypted_value = obj.is_encrypted and (body.config_val is None or body.config_val == "")
+    updated = await svc.set(
+        config_key=obj.config_key,
+        config_val=next_val,
+        scope=obj.scope,
+        tenant_id=obj.tenant_id,
+        app_key=obj.app_key,
+        user_id=obj.user_id,
+        val_type=body.val_type if body.val_type is not None else obj.val_type,
+        is_encrypted=body.is_encrypted if body.is_encrypted is not None else obj.is_encrypted,
+        category=body.category if body.category is not None else obj.category,
+        config_type=body.config_type if body.config_type is not None else obj.config_type,
+        default_value=body.default_value if body.default_value is not None else obj.default_value,
+        options=body.options if body.options is not None else obj.options,
+        required=body.required if body.required is not None else obj.required,
+        regex=body.regex if body.regex is not None else obj.regex,
+        min_value=body.min_value if body.min_value is not None else obj.min_value,
+        max_value=body.max_value if body.max_value is not None else obj.max_value,
+        sort=body.sort if body.sort is not None else obj.sort,
+        status=body.status if body.status is not None else obj.status,
+        label=body.label if body.label is not None else obj.label,
+        description=body.description if body.description is not None else obj.description,
+        is_public=body.is_public if body.is_public is not None else obj.is_public,
+        changed_by=current_user.id,
+        keep_encrypted_value=keep_encrypted_value,
+    )
+    return ok(data=ConfigOut.model_validate(svc.to_output(updated)))
+
+
+@router.delete("/{config_id}", summary="删除配置项")
+async def delete_config(
+    config_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: SysUser = Depends(require_permissions("config:delete")),
+):
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(SysConfig).where(SysConfig.id == config_id).where(SysConfig.is_deleted == False)
+    )
+    obj = result.scalar_one_or_none()
+    if not obj:
+        raise NotFoundException("配置项不存在")
+
+    svc = ConfigCenterService(db)
+    await svc.delete(
+        config_key=obj.config_key,
+        scope=obj.scope,
+        tenant_id=obj.tenant_id,
+        app_key=obj.app_key,
+        user_id=obj.user_id,
+    )
+    return ok(message="删除成功")

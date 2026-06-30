@@ -3,8 +3,8 @@
     <!-- 侧边栏 -->
     <aside class="sidebar">
       <div class="logo">
-        <img src="/logo.svg" alt="logo" class="logo-img" />
-        <span v-show="!appStore.sidebarCollapsed" class="logo-text">若茗 PaaS</span>
+        <img :src="appStore.logoUrl" alt="logo" class="logo-img" />
+        <span v-show="!appStore.sidebarCollapsed" class="logo-text">{{ appStore.appTitle }}</span>
       </div>
       <SidebarMenu />
     </aside>
@@ -73,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
@@ -91,6 +91,10 @@ const router = useRouter()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const permStore = usePermissionStore()
+
+onMounted(() => {
+  void appStore.loadPublicConfig()
+})
 
 // 面包屑
 const breadcrumbs = computed(() => {

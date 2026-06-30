@@ -28,6 +28,7 @@ from app.ai.llm.providers.openai_compat import OpenAICompatProvider
 from app.ai.llm.providers.zhuilu import ZhuiluProvider
 from app.config import settings
 from app.core.security import decrypt_value
+from app.modules.config_center.runtime import cfg_float, cfg_int, get_runtime_config
 
 if TYPE_CHECKING:
     pass
@@ -375,8 +376,24 @@ class LLMService:
             provider, config = await self.get_default_provider(db)
             model_config_id = config.id
 
-        eff_temperature = temperature if temperature is not None else settings.AI_DEFAULT_TEMPERATURE
-        eff_max_tokens = max_tokens or config.max_tokens
+        runtime_values = await get_runtime_config(
+            db,
+            ["ai.default_temperature", "ai.default_max_tokens"],
+            app_key="ai",
+        )
+        default_temperature = cfg_float(
+            runtime_values,
+            "ai.default_temperature",
+            settings.AI_DEFAULT_TEMPERATURE,
+        )
+        default_max_tokens = cfg_int(
+            runtime_values,
+            "ai.default_max_tokens",
+            config.max_tokens,
+            min_value=1,
+        )
+        eff_temperature = temperature if temperature is not None else default_temperature
+        eff_max_tokens = max_tokens or default_max_tokens
 
         # ── 语义缓存检查（仅 temperature 为 0 或 use_cache=True 时）──────────
         cache_key = self._make_cache_key(model_config_id, messages)
@@ -467,8 +484,24 @@ class LLMService:
         else:
             provider, config = await self.get_default_provider(db)
 
-        eff_temperature = temperature if temperature is not None else settings.AI_DEFAULT_TEMPERATURE
-        eff_max_tokens = max_tokens or config.max_tokens
+        runtime_values = await get_runtime_config(
+            db,
+            ["ai.default_temperature", "ai.default_max_tokens"],
+            app_key="ai",
+        )
+        default_temperature = cfg_float(
+            runtime_values,
+            "ai.default_temperature",
+            settings.AI_DEFAULT_TEMPERATURE,
+        )
+        default_max_tokens = cfg_int(
+            runtime_values,
+            "ai.default_max_tokens",
+            config.max_tokens,
+            min_value=1,
+        )
+        eff_temperature = temperature if temperature is not None else default_temperature
+        eff_max_tokens = max_tokens or default_max_tokens
 
         async for chunk in provider.stream_chat(
             messages=messages,

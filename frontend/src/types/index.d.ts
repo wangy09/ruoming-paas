@@ -99,6 +99,65 @@ export interface StorageConfigInfo {
   supports: string[]
 }
 
+// ── 配置中心 ────────────────────────────────────────────────────────────────────
+export type ConfigScope = 'global' | 'tenant' | 'app' | 'user'
+export type ConfigValueType = 'string' | 'int' | 'number' | 'bool' | 'json'
+export type ConfigFormType = 'input' | 'textarea' | 'switch' | 'select' | 'json' | 'password' | 'number'
+
+export interface ConfigOption {
+  label: string
+  value: string | number | boolean
+}
+
+export interface ConfigInfo {
+  id: number
+  scope: ConfigScope
+  config_key: string
+  config_val?: string | null
+  display_val?: string | null
+  val_type: ConfigValueType | string
+  is_encrypted: boolean
+  category?: string | null
+  config_type: ConfigFormType | string
+  default_value?: string | null
+  options?: ConfigOption[] | Record<string, unknown> | null
+  required: boolean
+  regex?: string | null
+  min_value?: number | null
+  max_value?: number | null
+  sort: number
+  status: 0 | 1
+  label?: string | null
+  description?: string | null
+  is_public: boolean
+  app_key?: string | null
+  user_id?: number | null
+  tenant_id?: number | null
+}
+
+export interface ConfigPayload {
+  scope: ConfigScope
+  config_key: string
+  config_val?: string | null
+  val_type: string
+  is_encrypted: boolean
+  category?: string | null
+  config_type: string
+  default_value?: string | null
+  options?: ConfigOption[] | Record<string, unknown> | null
+  required: boolean
+  regex?: string | null
+  min_value?: number | null
+  max_value?: number | null
+  sort: number
+  status: 0 | 1
+  label?: string | null
+  description?: string | null
+  is_public: boolean
+  app_key?: string | null
+  user_id?: number | null
+}
+
 // ── 用户相关 ────────────────────────────────────────────────────────────────────
 export interface UserInfo {
   id: number

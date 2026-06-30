@@ -33,6 +33,7 @@ from app.modules.auth.schemas import (
     LoginResponse,
     RefreshTokenResponse,
 )
+from app.modules.config_center.runtime import cfg_int, get_runtime_config
 from app.modules.user.models import SysUser
 
 logger = structlog.get_logger(__name__)
@@ -290,11 +291,30 @@ class AuthService:
 
     async def _handle_login_failure(self, user: SysUser, client_ip: str | None, user_agent: str | None = None) -> None:
         """处理登录失败：累计计数，达到阈值锁定账号"""
+        config_values = await get_runtime_config(
+            self.db,
+            ["auth.login_fail_max_times", "auth.login_lock_minutes"],
+            tenant_id=user.tenant_id,
+            app_key="auth",
+            user_id=user.id,
+        )
+        max_fail_times = cfg_int(
+            config_values,
+            "auth.login_fail_max_times",
+            settings.LOGIN_FAIL_MAX_TIMES,
+            min_value=1,
+        )
+        lock_minutes = cfg_int(
+            config_values,
+            "auth.login_lock_minutes",
+            settings.LOGIN_LOCK_MINUTES,
+            min_value=1,
+        )
         new_fail_count = user.login_fail_count + 1
         locked_until = None
 
-        if new_fail_count >= settings.LOGIN_FAIL_MAX_TIMES:
-            locked_until = datetime.now(UTC) + timedelta(minutes=settings.LOGIN_LOCK_MINUTES)
+        if new_fail_count >= max_fail_times:
+            locked_until = datetime.now(UTC) + timedelta(minutes=lock_minutes)
             logger.warning(
                 "account_locked",
                 user_id=user.id,
@@ -315,7 +335,7 @@ class AuthService:
                 user_id=user.id,
                 username=user.username,
                 status=0,
-                fail_reason="密码错误" if new_fail_count < settings.LOGIN_FAIL_MAX_TIMES
+                fail_reason="密码错误" if new_fail_count < max_fail_times
                 else f"连续{new_fail_count}次失败，账号已锁定",
                 login_ip=client_ip,
                 user_agent=user_agent,

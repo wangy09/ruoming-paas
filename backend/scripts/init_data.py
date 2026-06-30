@@ -18,6 +18,7 @@ async def init_data(reset: bool = False) -> None:
     from app.modules.permission.models import (
         SysPermission, SysRole, SysRolePermission, SysUserRole,
     )
+    from app.modules.config_center.models import SysConfig
     from app.modules.file_center.models import SysFile
     from app.modules.message.models import SysNotice, SysUserMessage
     from app.modules.monitor.models import SysScheduledTask, SysTaskExecutionLog
@@ -36,7 +37,9 @@ async def init_data(reset: bool = False) -> None:
             select(SysUser).where(SysUser.is_superplatform == True)  # noqa: E712
         )
         if existing.scalar_one_or_none() and not reset:
-            logger.info("already_initialized", msg="种子数据已存在，跳过初始化")
+            await init_runtime_configs(db, settings)
+            await db.commit()
+            logger.info("already_initialized", msg="种子数据已存在，已补齐运行时配置")
             return
 
         if reset:
@@ -46,6 +49,7 @@ async def init_data(reset: bool = False) -> None:
             await db.execute(delete(SysFile))
             await db.execute(delete(SysUserMessage))
             await db.execute(delete(SysNotice))
+            await db.execute(delete(SysConfig))
             await db.execute(delete(SysUserRole))
             await db.execute(delete(SysRolePermission))
             await db.execute(delete(SysPermission))
@@ -150,7 +154,11 @@ async def init_data(reset: bool = False) -> None:
         await init_dicts(db)
         await db.flush()
 
-        # ── 7. 初始化测试计划任务 ─────────────────────────────────────
+        # ── 7. 初始化运行时配置 ───────────────────────────────────────
+        await init_runtime_configs(db, settings)
+        await db.flush()
+
+        # ── 8. 初始化测试计划任务 ─────────────────────────────────────
         db.add(SysScheduledTask(
             name="rmtask_test",
             task_type="interval",
@@ -255,6 +263,16 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "system:dict:menu", "name": "新增字典", "code": "system:dict:create", "perm_type": "button", "sort": 2},
         {"parent_id": 0, "parent_code": "system:dict:menu", "name": "编辑字典", "code": "system:dict:update", "perm_type": "button", "sort": 3},
         {"parent_id": 0, "parent_code": "system:dict:menu", "name": "删除字典", "code": "system:dict:delete", "perm_type": "button", "sort": 4},
+        # 配置中心菜单
+        {
+            "parent_id": 0, "parent_code": "system", "name": "配置中心", "code": "system:config:menu",
+            "perm_type": "menu", "path": "/system/config",
+            "component": "system/config/index", "icon": "Tools", "sort": 145, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "system:config:menu", "name": "查询配置", "code": "config:list", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "system:config:menu", "name": "新增配置", "code": "config:create", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "system:config:menu", "name": "编辑配置", "code": "config:update", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "system:config:menu", "name": "删除配置", "code": "config:delete", "perm_type": "button", "sort": 4},
         # 文件中心菜单
         {
             "parent_id": 0, "parent_code": "system", "name": "文件中心", "code": "system:file:menu",
@@ -492,6 +510,127 @@ async def init_dicts(db) -> None:
                 is_default=item_data.get("is_default", False),
             )
             db.add(di)
+
+
+async def init_runtime_configs(db, settings) -> None:
+    """初始化可在配置中心维护的运行时配置。"""
+    import json
+
+    from app.modules.config_center.service import ConfigCenterService
+
+    svc = ConfigCenterService(db)
+    configs = [
+        {
+            "config_key": "site.title",
+            "config_val": "若茗 PaaS",
+            "val_type": "string",
+            "category": "site",
+            "config_type": "input",
+            "label": "系统名称",
+            "description": "浏览器标题、后台 Logo 文案、登录页标题",
+            "is_public": True,
+            "sort": 10,
+        },
+        {
+            "config_key": "site.login_subtitle",
+            "config_val": "企业级 AI 应用开发底座",
+            "val_type": "string",
+            "category": "site",
+            "config_type": "input",
+            "label": "登录页副标题",
+            "is_public": True,
+            "sort": 20,
+        },
+        {
+            "config_key": "site.logo_url",
+            "config_val": "/logo.svg",
+            "val_type": "string",
+            "category": "site",
+            "config_type": "input",
+            "label": "Logo 地址",
+            "is_public": True,
+            "sort": 30,
+        },
+        {
+            "config_key": "ui.primary_color",
+            "config_val": "#1677ff",
+            "val_type": "string",
+            "category": "ui",
+            "config_type": "input",
+            "label": "主题色",
+            "regex": r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$",
+            "is_public": True,
+            "sort": 40,
+        },
+        {
+            "config_key": "file.max_upload_size_mb",
+            "config_val": str(settings.MAX_UPLOAD_SIZE_MB),
+            "val_type": "int",
+            "category": "file",
+            "config_type": "number",
+            "label": "最大上传大小（MB）",
+            "min_value": 1,
+            "max_value": 1024,
+            "sort": 100,
+        },
+        {
+            "config_key": "file.allowed_upload_extensions",
+            "config_val": json.dumps(settings.ALLOWED_UPLOAD_EXTENSIONS, ensure_ascii=False),
+            "val_type": "json",
+            "category": "file",
+            "config_type": "json",
+            "label": "允许上传扩展名",
+            "description": "JSON 数组，例如 [\"jpg\", \"png\", \"pdf\"]",
+            "sort": 110,
+        },
+        {
+            "config_key": "auth.login_fail_max_times",
+            "config_val": str(settings.LOGIN_FAIL_MAX_TIMES),
+            "val_type": "int",
+            "category": "auth",
+            "config_type": "number",
+            "label": "登录失败最大次数",
+            "min_value": 1,
+            "max_value": 20,
+            "sort": 200,
+        },
+        {
+            "config_key": "auth.login_lock_minutes",
+            "config_val": str(settings.LOGIN_LOCK_MINUTES),
+            "val_type": "int",
+            "category": "auth",
+            "config_type": "number",
+            "label": "登录锁定分钟数",
+            "min_value": 1,
+            "max_value": 1440,
+            "sort": 210,
+        },
+        {
+            "config_key": "ai.default_temperature",
+            "config_val": str(settings.AI_DEFAULT_TEMPERATURE),
+            "val_type": "number",
+            "category": "ai",
+            "config_type": "number",
+            "label": "AI 默认温度",
+            "min_value": 0,
+            "max_value": 2,
+            "sort": 300,
+        },
+        {
+            "config_key": "ai.default_max_tokens",
+            "config_val": str(settings.AI_DEFAULT_MAX_TOKENS),
+            "val_type": "int",
+            "category": "ai",
+            "config_type": "number",
+            "label": "AI 默认最大 Tokens",
+            "min_value": 1,
+            "max_value": 32768,
+            "sort": 310,
+        },
+    ]
+
+    for item in configs:
+        await svc.set(scope="global", status=1, **item)
 
 
 if __name__ == "__main__":

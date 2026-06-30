@@ -14,6 +14,7 @@ from app.core.exceptions import ValidationException
 from app.core.response import ApiResponse, ok
 from app.core.utils.pagination import PageParams
 from app.database import get_db
+from app.modules.config_center.runtime import cfg_int, cfg_list, get_runtime_config
 from app.modules.file_center.schemas import (
     FileArchiveRequest,
     FileInfo,
@@ -28,13 +29,32 @@ router = APIRouter()
 
 @router.get("/storage/config", response_model=ApiResponse[StorageConfigInfo], summary="存储配置摘要")
 async def storage_config(
+    db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("system:file:view"))],
 ) -> ApiResponse[StorageConfigInfo]:
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    values = await get_runtime_config(
+        db,
+        ["file.max_upload_size_mb", "file.allowed_upload_extensions"],
+        tenant_id=tenant_id,
+        app_key="file",
+    )
+    max_upload_size_mb = cfg_int(
+        values,
+        "file.max_upload_size_mb",
+        settings.MAX_UPLOAD_SIZE_MB,
+        min_value=1,
+    )
+    allowed_extensions = cfg_list(
+        values,
+        "file.allowed_upload_extensions",
+        settings.ALLOWED_UPLOAD_EXTENSIONS,
+    )
     return ok(StorageConfigInfo(
         backend=settings.STORAGE_BACKEND,
         upload_dir=settings.UPLOAD_DIR if settings.STORAGE_BACKEND == "local" else None,
-        max_upload_size_mb=settings.MAX_UPLOAD_SIZE_MB,
-        allowed_extensions=settings.ALLOWED_UPLOAD_EXTENSIONS,
+        max_upload_size_mb=max_upload_size_mb,
+        allowed_extensions=allowed_extensions,
         supports=["local", "minio", "oss"],
     ))
 

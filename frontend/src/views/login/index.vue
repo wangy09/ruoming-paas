@@ -3,9 +3,9 @@
     <div class="login-bg" />
     <div class="login-card">
       <div class="login-header">
-        <img src="/logo.svg" alt="logo" class="login-logo" />
-        <h1 class="login-title">若茗 PaaS</h1>
-        <p class="login-subtitle">企业级 AI 应用开发底座</p>
+        <img :src="appStore.logoUrl" alt="logo" class="login-logo" />
+        <h1 class="login-title">{{ appStore.appTitle }}</h1>
+        <p class="login-subtitle">{{ appStore.loginSubtitle }}</p>
       </div>
 
       <el-form
@@ -82,12 +82,14 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { User, Lock, OfficeBuilding as Office, Key, Loading } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/store/auth'
+import { useAppStore } from '@/store/app'
 import { usePermissionStore } from '@/store/permission'
 import { authApi } from '@/api/auth'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const appStore = useAppStore()
 const permStore = usePermissionStore()
 
 const formRef = ref<FormInstance>()
@@ -147,7 +149,10 @@ async function handleLogin() {
   }
 }
 
-onMounted(refreshCaptcha)
+onMounted(() => {
+  void appStore.loadPublicConfig()
+  void refreshCaptcha()
+})
 </script>
 
 <style lang="scss" scoped>

@@ -17,6 +17,7 @@ from app.config import settings
 from app.core.exceptions import NotFoundException, ValidationException
 from app.core.storage.factory import get_storage
 from app.core.utils.pagination import PageParams
+from app.modules.config_center.runtime import cfg_int, cfg_list, get_runtime_config
 from app.modules.file_center.models import SysFile
 from app.modules.file_center.schemas import FileUpdateRequest
 from app.modules.user.models import SysUser
@@ -87,7 +88,7 @@ class FileCenterService:
         is_public: bool = False,
     ) -> SysFile:
         content = await file.read()
-        self._validate_file(file.filename or "", content)
+        await self._validate_file(file.filename or "", content)
 
         original_name = Path(file.filename or "unnamed").name
         ext = self._file_ext(original_name)
@@ -184,16 +185,34 @@ class FileCenterService:
     def _file_ext(filename: str) -> str:
         return Path(filename).suffix.lower().lstrip(".")
 
-    def _validate_file(self, filename: str, content: bytes) -> None:
+    async def _validate_file(self, filename: str, content: bytes) -> None:
         if not content:
             raise ValidationException("不能上传空文件")
 
-        max_size = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        values = await get_runtime_config(
+            self.db,
+            ["file.max_upload_size_mb", "file.allowed_upload_extensions"],
+            tenant_id=self.tenant_id,
+            app_key="file",
+        )
+        max_upload_size_mb = cfg_int(
+            values,
+            "file.max_upload_size_mb",
+            settings.MAX_UPLOAD_SIZE_MB,
+            min_value=1,
+        )
+        allowed_extensions = cfg_list(
+            values,
+            "file.allowed_upload_extensions",
+            settings.ALLOWED_UPLOAD_EXTENSIONS,
+        )
+
+        max_size = max_upload_size_mb * 1024 * 1024
         if len(content) > max_size:
-            raise ValidationException(f"文件大小不能超过 {settings.MAX_UPLOAD_SIZE_MB}MB")
+            raise ValidationException(f"文件大小不能超过 {max_upload_size_mb}MB")
 
         ext = self._file_ext(filename)
-        allowed = {item.lower().lstrip(".") for item in settings.ALLOWED_UPLOAD_EXTENSIONS}
+        allowed = {item.lower().lstrip(".") for item in allowed_extensions}
         if allowed and ext not in allowed:
             allowed_text = "、".join(sorted(allowed))
             raise ValidationException(f"不支持的文件类型：{ext or '无扩展名'}，允许的类型：{allowed_text}")
