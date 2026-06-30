@@ -22,16 +22,22 @@ async def list_audit_logs(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(get_current_user)],
     page_params: Annotated[PageParams, Depends()],
+    username: str | None = Query(None),
     action: str | None = Query(None),
     resource_type: str | None = Query(None),
+    status: int | None = Query(None, description="操作状态：1=成功 0=失败"),
     start_time: str | None = Query(None),
     end_time: str | None = Query(None),
 ):
     stmt = select(SysAuditLog).order_by(desc(SysAuditLog.created_at))
+    if username:
+        stmt = stmt.filter(SysAuditLog.username.ilike(f"%{username}%"))
     if action:
         stmt = stmt.filter(SysAuditLog.action == action)
     if resource_type:
         stmt = stmt.filter(SysAuditLog.resource_type == resource_type)
+    if status is not None:
+        stmt = stmt.filter(SysAuditLog.status == status)
     if start_time:
         stmt = stmt.filter(SysAuditLog.created_at >= start_time)
     if end_time:
@@ -65,6 +71,9 @@ async def list_audit_logs(
             "trace_id": item.trace_id,
             "path": item.path,
             "method": item.method,
+            "status_code": item.status_code,
+            "request_body": item.request_body,
+            "response_body": item.response_body,
             "created_at": item.created_at.isoformat() if item.created_at else None,
         })
     return ok({"items": items, "total": total, "page": page_params.page, "page_size": page_params.page_size})

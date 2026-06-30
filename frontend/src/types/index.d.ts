@@ -14,6 +14,56 @@ export interface PageData<T = unknown> {
   pages: number
 }
 
+// ── 消息中心 ────────────────────────────────────────────────────────────────────
+export type NoticeTargetType = 'all' | 'dept' | 'user'
+
+export interface NoticeInfo {
+  id: number
+  title: string
+  content: string
+  notice_type: string
+  target_type: NoticeTargetType
+  target_dept_ids?: number[] | null
+  target_user_ids?: number[] | null
+  status: 0 | 1
+  publisher_id?: number | null
+  published_at?: string | null
+  receiver_count: number
+  remark?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface NoticeCreate {
+  title: string
+  content: string
+  target_type: NoticeTargetType
+  target_dept_ids?: number[]
+  target_user_ids?: number[]
+  remark?: string
+  publish_now?: boolean
+}
+
+export type NoticeUpdate = Partial<Omit<NoticeCreate, 'publish_now'>>
+
+export interface MessageInfo {
+  id: number
+  notice_id?: number | null
+  user_id: number
+  sender_id?: number | null
+  title: string
+  content: string
+  message_type: string
+  is_read: boolean
+  read_at?: string | null
+  created_at: string
+}
+
+export interface MessageUnreadSummary {
+  unread_count: number
+  latest?: MessageInfo | null
+}
+
 // ── 用户相关 ────────────────────────────────────────────────────────────────────
 export interface UserInfo {
   id: number

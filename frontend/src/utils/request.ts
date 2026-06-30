@@ -7,6 +7,25 @@ import axios, { type AxiosInstance, type AxiosRequestConfig, type InternalAxiosR
 import { ElMessage, ElMessageBox } from 'element-plus'
 import NProgress from 'nprogress'
 import 'nprogress/nprogress.css'
+import { useErrorLogStore } from '@/store/errorLog'
+
+/** 将错误信息推入错误日志 store（懒加载避免 pinia 初始化顺序问题） */
+function pushErrorLog(params: {
+  status: number
+  code?: number
+  method: string
+  url: string
+  message: string
+  traceId?: string
+  responseSnippet?: string
+}) {
+  try {
+    const store = useErrorLogStore()
+    store.addLog(params)
+  } catch {
+    // store 未初始化时静默忽略
+  }
+}
 
 NProgress.configure({ showSpinner: false, speed: 300 })
 
@@ -63,8 +82,18 @@ request.interceptors.response.use(
 
     // 业务错误码处理（后端统一返回 200 HTTP + code 字段）
     if (res.code !== undefined && res.code !== 200 && res.code !== 201) {
-      ElMessage.error(res.message || '请求失败')
-      return Promise.reject(new Error(res.message || '请求失败'))
+      const msg = res.message || '请求失败'
+      ElMessage.error(msg)
+      pushErrorLog({
+        status: 200,
+        code: res.code,
+        method: (response.config.method || 'GET').toUpperCase(),
+        url: response.config.url || '',
+        message: msg,
+        traceId: res.trace_id,
+        responseSnippet: JSON.stringify(res).slice(0, 300),
+      })
+      return Promise.reject(new Error(msg))
     }
 
     return res
@@ -74,7 +103,14 @@ request.interceptors.response.use(
     const { response, config } = error
 
     if (!response) {
-      ElMessage.error('网络连接失败，请检查网络')
+      const msg = '网络连接失败，请检查网络'
+      ElMessage.error(msg)
+      pushErrorLog({
+        status: 0,
+        method: (config?.method || 'GET').toUpperCase(),
+        url: config?.url || '',
+        message: msg,
+      })
       return Promise.reject(error)
     }
 
@@ -128,14 +164,31 @@ request.interceptors.response.use(
       })
     }
 
+    let errMsg = ''
     if (response.status === 403) {
-      ElMessage.error('无操作权限')
+      errMsg = '无操作权限'
+      ElMessage.error(errMsg)
     } else if (response.status === 429) {
-      ElMessage.warning('请求过于频繁，请稍后重试')
+      errMsg = '请求过于频繁，请稍后重试'
+      ElMessage.warning(errMsg)
     } else if (response.status >= 500) {
-      ElMessage.error('服务器异常，请稍后重试')
+      errMsg = response.data?.message || '服务器异常，请稍后重试'
+      ElMessage.error(errMsg)
     } else if (response.data?.message) {
-      ElMessage.error(response.data.message)
+      errMsg = response.data.message
+      ElMessage.error(errMsg)
+    }
+
+    if (errMsg) {
+      pushErrorLog({
+        status: response.status,
+        code: response.data?.code,
+        method: (config?.method || 'GET').toUpperCase(),
+        url: config?.url || '',
+        message: errMsg,
+        traceId: response.data?.trace_id,
+        responseSnippet: JSON.stringify(response.data || {}).slice(0, 300),
+      })
     }
 
     return Promise.reject(error)

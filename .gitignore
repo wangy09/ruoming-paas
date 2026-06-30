@@ -30,6 +30,8 @@
 # 上传/日志
 **/uploads/
 **/logs/
+# 保留 .gitkeep 占位，确保 logs 目录可以提交到仓库
+!**/logs/.gitkeep
 **/*.log
 
 # IDE

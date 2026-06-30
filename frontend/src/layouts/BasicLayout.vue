@@ -25,6 +25,12 @@
           </el-breadcrumb>
         </div>
         <div class="header-right">
+          <!-- 接口错误记录 -->
+          <ErrorLogDrawer />
+
+          <!-- 新消息提醒 -->
+          <MessageBell />
+
           <!-- 暗色模式 -->
           <el-tooltip :content="appStore.isDark ? '切换亮色' : '切换暗色'">
             <el-icon class="header-icon" @click="appStore.toggleDark()">
@@ -76,6 +82,8 @@ import { useAppStore } from '@/store/app'
 import { usePermissionStore } from '@/store/permission'
 import SidebarMenu from './components/SidebarMenu.vue'
 import TabsBar from './components/TabsBar.vue'
+import ErrorLogDrawer from './components/ErrorLogDrawer.vue'
+import MessageBell from './components/MessageBell.vue'
 import { resetRouter } from '@/router/guard'
 
 const route = useRoute()

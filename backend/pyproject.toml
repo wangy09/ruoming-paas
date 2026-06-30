@@ -58,6 +58,7 @@ dependencies = [
     "celery>=5.4.0",
     # 监控
     "prometheus-client>=0.20.0",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]

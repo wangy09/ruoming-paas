@@ -8,3 +8,7 @@ docker-compose up -d
 # 3. 等待启动完成后执行初始化脚本
 docker exec -it ruoming_backend python /app/scripts/init_data.py
 docker exec -it ruoming_backend python /app/scripts/seed_agents.py
+
+
+# docker exec ruoming_backend python /app/scripts/init_data.py --reset
+# docker exec ruoming_backend python /app/scripts/seed_agents.py --reset

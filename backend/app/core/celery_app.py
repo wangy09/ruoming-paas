@@ -9,7 +9,7 @@ celery_app = Celery(
     "ruoming_tasks",
     broker=settings.CELERY_BROKER_URL,
     backend=None,
-    include=["app.ai.knowledge.tasks"],
+    include=["app.ai.knowledge.tasks", "app.modules.monitor.tasks"],
 )
 
 celery_app.conf.update(
@@ -21,6 +21,7 @@ celery_app.conf.update(
     enable_utc=True,
     task_routes={
         "app.ai.knowledge.tasks.*": {"queue": "knowledge"},
+        "rmtask_test": {"queue": "knowledge"},
     },
     task_annotations={
         "app.ai.knowledge.tasks.index_document": {"rate_limit": "10/m"},

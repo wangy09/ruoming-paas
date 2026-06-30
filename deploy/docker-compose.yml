@@ -68,6 +68,7 @@ services:
     volumes:
       - ../backend:/app           # 开发时热重载
       - uploads_data:/app/uploads
+      - ../backend/logs:/app/logs  # 日志文件持久化到宿主机
     ports:
       - "8000:8000"
     depends_on:
@@ -101,6 +102,7 @@ services:
     volumes:
       - ../backend:/app
       - uploads_data:/app/uploads
+      - ../backend/logs:/app/logs  # 与 backend 共享日志目录
     depends_on:
       - redis
       - postgres

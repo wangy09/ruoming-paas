@@ -33,6 +33,11 @@ class SysAuditLog(BaseModel):
     after_data: Mapped[dict | None] = mapped_column(JSONB, comment="变更后数据快照")
     detail: Mapped[dict | None] = mapped_column(JSONB, comment="附加详情")
 
+    # 请求/响应数据
+    request_body: Mapped[dict | None] = mapped_column(JSONB, comment="请求体数据（脱敏后）")
+    response_body: Mapped[dict | None] = mapped_column(JSONB, comment="响应体数据")
+    status_code: Mapped[int | None] = mapped_column(Integer, comment="HTTP 响应状态码")
+
     # 请求上下文
     request_ip: Mapped[str | None] = mapped_column(String(64), comment="请求 IP")
     user_agent: Mapped[str | None] = mapped_column(Text, comment="User-Agent")

@@ -1,15 +1,18 @@
 """
 若茗 PaaS - 请求日志中间件
-记录每个请求的方法、路径、状态码、耗时，同时记录审计日志
+记录每个请求的方法、路径、请求体、状态码、响应体、耗时，同时记录审计日志
 Author: ruoming
 """
 import asyncio
+import json
 import time
+from typing import Any
 
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.types import Message
 
 from app.core.security import decode_access_token
 
@@ -21,7 +24,7 @@ _SKIP_PATHS = frozenset([
     "/favicon.ico",
 ])
 
-# 跳过审计日志的路径（如登录登出）
+# 跳过审计日志的路径
 _SKIP_AUDIT_PATHS = frozenset([
     "/api/health",
     "/api/metrics",
@@ -29,14 +32,13 @@ _SKIP_AUDIT_PATHS = frozenset([
 ])
 
 # 敏感资源列表 - 查询这些资源时强制记录审计日志
-# （包括列表查询和单条详情，因为这些数据敏感度高）
 _SENSITIVE_RESOURCES = frozenset([
-    "users",  # 用户信息
-    "api-keys",  # API密钥
-    "permissions",  # 权限
-    "roles",  # 角色
-    "tenants",  # 租户
-    "configs",  # 系统配置
+    "users",
+    "api-keys",
+    "permissions",
+    "roles",
+    "tenants",
+    "configs",
 ])
 
 # 导出/下载操作关键词
@@ -45,9 +47,48 @@ _EXPORT_KEYWORDS = frozenset([
     "download",
 ])
 
+# 请求体/响应体中需要脱敏的字段（置为 "***"）
+_SENSITIVE_FIELDS = frozenset([
+    "password", "passwd", "secret", "token", "access_token",
+    "refresh_token", "api_key", "private_key", "card_no",
+])
+
+# 响应体大小上限（字节），超过此值截断，避免存储爆炸
+_RESPONSE_BODY_MAX_BYTES = 8 * 1024  # 8 KB
+
+
+def _desensitize(data: Any, depth: int = 0) -> Any:
+    """递归脱敏字典/列表中的敏感字段，最多递归 5 层"""
+    if depth > 5:
+        return data
+    if isinstance(data, dict):
+        return {
+            k: "***" if k.lower() in _SENSITIVE_FIELDS else _desensitize(v, depth + 1)
+            for k, v in data.items()
+        }
+    if isinstance(data, list):
+        return [_desensitize(item, depth + 1) for item in data]
+    return data
+
+
+def _try_parse_json(raw: bytes) -> dict | None:
+    """尝试将字节解析为 JSON dict；失败则返回 None"""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+        # 非 dict（如 list、string）包装一层
+        return {"_data": parsed}
+    except Exception:
+        # 非 JSON（如 form、binary）
+        text = raw.decode("utf-8", errors="replace")
+        return {"_raw": text[:512]} if text.strip() else None
+
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """结构化请求访问日志中间件，同时记录审计日志"""
+    """结构化请求访问日志中间件，记录请求体、响应码、响应体，同时写审计日志"""
 
     async def dispatch(self, request: Request, call_next) -> Response:
         request_ip = request.client.host if request.client else None
@@ -65,14 +106,47 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if path in _SKIP_PATHS:
             return await call_next(request)
 
+        # ── 读取请求体（需缓存，否则下游读取为空）────────────────────────
+        request_body_raw = await request.body()
+        request_body = _desensitize(_try_parse_json(request_body_raw))
+
+        # 将请求体重新注入 scope，让下游路由还能读到
+        async def receive() -> Message:
+            return {"type": "http.request", "body": request_body_raw, "more_body": False}
+
+        request = Request(request.scope, receive)
+
         start = time.perf_counter()
-        response: Response | None = None
         status_code = 500
+        response_body: dict | None = None
 
         try:
             response = await call_next(request)
             status_code = response.status_code
+
+            # ── 消费响应体 ────────────────────────────────────────────────
+            resp_chunks: list[bytes] = []
+            async for chunk in response.body_iterator:
+                resp_chunks.append(chunk)
+            resp_raw = b"".join(resp_chunks)
+
+            # 超过上限截断（仅截日志用，响应正常返回）
+            if len(resp_raw) <= _RESPONSE_BODY_MAX_BYTES:
+                response_body = _desensitize(_try_parse_json(resp_raw))
+            else:
+                response_body = {"_truncated": True, "_size_bytes": len(resp_raw)}
+
+            # 重新构造响应，保证客户端收到完整数据
+            from starlette.responses import Response as StarletteResponse
+            response = StarletteResponse(
+                content=resp_raw,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+
             return response
+
         except Exception as exc:
             logger.exception("request_unhandled_error", exc_info=exc)
             raise
@@ -91,9 +165,28 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             )
 
             if path not in _SKIP_AUDIT_PATHS:
-                await self._record_audit_log(request, path, method, status_code, request_ip, user_agent)
+                # TODO: 当前用 create_task 异步写入，进程突然退出时极端情况下可能丢失最后几条日志。
+                #       如需 100% 不丢，可引入消息队列（Redis Stream / Kafka）：
+                #       中间件将日志事件 push 到队列，独立 consumer 消费写库，
+                #       支持重试、持久化，彻底解耦日志写入与业务链路。
+                asyncio.create_task(self._record_audit_log(
+                    request, path, method, status_code,
+                    request_ip, user_agent,
+                    request_body=request_body,
+                    response_body=response_body,
+                ))
 
-    async def _record_audit_log(self, request: Request, path: str, method: str, status_code: int, request_ip: str | None = None, user_agent: str | None = None) -> None:
+    async def _record_audit_log(
+        self,
+        request: Request,
+        path: str,
+        method: str,
+        status_code: int,
+        request_ip: str | None = None,
+        user_agent: str | None = None,
+        request_body: dict | None = None,
+        response_body: dict | None = None,
+    ) -> None:
         """记录审计日志"""
         status = 1 if 200 <= status_code < 400 else 0
         error_msg = f"HTTP {status_code}" if status_code >= 400 else None
@@ -117,14 +210,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     pass
 
         event_type = f"{method.lower()}.{path.replace('/', '.').strip('.')}"
-        # 限制 event_type 长度，避免数据库字段溢出
         if len(event_type) > 64:
             event_type = event_type[:61] + "..."
+
         parts = path.strip("/").split("/")
         module = parts[1] if len(parts) >= 2 and parts[0] == "api" else None
         resource_type = parts[2] if len(parts) >= 3 and parts[0] == "api" else None
 
-        # 根据策略判断是否需要记录审计日志
         if not self._should_record_audit_log(method, path, resource_type):
             return
 
@@ -143,7 +235,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 pass
 
         trace_id = getattr(request.state, "trace_id", None) or ctx.get("trace_id")
-
         browser, os_name, device = self._parse_user_agent(user_agent)
 
         await self._write_audit_log(
@@ -153,6 +244,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             resource_type=resource_type,
             resource_id=resource_id,
             status=status,
+            status_code=status_code,
             error_msg=error_msg,
             user_id=user_id,
             username=username,
@@ -160,11 +252,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             request_ip=request_ip,
             user_agent=user_agent,
             browser=browser,
-            os=os_name,
+            os_name=os_name,
             device=device,
             trace_id=trace_id,
             path=path,
             method=method,
+            request_body=request_body,
+            response_body=response_body,
         )
 
     async def _write_audit_log(
@@ -175,6 +269,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         resource_type: str | None,
         resource_id: str | None,
         status: int,
+        status_code: int,
         error_msg: str | None,
         user_id: int | None = None,
         username: str | None = None,
@@ -182,11 +277,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         request_ip: str | None = None,
         user_agent: str | None = None,
         browser: str | None = None,
-        os: str | None = None,
+        os_name: str | None = None,
         device: str | None = None,
         trace_id: str | None = None,
         path: str | None = None,
         method: str | None = None,
+        request_body: dict | None = None,
+        response_body: dict | None = None,
     ) -> None:
         """异步写审计日志"""
         try:
@@ -202,6 +299,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     resource_type=resource_type,
                     resource_id=resource_id,
                     status=status,
+                    status_code=status_code,
                     error_msg=error_msg,
                     user_id=user_id,
                     username=username,
@@ -209,11 +307,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     request_ip=request_ip,
                     user_agent=user_agent,
                     browser=browser,
-                    os=os,
+                    os=os_name,
                     device=device,
                     trace_id=trace_id,
                     path=path,
                     method=method,
+                    request_body=request_body,
+                    response_body=response_body,
                 )
                 await db.commit()
         except Exception as e:
@@ -227,7 +327,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         browser = None
         os_name = None
         device = None
-
         ua = user_agent.lower()
 
         if 'edg' in ua:
@@ -252,10 +351,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             device = 'Desktop'
         elif 'android' in ua:
             os_name = 'Android'
-            if 'mobile' in ua or 'phone' in ua:
-                device = 'Mobile'
-            else:
-                device = 'Tablet'
+            device = 'Mobile' if ('mobile' in ua or 'phone' in ua) else 'Tablet'
         elif 'iphone' in ua or 'ipad' in ua:
             os_name = 'iOS'
             device = 'Mobile' if 'iphone' in ua else 'Tablet'
@@ -272,33 +368,21 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         - 单条详情查询（带数字ID）：必须记录
         - 敏感资源查询（包括列表）：必须记录
         - 普通列表查询：不记录
-
-        区分标准：数据敏感度 + 操作类型 + 查询数据范围
-        避免日志爆炸：只记录高敏感度操作，普通查询不记录
         """
-        # 写操作必须记录（创建、更新、删除）
         if method in ("POST", "PUT", "DELETE", "PATCH"):
             return True
 
-        # GET请求进一步判断
         if method == "GET":
-            # 检查是否包含导出/下载关键词
             path_lower = path.lower()
             for keyword in _EXPORT_KEYWORDS:
                 if keyword in path_lower:
                     return True
 
-            # 单条详情查询（路径包含数字ID）必须记录
-            # 例如：/api/v1/users/123, /api/v1/users/123/profile
             parts = path.strip("/").split("/")
-            has_numeric_id = any(part.isdigit() for part in parts)
-
-            if has_numeric_id:
+            if any(part.isdigit() for part in parts):
                 return True
 
-            # 敏感资源列表查询也必须记录（用户、权限、角色等敏感数据）
             if resource_type and resource_type in _SENSITIVE_RESOURCES:
                 return True
 
-        # 其他情况不记录（普通列表查询如 /api/v1/knowledge-bases）
         return False

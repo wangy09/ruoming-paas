@@ -23,6 +23,7 @@ export const auditApi = {
     username?: string
     action?: string
     resource_type?: string
+    status?: number
     start_time?: string
     end_time?: string
   }) => get<ApiResponse<PageData<AuditLog>>>('/api/v1/audit/logs', params),

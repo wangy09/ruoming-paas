@@ -18,6 +18,8 @@ async def init_data(reset: bool = False) -> None:
     from app.modules.permission.models import (
         SysPermission, SysRole, SysRolePermission, SysUserRole,
     )
+    from app.modules.message.models import SysNotice, SysUserMessage
+    from app.modules.monitor.models import SysScheduledTask, SysTaskExecutionLog
     from app.modules.tenant.models import SysTenant
     from app.modules.user.models import SysUser
     from sqlalchemy import select, delete
@@ -38,13 +40,16 @@ async def init_data(reset: bool = False) -> None:
 
         if reset:
             logger.info("reset_mode", msg="进入重置模式，清理现有数据")
+            await db.execute(delete(SysTaskExecutionLog))
+            await db.execute(delete(SysScheduledTask))
+            await db.execute(delete(SysUserMessage))
+            await db.execute(delete(SysNotice))
             await db.execute(delete(SysUserRole))
             await db.execute(delete(SysRolePermission))
             await db.execute(delete(SysPermission))
             await db.execute(delete(SysRole))
             await db.execute(delete(SysTenant))
             await db.execute(delete(SysUser))
-            await db.execute(text("DROP TABLE IF EXISTS sys_role"))
             await db.flush()
             logger.info("data_cleared", msg="现有数据已清理")
 
@@ -141,6 +146,18 @@ async def init_data(reset: bool = False) -> None:
 
         # ── 6. 初始化字典数据 ──────────────────────────────────────────
         await init_dicts(db)
+        await db.flush()
+
+        # ── 7. 初始化测试计划任务 ─────────────────────────────────────
+        db.add(SysScheduledTask(
+            name="rmtask_test",
+            task_type="interval",
+            func_name="rmtask_test",
+            interval_seconds=60,
+            is_once=False,
+            status=1,
+            remark="计划任务测试用例",
+        ))
         await db.flush()
 
         await db.commit()
@@ -254,6 +271,41 @@ def _get_default_permissions() -> list[dict]:
             "component": "audit/login/index", "icon": "Key", "sort": 320, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "audit:login:menu", "name": "查询登录日志", "code": "audit:login:view", "perm_type": "button", "sort": 1},
+        # ── 消息中心（根菜单）────────────────────────────────────────
+        {
+            "parent_id": 0, "name": "消息中心", "code": "message",
+            "perm_type": "menu", "path": "/message", "component": "",
+            "icon": "Bell", "sort": 350, "is_visible": True,
+        },
+        {
+            "parent_id": 0, "parent_code": "message", "name": "平台公告", "code": "message:notice:menu",
+            "perm_type": "menu", "path": "/message/notices",
+            "component": "message/notice/index", "icon": "Notification", "sort": 360, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "message:notice:menu", "name": "查询公告", "code": "message:notice:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "message:notice:menu", "name": "新增公告", "code": "message:notice:create", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "message:notice:menu", "name": "编辑公告", "code": "message:notice:update", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "message:notice:menu", "name": "删除公告", "code": "message:notice:delete", "perm_type": "button", "sort": 4},
+        {"parent_id": 0, "parent_code": "message:notice:menu", "name": "发布公告", "code": "message:notice:publish", "perm_type": "button", "sort": 5},
+        {
+            "parent_id": 0, "parent_code": "message", "name": "我的消息", "code": "message:inbox:menu",
+            "perm_type": "menu", "path": "/message/inbox",
+            "component": "message/inbox/index", "icon": "Message", "sort": 370, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "message:inbox:menu", "name": "查看消息", "code": "message:inbox:view", "perm_type": "button", "sort": 1},
+        # ── 开发工具（根菜单）────────────────────────────────────────
+        {
+            "parent_id": 0, "name": "开发工具", "code": "dev",
+            "perm_type": "menu", "path": "/dev", "component": "",
+            "icon": "Tools", "sort": 380, "is_visible": True,
+        },
+        {
+            "parent_id": 0, "parent_code": "dev", "name": "代码生成", "code": "dev:codegen:menu",
+            "perm_type": "menu", "path": "/dev/codegen",
+            "component": "dev/codegen/index", "icon": "DocumentAdd", "sort": 390, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "dev:codegen:menu", "name": "查看代码生成", "code": "dev:codegen:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "dev:codegen:menu", "name": "生成代码预览", "code": "dev:codegen:preview", "perm_type": "button", "sort": 2},
         # ── AI 管理（根菜单）─────────────────────────────────────────
         {
             "parent_id": 0, "name": "AI 管理", "code": "ai",
@@ -316,6 +368,31 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "ai:tool:menu", "name": "新建工具", "code": "ai:tool:create", "perm_type": "button", "sort": 2},
         {"parent_id": 0, "parent_code": "ai:tool:menu", "name": "编辑工具", "code": "ai:tool:update", "perm_type": "button", "sort": 3},
         {"parent_id": 0, "parent_code": "ai:tool:menu", "name": "删除工具", "code": "ai:tool:delete", "perm_type": "button", "sort": 4},
+
+        # ── 系统监控（根菜单）────────────────────────────────────────
+        {
+            "parent_id": 0, "name": "系统监控", "code": "monitor",
+            "perm_type": "menu", "path": "/monitor", "component": "",
+            "icon": "Monitor", "sort": 400, "is_visible": True,
+        },
+        {
+            "parent_id": 0, "parent_code": "monitor", "name": "服务监控", "code": "monitor:server:menu",
+            "perm_type": "menu", "path": "/monitor/server",
+            "component": "monitor/server/index", "icon": "DataBoard", "sort": 410, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "monitor:server:menu", "name": "查看服务监控", "code": "monitor:server:view", "perm_type": "button", "sort": 1},
+        {
+            "parent_id": 0, "parent_code": "monitor", "name": "计划任务", "code": "monitor:task:menu",
+            "perm_type": "menu", "path": "/monitor/task",
+            "component": "monitor/task/index", "icon": "AlarmClock", "sort": 420, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "monitor:task:menu", "name": "查询任务", "code": "monitor:task:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "monitor:task:menu", "name": "新增任务", "code": "monitor:task:create", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "monitor:task:menu", "name": "编辑任务", "code": "monitor:task:update", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "monitor:task:menu", "name": "删除任务", "code": "monitor:task:delete", "perm_type": "button", "sort": 4},
+        {"parent_id": 0, "parent_code": "monitor:task:menu", "name": "立即执行", "code": "monitor:task:run", "perm_type": "button", "sort": 5},
+        {"parent_id": 0, "parent_code": "monitor:task:menu", "name": "查看执行日志", "code": "monitor:task:log:view", "perm_type": "button", "sort": 6},
+        {"parent_id": 0, "parent_code": "monitor:task:menu", "name": "清空日志", "code": "monitor:task:log:clear", "perm_type": "button", "sort": 7},
 
     ]
 

@@ -4,6 +4,7 @@ Author: ruoming
 """
 import logging
 import sys
+from pathlib import Path
 
 import structlog
 from loguru import logger as loguru_logger
@@ -63,16 +64,30 @@ def setup_logging() -> None:
         serialize=settings.LOG_JSON,
     )
 
-    # 文件输出（生产环境可选）
-    if settings.is_production:
-        loguru_logger.add(
-            "logs/ruoming_{time:YYYY-MM-DD}.log",
-            rotation="00:00",      # 每天轮转
-            retention="30 days",   # 保留 30 天
-            compression="gz",
-            level=log_level,
-            serialize=True,
-        )
+    # 文件输出（始终开启，开发环境同样写文件以支持溯源）
+    log_dir = Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    loguru_logger.add(
+        log_dir / "ruoming_{time:YYYY-MM-DD}.log",
+        rotation="00:00",        # 每天午夜轮转
+        retention="30 days",     # 保留 30 天
+        compression="gz",        # gzip 压缩历史日志
+        level=log_level,
+        serialize=True,          # 始终 JSON 格式，便于 grep/jq 分析
+        enqueue=True,            # 异步写入，不阻塞主线程
+    )
+
+    # 错误单独写一份文件，方便快速定位
+    loguru_logger.add(
+        log_dir / "ruoming_error_{time:YYYY-MM-DD}.log",
+        rotation="00:00",
+        retention="30 days",
+        compression="gz",
+        level="ERROR",
+        serialize=True,
+        enqueue=True,
+    )
 
     # 捕获 uvicorn / sqlalchemy 等标准库日志到 structlog
     logging.basicConfig(
