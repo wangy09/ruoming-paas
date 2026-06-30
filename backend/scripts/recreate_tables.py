@@ -22,6 +22,7 @@ async def recreate_tables():
     from app.modules.config_center.models import SysConfig
     from app.modules.monitor.models import SysScheduledTask, SysTaskExecutionLog
     from app.modules.message.models import SysNotice, SysUserMessage
+    from app.modules.file_center.models import SysFile
 
     from app.ai.conversation.models import (
         AiConversation, AiMessage, AiEntityMemory, AiKeyValueMemory, AiCallLog

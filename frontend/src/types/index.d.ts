@@ -64,6 +64,41 @@ export interface MessageUnreadSummary {
   latest?: MessageInfo | null
 }
 
+// ── 文件中心 ────────────────────────────────────────────────────────────────────
+export interface FileInfo {
+  id: number
+  original_name: string
+  file_name: string
+  file_ext?: string | null
+  mime_type?: string | null
+  file_size: number
+  file_hash: string
+  storage_backend: 'local' | 'minio' | 'oss' | string
+  storage_key: string
+  storage_url?: string | null
+  biz_type?: string | null
+  biz_id?: string | null
+  category?: string | null
+  remark?: string | null
+  uploader_id?: number | null
+  download_count: number
+  is_public: boolean
+  status: 1 | 2
+  archived_at?: string | null
+  archived_by?: number | null
+  archive_reason?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface StorageConfigInfo {
+  backend: string
+  upload_dir?: string | null
+  max_upload_size_mb: number
+  allowed_extensions: string[]
+  supports: string[]
+}
+
 // ── 用户相关 ────────────────────────────────────────────────────────────────────
 export interface UserInfo {
   id: number

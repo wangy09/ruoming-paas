@@ -18,6 +18,7 @@ async def init_data(reset: bool = False) -> None:
     from app.modules.permission.models import (
         SysPermission, SysRole, SysRolePermission, SysUserRole,
     )
+    from app.modules.file_center.models import SysFile
     from app.modules.message.models import SysNotice, SysUserMessage
     from app.modules.monitor.models import SysScheduledTask, SysTaskExecutionLog
     from app.modules.tenant.models import SysTenant
@@ -42,6 +43,7 @@ async def init_data(reset: bool = False) -> None:
             logger.info("reset_mode", msg="进入重置模式，清理现有数据")
             await db.execute(delete(SysTaskExecutionLog))
             await db.execute(delete(SysScheduledTask))
+            await db.execute(delete(SysFile))
             await db.execute(delete(SysUserMessage))
             await db.execute(delete(SysNotice))
             await db.execute(delete(SysUserRole))
@@ -253,6 +255,19 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "system:dict:menu", "name": "新增字典", "code": "system:dict:create", "perm_type": "button", "sort": 2},
         {"parent_id": 0, "parent_code": "system:dict:menu", "name": "编辑字典", "code": "system:dict:update", "perm_type": "button", "sort": 3},
         {"parent_id": 0, "parent_code": "system:dict:menu", "name": "删除字典", "code": "system:dict:delete", "perm_type": "button", "sort": 4},
+        # 文件中心菜单
+        {
+            "parent_id": 0, "parent_code": "system", "name": "文件中心", "code": "system:file:menu",
+            "perm_type": "menu", "path": "/system/files",
+            "component": "system/file/index", "icon": "FolderOpened", "sort": 150, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "system:file:menu", "name": "查询文件", "code": "system:file:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "system:file:menu", "name": "上传文件", "code": "system:file:upload", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "system:file:menu", "name": "编辑文件", "code": "system:file:update", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "system:file:menu", "name": "下载文件", "code": "system:file:download", "perm_type": "button", "sort": 4},
+        {"parent_id": 0, "parent_code": "system:file:menu", "name": "预览文件", "code": "system:file:preview", "perm_type": "button", "sort": 5},
+        {"parent_id": 0, "parent_code": "system:file:menu", "name": "归档文件", "code": "system:file:archive", "perm_type": "button", "sort": 6},
+        {"parent_id": 0, "parent_code": "system:file:menu", "name": "删除文件", "code": "system:file:delete", "perm_type": "button", "sort": 7},
         # ── 审计日志（根菜单）────────────────────────────────────────
         {
             "parent_id": 0, "name": "审计日志", "code": "audit",
