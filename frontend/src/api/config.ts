@@ -1,16 +1,16 @@
 import { del, get, post, put } from '@/utils/request'
-import type { ApiResponse, ConfigInfo, ConfigPayload } from '@/types'
+import type { ApiResponse, ConfigHistoryInfo, ConfigInfo, ConfigPayload, ConfigScope, PageData } from '@/types'
 
 export const configApi = {
   list: (params: {
-    scope?: string
+    scope?: ConfigScope
     app_key?: string
     category?: string
     keyword?: string
     is_public?: boolean
     is_encrypted?: boolean
-    status?: number
-  }) => get<ApiResponse<ConfigInfo[]>>('/api/v1/config-center', params),
+    status?: 0 | 1 | number
+  }) => get<ApiResponse<ConfigInfo[] | PageData<ConfigInfo>>>('/api/v1/config-center', params),
 
   create: (data: ConfigPayload) =>
     post<ApiResponse<ConfigInfo>>('/api/v1/config-center', data),
@@ -25,7 +25,7 @@ export const configApi = {
     config_key?: string
     page?: number
     page_size?: number
-  }) => get<ApiResponse<unknown>>('/api/v1/config-center/history', params),
+  }) => get<ApiResponse<PageData<ConfigHistoryInfo>>>('/api/v1/config-center/history', params),
 
   publicConfigs: (params: {
     keys?: string[]

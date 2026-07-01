@@ -158,6 +158,18 @@ export interface ConfigPayload {
   user_id?: number | null
 }
 
+export interface ConfigHistoryInfo {
+  id: number
+  config_key: string
+  scope_type: string
+  scope_id?: number | null
+  old_value?: string | null
+  new_value?: string | null
+  changed_by?: number | null
+  changed_at: string
+  remark?: string | null
+}
+
 // ── 用户相关 ────────────────────────────────────────────────────────────────────
 export interface UserInfo {
   id: number

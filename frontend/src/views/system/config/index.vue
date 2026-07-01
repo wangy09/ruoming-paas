@@ -1,50 +1,72 @@
 <template>
   <div class="page-container config-center-page">
-    <el-card class="filter-card" shadow="never">
-      <div class="toolbar">
-        <div class="filters">
-          <el-select v-model="query.scope" placeholder="作用域" clearable class="filter-select" @change="reload">
-            <el-option v-for="item in scopeOptions" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-          <el-input
-            v-model="query.category"
-            placeholder="配置分类"
-            clearable
-            class="filter-select"
-            @keyup.enter="reload"
-            @clear="reload"
-          />
-          <el-input
-            v-model="query.keyword"
-            placeholder="搜索配置键 / 名称 / 描述"
-            clearable
-            class="filter-input"
-            @keyup.enter="reload"
-            @clear="reload"
-          >
-            <template #prefix><el-icon><Search /></el-icon></template>
-          </el-input>
-          <el-select v-model="query.is_public" placeholder="公开" clearable class="filter-select-sm" @change="reload">
-            <el-option label="公开" :value="true" />
-            <el-option label="私有" :value="false" />
-          </el-select>
-          <el-select v-model="query.is_encrypted" placeholder="加密" clearable class="filter-select-sm" @change="reload">
-            <el-option label="加密" :value="true" />
-            <el-option label="明文" :value="false" />
-          </el-select>
-          <el-select v-model="query.status" placeholder="状态" clearable class="filter-select-sm" @change="reload">
-            <el-option label="启用" :value="1" />
-            <el-option label="停用" :value="0" />
-          </el-select>
-          <el-button :icon="Search" type="primary" @click="reload">查询</el-button>
-          <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
+    <div class="config-layout">
+      <el-card class="category-card" shadow="never">
+        <div class="category-title">配置分类</div>
+        <div
+          v-for="item in categoryOptions"
+          :key="item.value"
+          class="category-item"
+          :class="{ active: activeCategory === item.value }"
+          @click="selectCategory(item.value)"
+        >
+          <div>
+            <div class="category-name">{{ item.label }}</div>
+            <div class="category-desc">{{ item.description }}</div>
+          </div>
+          <el-tag size="small" effect="plain">{{ categoryCount(item.value) }}</el-tag>
         </div>
-        <el-button type="primary" :icon="Plus" v-permission="'config:create'" @click="openCreate">新增配置</el-button>
-      </div>
-    </el-card>
+      </el-card>
 
-    <el-card shadow="never">
-      <el-table v-loading="loading" :data="pagedTableData" border stripe>
+      <div class="config-main">
+        <el-card class="filter-card" shadow="never">
+          <div class="category-header">
+            <div>
+              <div class="category-header-title">{{ activeCategoryInfo.label }}</div>
+              <div class="category-header-desc">{{ activeCategoryInfo.description }}</div>
+            </div>
+            <div class="category-stats">
+              <el-statistic title="配置数" :value="tableData.length" />
+              <el-statistic title="公开配置" :value="publicCount" />
+              <el-statistic title="加密配置" :value="encryptedCount" />
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="filters">
+              <el-select v-model="query.scope" placeholder="作用域" clearable class="filter-select" @change="reload">
+                <el-option v-for="item in scopeOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+              <el-input
+                v-model="query.keyword"
+                placeholder="搜索配置键 / 名称 / 描述"
+                clearable
+                class="filter-input"
+                @keyup.enter="reload"
+                @clear="reload"
+              >
+                <template #prefix><el-icon><Search /></el-icon></template>
+              </el-input>
+              <el-select v-model="query.is_public" placeholder="公开" clearable class="filter-select-sm" @change="reload">
+                <el-option label="公开" :value="true" />
+                <el-option label="私有" :value="false" />
+              </el-select>
+              <el-select v-model="query.is_encrypted" placeholder="加密" clearable class="filter-select-sm" @change="reload">
+                <el-option label="加密" :value="true" />
+                <el-option label="明文" :value="false" />
+              </el-select>
+              <el-select v-model="query.status" placeholder="状态" clearable class="filter-select-sm" @change="reload">
+                <el-option label="启用" :value="1" />
+                <el-option label="停用" :value="0" />
+              </el-select>
+              <el-button :icon="Search" type="primary" @click="reload">查询</el-button>
+              <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
+            </div>
+            <el-button type="primary" :icon="Plus" v-permission="'config:create'" @click="openCreate">新增配置</el-button>
+          </div>
+        </el-card>
+
+        <el-card shadow="never">
+          <el-table v-loading="loading" :data="pagedTableData" border stripe>
         <el-table-column label="配置项" min-width="260" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="config-key-cell">
@@ -97,9 +119,11 @@
             <span>{{ ownerText(toConfigRow(row)) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" align="center" fixed="right">
+        <el-table-column label="操作" width="230" align="center" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" v-permission="'config:update'" @click="openEdit(toConfigRow(row))">编辑</el-button>
+            <el-button link type="primary" @click="openHistory(toConfigRow(row))">历史</el-button>
+            <el-button link type="warning" v-permission="'config:update'" @click="restoreDefault(toConfigRow(row))">恢复默认</el-button>
             <el-button link type="danger" v-permission="'config:delete'" @click="handleDelete(toConfigRow(row))">删除</el-button>
           </template>
         </el-table-column>
@@ -114,7 +138,9 @@
         class="pagination"
         @size-change="handlePageSizeChange"
       />
-    </el-card>
+        </el-card>
+      </div>
+    </div>
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="920px" destroy-on-close>
       <el-alert
@@ -257,6 +283,15 @@
             :rows="5"
             :placeholder="configValuePlaceholder"
           />
+          <el-input-number
+            v-else-if="form.config_type === 'number'"
+            :model-value="numberConfigValue"
+            :min="form.min_value"
+            :max="form.max_value"
+            :precision="form.val_type === 'int' ? 0 : undefined"
+            class="w-full"
+            @update:model-value="handleNumberConfigValueChange"
+          />
           <el-input
             v-else
             v-model="form.config_val"
@@ -316,6 +351,31 @@
         <el-button type="primary" :loading="submitting" @click="submitForm">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="historyVisible" title="配置变更历史" width="820px">
+      <div class="history-title">
+        <span>{{ historyConfigKey }}</span>
+        <el-button :icon="Refresh" :loading="historyLoading" @click="loadHistory">刷新</el-button>
+      </div>
+      <el-table v-loading="historyLoading" :data="historyRows" border stripe>
+        <el-table-column prop="changed_at" label="变更时间" width="180" show-overflow-tooltip />
+        <el-table-column prop="old_value" label="旧值" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="new_value" label="新值" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="changed_by" label="操作人ID" width="100" align="center">
+          <template #default="{ row }">{{ row.changed_by || '-' }}</template>
+        </el-table-column>
+      </el-table>
+      <el-pagination
+        v-model:current-page="historyPage"
+        v-model:page-size="historyPageSize"
+        :total="historyTotal"
+        :page-sizes="[10, 20, 50]"
+        layout="total, sizes, prev, pager, next"
+        class="pagination"
+        @current-change="loadHistory"
+        @size-change="handleHistoryPageSizeChange"
+      />
+    </el-dialog>
   </div>
 </template>
 
@@ -324,7 +384,15 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { configApi } from '@/api/config'
-import type { ConfigFormType, ConfigInfo, ConfigOption, ConfigPayload, ConfigScope, ConfigValueType } from '@/types'
+import type {
+  ConfigFormType,
+  ConfigHistoryInfo,
+  ConfigInfo,
+  ConfigOption,
+  ConfigPayload,
+  ConfigScope,
+  ConfigValueType,
+} from '@/types'
 
 interface ConfigFormState {
   scope: ConfigScope
@@ -374,15 +442,36 @@ const formTypeOptions: Array<{ label: string; value: ConfigFormType }> = [
   { label: '数字输入', value: 'number' },
 ]
 
+const categoryOptions = [
+  { label: '全部配置', value: '', description: '查看当前作用域下全部配置' },
+  { label: '站点配置', value: 'site', description: '系统名称、Logo、登录页文案' },
+  { label: '界面配置', value: 'ui', description: '主题色、水印等前端公开配置' },
+  { label: '文件配置', value: 'file', description: '上传大小、扩展名白名单' },
+  { label: '登录安全', value: 'auth', description: '失败锁定、密码和验证码策略' },
+  { label: 'AI 配置', value: 'ai', description: '模型默认参数、调用默认值' },
+  { label: '消息配置', value: 'message', description: '消息提醒和公告行为' },
+  { label: '任务配置', value: 'task', description: '计划任务和执行日志策略' },
+  { label: '审计配置', value: 'audit', description: '操作日志保留和审计策略' },
+  { label: '监控配置', value: 'monitor', description: '监控刷新和采集策略' },
+]
+
 const loading = ref(false)
 const submitting = ref(false)
 const tableData = ref<ConfigInfo[]>([])
+const categoryData = ref<ConfigInfo[]>([])
 const page = ref(1)
 const pageSize = ref(10)
+const activeCategory = ref('')
+const historyVisible = ref(false)
+const historyLoading = ref(false)
+const historyConfigKey = ref('')
+const historyRows = ref<ConfigHistoryInfo[]>([])
+const historyTotal = ref(0)
+const historyPage = ref(1)
+const historyPageSize = ref(10)
 
 const query = reactive({
   scope: 'global' as ConfigScope | undefined,
-  category: '',
   keyword: '',
   is_public: undefined as boolean | undefined,
   is_encrypted: undefined as boolean | undefined,
@@ -415,6 +504,16 @@ const pagedTableData = computed(() => {
 const showNumberLimit = computed(() => ['int', 'number'].includes(form.val_type) || form.config_type === 'number')
 const isMultiLineValue = computed(() => form.config_type === 'textarea' || form.config_type === 'json' || form.val_type === 'json')
 const isEncryptedEdit = computed(() => Boolean(editId.value && editingRow.value?.is_encrypted))
+const activeCategoryInfo = computed(() => (
+  categoryOptions.find((item) => item.value === activeCategory.value) ?? categoryOptions[0]
+))
+const publicCount = computed(() => tableData.value.filter((item) => item.is_public).length)
+const encryptedCount = computed(() => tableData.value.filter((item) => item.is_encrypted).length)
+const numberConfigValue = computed(() => {
+  if (!form.config_val) return undefined
+  const value = Number(form.config_val)
+  return Number.isFinite(value) ? value : undefined
+})
 
 const configValuePlaceholder = computed(() => {
   if (isEncryptedEdit.value) return '留空不覆盖原密文'
@@ -430,16 +529,25 @@ const parsedSelectOptions = computed<ConfigOption[]>(() => {
 async function reload() {
   loading.value = true
   try {
-    const res = await configApi.list({
-      scope: query.scope,
-      category: query.category || undefined,
-      keyword: query.keyword || undefined,
-      is_public: query.is_public,
-      is_encrypted: query.is_encrypted,
-      status: query.status,
-    })
+    const [res, categoryRes] = await Promise.all([
+      configApi.list({
+        scope: query.scope,
+        category: activeCategory.value || undefined,
+        keyword: query.keyword || undefined,
+        is_public: query.is_public,
+        is_encrypted: query.is_encrypted,
+        status: query.status,
+      }),
+      configApi.list({
+        scope: query.scope,
+        is_public: query.is_public,
+        is_encrypted: query.is_encrypted,
+        status: query.status,
+      }),
+    ])
     // Axios 拦截器已返回业务响应对象，因此这里只读取 res.data
     tableData.value = normalizeListData(res.data)
+    categoryData.value = normalizeListData(categoryRes.data)
     page.value = 1
   } finally {
     loading.value = false
@@ -448,11 +556,20 @@ async function reload() {
 
 function resetQuery() {
   query.scope = 'global'
-  query.category = ''
   query.keyword = ''
   query.is_public = undefined
   query.is_encrypted = undefined
   query.status = undefined
+  reload()
+}
+
+function handleNumberConfigValueChange(value: number | undefined) {
+  form.config_val = value === undefined ? '' : String(value)
+}
+
+function selectCategory(category: string) {
+  activeCategory.value = category
+  page.value = 1
   reload()
 }
 
@@ -464,6 +581,7 @@ function openCreate() {
   editId.value = null
   editingRow.value = null
   Object.assign(form, createDefaultForm())
+  form.category = activeCategory.value
   dialogVisible.value = true
 }
 
@@ -527,6 +645,49 @@ async function handleDelete(row: ConfigInfo) {
   await configApi.remove(row.id)
   ElMessage.success('删除成功')
   reload()
+}
+
+async function restoreDefault(row: ConfigInfo) {
+  if (!row.default_value) {
+    ElMessage.warning('该配置没有设置默认值')
+    return
+  }
+  await ElMessageBox.confirm(`确定将「${row.config_key}」恢复为默认值？`, '恢复默认值', {
+    type: 'warning',
+    confirmButtonText: '恢复',
+    cancelButtonText: '取消',
+  })
+  await configApi.update(row.id, { config_val: row.default_value })
+  ElMessage.success('已恢复默认值')
+  reload()
+}
+
+async function openHistory(row: ConfigInfo) {
+  historyConfigKey.value = row.config_key
+  historyPage.value = 1
+  historyVisible.value = true
+  await loadHistory()
+}
+
+async function loadHistory() {
+  if (!historyConfigKey.value) return
+  historyLoading.value = true
+  try {
+    const res = await configApi.history({
+      config_key: historyConfigKey.value,
+      page: historyPage.value,
+      page_size: historyPageSize.value,
+    })
+    historyRows.value = res.data?.items ?? []
+    historyTotal.value = res.data?.total ?? 0
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+function handleHistoryPageSizeChange() {
+  historyPage.value = 1
+  loadHistory()
 }
 
 function createDefaultForm(): ConfigFormState {
@@ -606,6 +767,9 @@ function parseOptionsText(value: string, throwError: boolean) {
         value: item.value,
       })).filter((item) => item.label && item.value !== undefined)
     }
+    if (form.config_type === 'select') {
+      throw new Error('下拉框选项必须是 JSON 数组')
+    }
     if (parsed && typeof parsed === 'object') return parsed
     throw new Error('选项配置必须是 JSON 数组或对象')
   } catch (error) {
@@ -646,6 +810,25 @@ function validateConfigValue(_rule: unknown, value: string, callback: (error?: E
       return
     }
   }
+  if (['int', 'number'].includes(form.val_type) && !empty) {
+    const num = Number(value)
+    if (!Number.isFinite(num)) {
+      callback(new Error('请输入合法数字'))
+      return
+    }
+    if (form.val_type === 'int' && !Number.isInteger(num)) {
+      callback(new Error('请输入整数'))
+      return
+    }
+    if (form.min_value !== undefined && num < form.min_value) {
+      callback(new Error('配置值不能小于最小值'))
+      return
+    }
+    if (form.max_value !== undefined && num > form.max_value) {
+      callback(new Error('配置值不能大于最大值'))
+      return
+    }
+  }
   if (form.scope === 'app' && !form.app_key.trim()) {
     callback(new Error('应用作用域必须填写应用标识'))
     return
@@ -662,7 +845,7 @@ function validateConfigValue(_rule: unknown, value: string, callback: (error?: E
 }
 
 function handleScopeChange() {
-  if (form.scope !== 'app') form.app_key = ''
+  if (form.scope !== 'app' && form.scope !== 'user') form.app_key = ''
   if (form.scope !== 'user') form.user_id = undefined
 }
 
@@ -711,6 +894,11 @@ function ownerText(row: ConfigInfo) {
   return '全局'
 }
 
+function categoryCount(category: string) {
+  if (!category) return categoryData.value.length
+  return categoryData.value.filter((item) => item.category === category).length
+}
+
 function trimToNull(value: string) {
   const text = value.trim()
   return text || null
@@ -726,6 +914,86 @@ onMounted(reload)
   .filter-card {
     margin-bottom: 16px;
   }
+}
+
+.config-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.category-card {
+  position: sticky;
+  top: 16px;
+}
+
+.category-title {
+  margin-bottom: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: $text-primary;
+}
+
+.category-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+
+  &:hover,
+  &.active {
+    background: rgba(64, 158, 255, 0.1);
+  }
+
+  &.active .category-name {
+    color: var(--el-color-primary);
+  }
+}
+
+.category-name {
+  font-weight: 600;
+  color: $text-primary;
+}
+
+.category-desc {
+  margin-top: 4px;
+  color: $text-secondary;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.config-main {
+  min-width: 0;
+}
+
+.category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.category-header-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: $text-primary;
+}
+
+.category-header-desc {
+  margin-top: 4px;
+  color: $text-secondary;
+}
+
+.category-stats {
+  display: flex;
+  gap: 28px;
+  text-align: center;
 }
 
 .toolbar {
@@ -789,7 +1057,25 @@ onMounted(reload)
   margin-bottom: 16px;
 }
 
+.history-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
 .w-full {
   width: 100%;
+}
+
+@media (max-width: 1200px) {
+  .config-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .category-card {
+    position: static;
+  }
 }
 </style>
