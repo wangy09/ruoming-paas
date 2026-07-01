@@ -166,8 +166,16 @@ export interface ConfigHistoryInfo {
   old_value?: string | null
   new_value?: string | null
   changed_by?: number | null
+  changed_by_name?: string | null
   changed_at: string
   remark?: string | null
+}
+
+export interface ConfigImportResult {
+  created: number
+  updated: number
+  skipped: number
+  errors: string[]
 }
 
 // ── 用户相关 ────────────────────────────────────────────────────────────────────

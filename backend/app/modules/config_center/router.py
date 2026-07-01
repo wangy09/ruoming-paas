@@ -11,7 +11,16 @@ from app.core.response import ok, paged
 from app.database import get_db
 from app.modules.config_center.models import SysConfig
 from app.modules.user.models import SysUser
-from app.modules.config_center.schemas import ConfigCreate, ConfigOut, ConfigUpdate, PublicConfigOut
+from app.modules.config_center.schemas import (
+    ConfigCacheClearResult,
+    ConfigCreate,
+    ConfigExportOut,
+    ConfigImportIn,
+    ConfigImportResult,
+    ConfigOut,
+    ConfigUpdate,
+    PublicConfigOut,
+)
 from app.modules.config_center.service import ConfigCenterService
 
 router = APIRouter(prefix="/config-center", tags=["配置中心"])
@@ -89,9 +98,10 @@ async def list_configs(
     current_user: SysUser = Depends(require_permissions("config:list")),
 ):
     svc = ConfigCenterService(db)
+    tenant_id = None if scope == "global" else current_user.tenant_id
     items = await svc.list_by_scope(
         scope=scope,
-        tenant_id=current_user.tenant_id,
+        tenant_id=tenant_id,
         app_key=app_key,
         category=category,
         keyword=keyword,
@@ -102,6 +112,62 @@ async def list_configs(
     return ok(data=[ConfigOut.model_validate(svc.to_output(i)) for i in items])
 
 
+@router.get("/export", summary="导出配置")
+async def export_configs(
+    scope: str = Query("global", description="层级：global/tenant/app/user"),
+    app_key: str | None = Query(None),
+    category: str | None = Query(None),
+    keyword: str | None = Query(None),
+    is_public: bool | None = Query(None),
+    is_encrypted: bool | None = Query(None),
+    status: int | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: SysUser = Depends(require_permissions("config:list")),
+):
+    """导出当前筛选条件下的配置。加密配置不导出明文。"""
+    svc = ConfigCenterService(db)
+    tenant_id = None if scope == "global" else current_user.tenant_id
+    items = await svc.export_items(
+        scope=scope,
+        tenant_id=tenant_id,
+        app_key=app_key,
+        category=category,
+        keyword=keyword,
+        is_public=is_public,
+        is_encrypted=is_encrypted,
+        status=status,
+    )
+    return ok(data=ConfigExportOut(items=[ConfigOut.model_validate(i) for i in items]))
+
+
+@router.post("/import", summary="导入配置")
+async def import_configs(
+    body: ConfigImportIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: SysUser = Depends(require_permissions("config:create", "config:update")),
+):
+    """批量导入配置。默认跳过已存在配置，可选择覆盖。"""
+    svc = ConfigCenterService(db)
+    result = await svc.import_items(
+        [item.model_dump() for item in body.items],
+        overwrite=body.overwrite,
+        tenant_id=current_user.tenant_id,
+        changed_by=current_user.id,
+    )
+    return ok(data=ConfigImportResult(**result))
+
+
+@router.post("/cache/clear", summary="清理配置缓存")
+async def clear_config_cache(
+    db: AsyncSession = Depends(get_db),
+    current_user: SysUser = Depends(require_permissions("config:update")),
+):
+    """清理 config:merged:* 合并配置缓存。"""
+    svc = ConfigCenterService(db)
+    cleared = await svc.clear_merged_cache()
+    return ok(data=ConfigCacheClearResult(cleared=cleared), message="配置缓存已清理")
+
+
 @router.post("", summary="创建配置项")
 async def create_config(
     body: ConfigCreate,
@@ -109,11 +175,12 @@ async def create_config(
     current_user: SysUser = Depends(require_permissions("config:create")),
 ):
     svc = ConfigCenterService(db)
+    tenant_id = None if body.scope == "global" else current_user.tenant_id
     obj = await svc.set(
         config_key=body.config_key,
         config_val=body.config_val or "",
         scope=body.scope,
-        tenant_id=body.scope != "global" and current_user.tenant_id or None,
+        tenant_id=tenant_id,
         app_key=body.app_key,
         user_id=body.user_id,
         val_type=body.val_type,
@@ -150,19 +217,20 @@ async def get_config_history(
     where_clause = "WHERE 1=1"
     params: dict = {"offset": (page - 1) * page_size, "limit": page_size}
     if config_key:
-        where_clause += " AND config_key = :config_key"
+        where_clause += " AND h.config_key = :config_key"
         params["config_key"] = config_key
 
     count_result = await db.execute(
-        text(f"SELECT COUNT(*) FROM sys_config_history {where_clause}"),
+        text(f"SELECT COUNT(*) FROM sys_config_history h {where_clause}"),
         params,
     )
     total = count_result.scalar_one_or_none() or 0
 
     data_result = await db.execute(
         text(
-            f"SELECT * FROM sys_config_history {where_clause} "
-            "ORDER BY changed_at DESC OFFSET :offset LIMIT :limit"
+            "SELECT h.*, COALESCE(u.nickname, u.username) AS changed_by_name "
+            f"FROM sys_config_history h LEFT JOIN sys_user u ON u.id = h.changed_by {where_clause} "
+            "ORDER BY h.changed_at DESC OFFSET :offset LIMIT :limit"
         ),
         params,
     )
@@ -240,5 +308,6 @@ async def delete_config(
         tenant_id=obj.tenant_id,
         app_key=obj.app_key,
         user_id=obj.user_id,
+        changed_by=current_user.id,
     )
     return ok(message="删除成功")

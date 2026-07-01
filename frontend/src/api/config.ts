@@ -1,5 +1,13 @@
 import { del, get, post, put } from '@/utils/request'
-import type { ApiResponse, ConfigHistoryInfo, ConfigInfo, ConfigPayload, ConfigScope, PageData } from '@/types'
+import type {
+  ApiResponse,
+  ConfigHistoryInfo,
+  ConfigImportResult,
+  ConfigInfo,
+  ConfigPayload,
+  ConfigScope,
+  PageData,
+} from '@/types'
 
 export const configApi = {
   list: (params: {
@@ -26,6 +34,24 @@ export const configApi = {
     page?: number
     page_size?: number
   }) => get<ApiResponse<PageData<ConfigHistoryInfo>>>('/api/v1/config-center/history', params),
+
+  exportConfigs: (params: {
+    scope?: ConfigScope
+    app_key?: string
+    category?: string
+    keyword?: string
+    is_public?: boolean
+    is_encrypted?: boolean
+    status?: 0 | 1 | number
+  }) => get<ApiResponse<{ version: string; items: ConfigInfo[] }>>('/api/v1/config-center/export', params),
+
+  importConfigs: (data: {
+    items: ConfigPayload[]
+    overwrite: boolean
+  }) => post<ApiResponse<ConfigImportResult>>('/api/v1/config-center/import', data),
+
+  clearCache: () =>
+    post<ApiResponse<{ cleared: number }>>('/api/v1/config-center/cache/clear'),
 
   publicConfigs: (params: {
     keys?: string[]

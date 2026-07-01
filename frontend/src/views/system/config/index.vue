@@ -61,7 +61,13 @@
               <el-button :icon="Search" type="primary" @click="reload">查询</el-button>
               <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
             </div>
-            <el-button type="primary" :icon="Plus" v-permission="'config:create'" @click="openCreate">新增配置</el-button>
+            <div class="actions">
+              <el-button v-permission="'config:list'" :loading="exporting" @click="handleExport">导出</el-button>
+              <el-button v-permission="'config:create'" :loading="importing" @click="triggerImport">导入</el-button>
+              <el-button v-permission="'config:update'" :loading="cacheClearing" @click="clearCache">清缓存</el-button>
+              <el-button type="primary" :icon="Plus" v-permission="'config:create'" @click="openCreate">新增配置</el-button>
+              <input ref="importInputRef" type="file" accept="application/json,.json" class="hidden-file-input" @change="handleImportFileChange" />
+            </div>
           </div>
         </el-card>
 
@@ -358,11 +364,13 @@
         <el-button :icon="Refresh" :loading="historyLoading" @click="loadHistory">刷新</el-button>
       </div>
       <el-table v-loading="historyLoading" :data="historyRows" border stripe>
-        <el-table-column prop="changed_at" label="变更时间" width="180" show-overflow-tooltip />
+        <el-table-column label="变更时间" width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ formatChangedAt(row.changed_at) }}</template>
+        </el-table-column>
         <el-table-column prop="old_value" label="旧值" min-width="180" show-overflow-tooltip />
         <el-table-column prop="new_value" label="新值" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="changed_by" label="操作人ID" width="100" align="center">
-          <template #default="{ row }">{{ row.changed_by || '-' }}</template>
+        <el-table-column label="操作人" width="130" align="center" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.changed_by_name || row.changed_by || '-' }}</template>
         </el-table-column>
       </el-table>
       <el-pagination
@@ -457,6 +465,9 @@ const categoryOptions = [
 
 const loading = ref(false)
 const submitting = ref(false)
+const exporting = ref(false)
+const importing = ref(false)
+const cacheClearing = ref(false)
 const tableData = ref<ConfigInfo[]>([])
 const categoryData = ref<ConfigInfo[]>([])
 const page = ref(1)
@@ -479,6 +490,7 @@ const query = reactive({
 })
 
 const formRef = ref<FormInstance>()
+const importInputRef = ref<HTMLInputElement>()
 const dialogVisible = ref(false)
 const editId = ref<number | null>(null)
 const editingRow = ref<ConfigInfo | null>(null)
@@ -561,6 +573,113 @@ function resetQuery() {
   query.is_encrypted = undefined
   query.status = undefined
   reload()
+}
+
+async function handleExport() {
+  exporting.value = true
+  try {
+    const res = await configApi.exportConfigs({
+      scope: query.scope,
+      category: activeCategory.value || undefined,
+      keyword: query.keyword || undefined,
+      is_public: query.is_public,
+      is_encrypted: query.is_encrypted,
+      status: query.status,
+    })
+    const payload = {
+      version: res.data.version,
+      exported_at: new Date().toISOString(),
+      filters: {
+        scope: query.scope,
+        category: activeCategory.value || undefined,
+        keyword: query.keyword || undefined,
+        is_public: query.is_public,
+        is_encrypted: query.is_encrypted,
+        status: query.status,
+      },
+      items: res.data.items,
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `config-center-${query.scope || 'global'}-${formatFileDate(new Date())}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success(`已导出 ${res.data.items.length} 条配置`)
+  } finally {
+    exporting.value = false
+  }
+}
+
+function triggerImport() {
+  importInputRef.value?.click()
+}
+
+async function handleImportFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+
+  importing.value = true
+  try {
+    const text = await file.text()
+    const parsed = JSON.parse(text) as unknown
+    const items = normalizeImportItems(parsed)
+    if (!items.length) {
+      ElMessage.warning('导入文件中没有可用配置项')
+      return
+    }
+
+    let overwrite = false
+    try {
+      await ElMessageBox.confirm(
+        `即将导入 ${items.length} 条配置。是否覆盖已存在配置？`,
+        '导入配置',
+        {
+          type: 'warning',
+          confirmButtonText: '覆盖已有',
+          cancelButtonText: '跳过已有',
+          distinguishCancelAndClose: true,
+        },
+      )
+      overwrite = true
+    } catch (action) {
+      if (action === 'close') return
+      overwrite = false
+    }
+
+    const res = await configApi.importConfigs({ items, overwrite })
+    const result = res.data
+    const message = `导入完成：新增 ${result.created}，更新 ${result.updated}，跳过 ${result.skipped}`
+    if (result.errors.length) {
+      ElMessage.warning(`${message}，失败 ${result.errors.length} 条`)
+      console.warn('配置导入失败明细：', result.errors)
+    } else {
+      ElMessage.success(message)
+    }
+    await reload()
+  } catch (error) {
+    ElMessage.error(`导入失败：${getErrorMessage(error)}`)
+  } finally {
+    importing.value = false
+  }
+}
+
+async function clearCache() {
+  await ElMessageBox.confirm('确定清理配置中心运行时缓存？下次读取会重新从数据库加载。', '清理缓存', {
+    type: 'warning',
+    confirmButtonText: '清理',
+    cancelButtonText: '取消',
+  })
+  cacheClearing.value = true
+  try {
+    const res = await configApi.clearCache()
+    ElMessage.success(`已清理 ${res.data.cleared} 个缓存键`)
+  } finally {
+    cacheClearing.value = false
+  }
 }
 
 function handleNumberConfigValueChange(value: number | undefined) {
@@ -754,6 +873,65 @@ function normalizeListData(data: unknown): ConfigInfo[] {
   return []
 }
 
+function normalizeImportItems(parsed: unknown): ConfigPayload[] {
+  const source = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { items?: unknown }).items)
+      ? (parsed as { items: unknown[] }).items
+      : []
+
+  return source
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map((item) => {
+      const payload: ConfigPayload = {
+        scope: normalizeScope(item.scope),
+        config_key: String(item.config_key || '').trim(),
+        config_val: item.config_val === null || item.config_val === undefined ? null : String(item.config_val),
+        val_type: String(item.val_type || 'string'),
+        is_encrypted: Boolean(item.is_encrypted),
+        category: toNullableString(item.category),
+        config_type: String(item.config_type || 'input'),
+        default_value: toNullableString(item.default_value),
+        options: normalizeOptions(item.options),
+        required: Boolean(item.required),
+        regex: toNullableString(item.regex),
+        min_value: toNullableNumber(item.min_value),
+        max_value: toNullableNumber(item.max_value),
+        sort: Number(item.sort || 0),
+        status: item.status === 0 ? 0 : 1,
+        label: toNullableString(item.label),
+        description: toNullableString(item.description),
+        is_public: Boolean(item.is_public),
+        app_key: toNullableString(item.app_key),
+        user_id: toNullableNumber(item.user_id),
+      }
+      return payload
+    })
+    .filter((item) => item.config_key)
+}
+
+function normalizeScope(value: unknown): ConfigScope {
+  return ['global', 'tenant', 'app', 'user'].includes(String(value)) ? String(value) as ConfigScope : 'global'
+}
+
+function normalizeOptions(value: unknown): ConfigPayload['options'] {
+  if (Array.isArray(value)) return value as ConfigPayload['options']
+  if (value && typeof value === 'object') return value as Record<string, unknown>
+  return null
+}
+
+function toNullableString(value: unknown) {
+  if (value === null || value === undefined) return null
+  const text = String(value).trim()
+  return text || null
+}
+
+function toNullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+  const num = Number(value)
+  return Number.isFinite(num) ? num : null
+}
+
 function parseOptionsText(value: string, throwError: true): ConfigPayload['options']
 function parseOptionsText(value: string, throwError: false): ConfigOption[] | Record<string, unknown> | null
 function parseOptionsText(value: string, throwError: boolean) {
@@ -899,9 +1077,44 @@ function categoryCount(category: string) {
   return categoryData.value.filter((item) => item.category === category).length
 }
 
+function formatChangedAt(value?: string | null) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  // 后端返回 ISO UTC 时间，这里按浏览器本地时区展示为 YYYY-MM-DD HH:mm:ss
+  const year = date.getFullYear()
+  const month = padDatePart(date.getMonth() + 1)
+  const day = padDatePart(date.getDate())
+  const hour = padDatePart(date.getHours())
+  const minute = padDatePart(date.getMinutes())
+  const second = padDatePart(date.getSeconds())
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`
+}
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, '0')
+}
+
+function formatFileDate(date: Date) {
+  const year = date.getFullYear()
+  const month = padDatePart(date.getMonth() + 1)
+  const day = padDatePart(date.getDate())
+  const hour = padDatePart(date.getHours())
+  const minute = padDatePart(date.getMinutes())
+  const second = padDatePart(date.getSeconds())
+  return `${year}${month}${day}${hour}${minute}${second}`
+}
+
 function trimToNull(value: string) {
   const text = value.trim()
   return text || null
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  return '未知错误'
 }
 
 onMounted(reload)
@@ -1008,6 +1221,18 @@ onMounted(reload)
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.hidden-file-input {
+  display: none;
 }
 
 .filter-input {

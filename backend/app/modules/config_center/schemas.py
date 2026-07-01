@@ -91,6 +91,35 @@ class PublicConfigOut(BaseModel):
     label: str | None = None
 
 
+class ConfigExportOut(BaseModel):
+    """配置导出输出"""
+
+    version: str = "1.0"
+    items: list[ConfigOut]
+
+
+class ConfigImportIn(BaseModel):
+    """配置导入输入"""
+
+    items: list[ConfigCreate]
+    overwrite: bool = Field(False, description="已存在配置是否覆盖")
+
+
+class ConfigImportResult(BaseModel):
+    """配置导入结果"""
+
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class ConfigCacheClearResult(BaseModel):
+    """配置缓存清理结果"""
+
+    cleared: int
+
+
 class ConfigHistoryOut(BaseModel):
     """配置变更历史输出"""
     model_config = ConfigDict(from_attributes=True)
@@ -102,6 +131,7 @@ class ConfigHistoryOut(BaseModel):
     old_value: str | None
     new_value: str | None
     changed_by: int | None
+    changed_by_name: str | None = None
     changed_at: Any
     remark: str | None
 

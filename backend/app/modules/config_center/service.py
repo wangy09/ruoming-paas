@@ -11,6 +11,7 @@ Author: ruoming
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -45,8 +46,17 @@ CREATE TABLE IF NOT EXISTS sys_config_history (
 """
 
 
-def _cache_key(scope: str, tenant_id: int | None, app_key: str | None, user_id: int | None) -> str:
-    return f"config:{scope}:{tenant_id or 0}:{app_key or ''}:{user_id or 0}"
+def _merged_cache_key(
+    keys: list[str],
+    tenant_id: int | None,
+    app_key: str | None,
+    user_id: int | None,
+    public_only: bool,
+) -> str:
+    key_text = ",".join(sorted(set(keys)))
+    digest = hashlib.sha1(key_text.encode("utf-8")).hexdigest()  # noqa: S324 - cache key only
+    public_flag = 1 if public_only else 0
+    return f"config:merged:{tenant_id or 0}:{app_key or ''}:{user_id or 0}:{public_flag}:{digest}"
 
 
 class ConfigCenterService:
@@ -83,6 +93,21 @@ class ConfigCenterService:
         优先级：user > app > tenant > global
         只返回 keys 中存在的键，找不到的键不出现在结果中。
         """
+        if not keys:
+            return {}
+
+        cached = await self._get_cached_merged(keys, tenant_id, app_key, user_id, public_only)
+        if cached is not None:
+            logger.debug(
+                "config_cache_hit",
+                keys=keys,
+                tenant_id=tenant_id,
+                app_key=app_key,
+                user_id=user_id,
+                public_only=public_only,
+            )
+            return cached
+
         result: dict[str, str] = {}
         remaining = set(keys)
 
@@ -106,6 +131,16 @@ class ConfigCenterService:
                     result[row.config_key] = val
                     remaining.discard(row.config_key)
 
+        await self._set_cached_merged(keys, tenant_id, app_key, user_id, public_only, result)
+        logger.debug(
+            "config_cache_miss",
+            keys=keys,
+            tenant_id=tenant_id,
+            app_key=app_key,
+            user_id=user_id,
+            public_only=public_only,
+            missing=list(remaining),
+        )
         return result
 
     async def get(
@@ -258,6 +293,7 @@ class ConfigCenterService:
         tenant_id: int | None = None,
         app_key: str | None = None,
         user_id: int | None = None,
+        changed_by: int | None = None,
     ) -> bool:
         """删除配置项（软删除）"""
         stmt = self._build_scope_stmt(scope, [config_key], tenant_id, app_key, user_id)
@@ -268,7 +304,115 @@ class ConfigCenterService:
         obj.is_deleted = True
         await self.db.flush()
         await self._invalidate_cache(scope, tenant_id, app_key, user_id)
+        await self._write_history(
+            config_key=config_key,
+            scope_type=scope,
+            scope_id=tenant_id or user_id,
+            old_value="******" if obj.is_encrypted else self._decrypt_if_needed(obj),
+            new_value=None,
+            changed_by=changed_by,
+        )
         return True
+
+    async def export_items(
+        self,
+        *,
+        scope: str = "global",
+        tenant_id: int | None = None,
+        app_key: str | None = None,
+        category: str | None = None,
+        keyword: str | None = None,
+        is_public: bool | None = None,
+        is_encrypted: bool | None = None,
+        status: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """导出配置项。加密配置不导出明文，避免敏感信息泄露。"""
+        rows = await self.list_by_scope(
+            scope=scope,
+            tenant_id=tenant_id,
+            app_key=app_key,
+            category=category,
+            keyword=keyword,
+            is_public=is_public,
+            is_encrypted=is_encrypted,
+            status=status,
+        )
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            data = self.to_output(row)
+            if row.is_encrypted:
+                data["config_val"] = None
+                data["display_val"] = "******" if row.config_val else ""
+            items.append(data)
+        return items
+
+    async def import_items(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        overwrite: bool,
+        tenant_id: int | None,
+        changed_by: int | None,
+    ) -> dict[str, Any]:
+        """批量导入配置项。返回创建、更新、跳过和错误明细。"""
+        result = {"created": 0, "updated": 0, "skipped": 0, "errors": []}
+
+        for index, item in enumerate(items, start=1):
+            config_key = str(item.get("config_key") or "").strip()
+            scope = str(item.get("scope") or "global")
+            if not config_key:
+                result["errors"].append(f"第 {index} 条缺少配置键")
+                result["skipped"] += 1
+                continue
+
+            target_tenant_id = None if scope == "global" else tenant_id
+            app_key = item.get("app_key")
+            user_id = item.get("user_id")
+            stmt = self._build_scope_stmt(scope, [config_key], target_tenant_id, app_key, user_id)
+            existing = (await self.db.execute(stmt)).scalar_one_or_none()
+            if existing and not overwrite:
+                result["skipped"] += 1
+                continue
+
+            is_encrypted = bool(item.get("is_encrypted", False))
+            config_val = item.get("config_val")
+            if is_encrypted and not config_val and not existing:
+                result["errors"].append(f"第 {index} 条「{config_key}」为加密配置且没有明文值，已跳过")
+                result["skipped"] += 1
+                continue
+
+            try:
+                await self.set(
+                    config_key=config_key,
+                    config_val=str(config_val or ""),
+                    scope=scope,
+                    tenant_id=target_tenant_id,
+                    app_key=app_key,
+                    user_id=user_id,
+                    val_type=str(item.get("val_type") or "string"),
+                    is_encrypted=is_encrypted,
+                    category=item.get("category"),
+                    config_type=str(item.get("config_type") or "input"),
+                    default_value=item.get("default_value"),
+                    options=item.get("options"),
+                    required=bool(item.get("required", False)),
+                    regex=item.get("regex"),
+                    min_value=item.get("min_value"),
+                    max_value=item.get("max_value"),
+                    sort=int(item.get("sort") or 0),
+                    status=int(item.get("status") if item.get("status") is not None else 1),
+                    label=item.get("label"),
+                    description=item.get("description"),
+                    is_public=bool(item.get("is_public", False)),
+                    changed_by=changed_by,
+                    keep_encrypted_value=bool(existing and is_encrypted and not config_val),
+                )
+                result["updated" if existing else "created"] += 1
+            except Exception as exc:
+                result["errors"].append(f"第 {index} 条「{config_key}」导入失败：{exc}")
+                result["skipped"] += 1
+
+        return result
 
     async def list_by_scope(
         self,
@@ -470,11 +614,63 @@ class ConfigCenterService:
     ) -> None:
         """失效 Redis 缓存（非阻塞）"""
         try:
-            redis = await get_redis_client()
-            key = _cache_key(scope, tenant_id, app_key, user_id)
-            await redis.delete(key)
+            count = await self.clear_merged_cache()
+            logger.debug(
+                "config_cache_invalidated",
+                scope=scope,
+                tenant_id=tenant_id,
+                app_key=app_key,
+                user_id=user_id,
+                count=count,
+            )
         except Exception as e:
             logger.warning("config_cache_invalidate_failed", error=str(e))
+
+    async def clear_merged_cache(self) -> int:
+        """清理合并配置缓存，返回删除的 key 数量。"""
+        redis = await get_redis_client()
+        keys: list[str] = []
+        async for key in redis.scan_iter("config:merged:*", count=100):
+            keys.append(key)
+        if keys:
+            await redis.delete(*keys)
+        return len(keys)
+
+    async def _get_cached_merged(
+        self,
+        keys: list[str],
+        tenant_id: int | None,
+        app_key: str | None,
+        user_id: int | None,
+        public_only: bool,
+    ) -> dict[str, str] | None:
+        try:
+            redis = await get_redis_client()
+            cache_key = _merged_cache_key(keys, tenant_id, app_key, user_id, public_only)
+            raw = await redis.get(cache_key)
+            if not raw:
+                return None
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception as e:
+            logger.debug("config_cache_read_failed", error=str(e))
+            return None
+
+    async def _set_cached_merged(
+        self,
+        keys: list[str],
+        tenant_id: int | None,
+        app_key: str | None,
+        user_id: int | None,
+        public_only: bool,
+        value: dict[str, str],
+    ) -> None:
+        try:
+            redis = await get_redis_client()
+            cache_key = _merged_cache_key(keys, tenant_id, app_key, user_id, public_only)
+            await redis.setex(cache_key, _CACHE_TTL, json.dumps(value, ensure_ascii=False))
+        except Exception as e:
+            logger.debug("config_cache_write_failed", error=str(e))
 
     async def _write_history(
         self,
