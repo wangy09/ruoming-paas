@@ -80,7 +80,9 @@ export function setupRouterGuard(router: Router) {
         name: typeof to.name === 'string' ? to.name : undefined,
         affix: Boolean(to.meta.affix),
       })
-      appStore.addCachedView(typeof to.name === 'string' ? to.name : undefined)
+      if (to.meta.isCache === true) {
+        appStore.addCachedView(typeof to.name === 'string' ? to.name : undefined)
+      }
     }
 
     // 检查路由是否存在

@@ -247,7 +247,7 @@ function handleResetLayout() {
 
 function handleClearPageCache() {
   appStore.clearPageCache()
-  ElMessage.success('页面缓存和标签页已清理')
+  ElMessage.success('页面缓存已清理')
 }
 
 async function handleClearPreferenceCache() {

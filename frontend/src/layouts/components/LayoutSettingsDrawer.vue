@@ -110,7 +110,7 @@
           </el-button>
         </div>
         <div class="setting-tip">
-          仅清理标签页、页面缓存、布局和主题偏好，不会退出登录。
+          清理前端偏好会重置标签页、页面缓存、布局和主题偏好，不会退出登录。
         </div>
       </section>
     </div>
@@ -178,7 +178,7 @@ function handleResetLayout() {
 
 function handleClearPageCache() {
   appStore.clearPageCache()
-  ElMessage.success('页面缓存和标签页已清理')
+  ElMessage.success('页面缓存已清理')
 }
 
 async function handleClearPreferenceCache() {

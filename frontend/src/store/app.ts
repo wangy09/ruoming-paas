@@ -298,6 +298,11 @@ export const useAppStore = defineStore('app', () => {
 
   function clearPageCache() {
     cachedViews.value = []
+    saveCachedViews()
+  }
+
+  function clearTabs() {
+    cachedViews.value = []
     visitedViews.value = []
     saveCachedViews()
     saveVisitedViews()
@@ -309,7 +314,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function clearPreferenceCache() {
-    clearPageCache()
+    clearTabs()
     resetLayoutSettings()
     resetVisualSettings()
     localStorage.removeItem('primary_color')
@@ -367,6 +372,7 @@ export const useAppStore = defineStore('app', () => {
     primaryColor,
     setPrimaryColor,
     clearPageCache,
+    clearTabs,
     clearPreferenceCache,
     appTitle,
     loginSubtitle,
