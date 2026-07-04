@@ -178,6 +178,62 @@ export interface ConfigImportResult {
   errors: string[]
 }
 
+// ── 集成中心 ────────────────────────────────────────────────────────────────────
+export type IntegrationProviderCode = 'feishu' | 'dingtalk' | 'wecom' | 'custom'
+export type IntegrationCapabilityCode = 'bot_message' | 'oauth' | 'contact_sync' | 'event_callback'
+export type IntegrationTestStatus = 'success' | 'failed'
+
+export interface ProviderInfo {
+  code: IntegrationProviderCode
+  name: string
+  capabilities: IntegrationCapabilityCode[]
+  required_secret_fields: string[]
+  optional_secret_fields: string[]
+  config_fields: string[]
+}
+
+export interface IntegrationConnection {
+  id: number
+  provider: IntegrationProviderCode
+  provider_name: string
+  name: string
+  enabled: boolean
+  is_default: boolean
+  capabilities: IntegrationCapabilityCode[]
+  config: Record<string, unknown>
+  secret_configured: boolean
+  status: 0 | 1 | number
+  last_test_status?: IntegrationTestStatus | null
+  last_test_message?: string | null
+  sort: number
+  tenant_id?: number | null
+}
+
+export interface IntegrationConnectionCreate {
+  provider: IntegrationProviderCode
+  name: string
+  enabled: boolean
+  is_default: boolean
+  capabilities: IntegrationCapabilityCode[]
+  config: Record<string, unknown>
+  secret_config: Record<string, string>
+  sort: number
+}
+
+export type IntegrationConnectionUpdate = Partial<Omit<IntegrationConnectionCreate, 'provider'>>
+
+export interface IntegrationConnectionQuery {
+  provider?: string
+  enabled?: boolean
+}
+
+export interface IntegrationTestResult {
+  success: boolean
+  provider: string
+  message: string
+  details: Record<string, unknown>
+}
+
 // ── 用户相关 ────────────────────────────────────────────────────────────────────
 export interface UserInfo {
   id: number

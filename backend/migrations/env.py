@@ -58,6 +58,7 @@ from app.modules.permission.models import (  # noqa: F401
 from app.modules.organization.models import SysDept  # noqa: F401
 from app.modules.audit.models import SysAuditLog, SysLoginLog, SysSecurityEvent  # noqa: F401
 from app.modules.config_center.models import SysConfig  # noqa: F401
+from app.modules.integration.models import SysIntegrationConnection  # noqa: F401
 
 # M4 AI 模型（Alembic autogenerate 需要导入所有 ORM 模型）
 from app.ai.llm.models import AiModelConfig  # noqa: F401

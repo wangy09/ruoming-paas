@@ -38,9 +38,12 @@ async def init_data(reset: bool = False) -> None:
         )
         if existing.scalar_one_or_none() and not reset:
             await ensure_dashboard_menu(db)
+            await ensure_integration_menu(db)
+            await ensure_navigation_menus(db)
             await init_runtime_configs(db, settings)
+            await clear_permission_cache()
             await db.commit()
-            logger.info("already_initialized", msg="种子数据已存在，已补齐工作台菜单和运行时配置")
+            logger.info("already_initialized", msg="种子数据已存在，已整理导航菜单并补齐运行时配置")
             return
 
         if reset:
@@ -172,6 +175,7 @@ async def init_data(reset: bool = False) -> None:
             remark="计划任务测试用例",
         ))
         await db.flush()
+        await clear_permission_cache()
 
         await db.commit()
         logger.info(
@@ -199,17 +203,13 @@ def _get_default_permissions() -> list[dict]:
             "component": "dashboard/index", "icon": "Odometer", "sort": 0,
             "is_visible": True, "is_cache": True,
         },
-        # ── 系统管理（根菜单）────────────────────────────────────────
-        {
-            "parent_id": 0, "name": "系统管理", "code": "system",
-            "perm_type": "menu", "path": "/system", "component": "",
-            "icon": "Setting", "sort": 100, "is_visible": True,
-        },
+        # ── 基础管理分组（根菜单）────────────────────────────────────
+        *_get_navigation_root_permissions(),
         # 部门管理菜单
         {
-            "parent_id": 0, "parent_code": "system", "name": "部门管理", "code": "system:dept:menu",
+            "parent_id": 0, "parent_code": "org", "name": "部门管理", "code": "system:dept:menu",
             "perm_type": "menu", "path": "/system/depts",
-            "component": "system/dept/index", "icon": "Grid", "sort": 105, "is_visible": True,
+            "component": "system/dept/index", "icon": "Grid", "sort": 20, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "system:dept:menu", "name": "查询部门", "code": "system:dept:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "system:dept:menu", "name": "新增部门", "code": "system:dept:create", "perm_type": "button", "sort": 2},
@@ -217,9 +217,9 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "system:dept:menu", "name": "删除部门", "code": "system:dept:delete", "perm_type": "button", "sort": 4},
         # 用户管理菜单
         {
-            "parent_id": 0, "parent_code": "system", "name": "用户管理", "code": "system:user:menu",
+            "parent_id": 0, "parent_code": "org", "name": "用户管理", "code": "system:user:menu",
             "perm_type": "menu", "path": "/system/users",
-            "component": "system/user/index", "icon": "User", "sort": 110, "is_visible": True,
+            "component": "system/user/index", "icon": "User", "sort": 10, "is_visible": True,
         },
         # 用户按钮权限
         {"parent_id": 0, "parent_code": "system:user:menu", "name": "查询用户", "code": "system:user:view", "perm_type": "button", "sort": 1},
@@ -236,9 +236,9 @@ def _get_default_permissions() -> list[dict]:
          "perm_type": "column", "resource": "user_list", "sort": 2},
         # 角色管理菜单
         {
-            "parent_id": 0, "parent_code": "system", "name": "角色管理", "code": "system:role:menu",
+            "parent_id": 0, "parent_code": "authz", "name": "角色管理", "code": "system:role:menu",
             "perm_type": "menu", "path": "/system/roles",
-            "component": "system/role/index", "icon": "UserFilled", "sort": 120, "is_visible": True,
+            "component": "system/role/index", "icon": "UserFilled", "sort": 20, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "system:role:menu", "name": "查询角色", "code": "system:role:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "system:role:menu", "name": "新增角色", "code": "system:role:create", "perm_type": "button", "sort": 2},
@@ -247,17 +247,17 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "system:role:menu", "name": "分配权限", "code": "system:role:assign_perm", "perm_type": "button", "sort": 5},
         # 角色授权菜单（独立页面）
         {
-            "parent_id": 0, "parent_code": "system", "name": "角色授权", "code": "system:role_permission:menu",
+            "parent_id": 0, "parent_code": "authz", "name": "角色授权", "code": "system:role_permission:menu",
             "perm_type": "menu", "path": "/system/role-permission",
-            "component": "system/role-permission/index", "icon": "Key", "sort": 125, "is_visible": True,
+            "component": "system/role-permission/index", "icon": "Key", "sort": 10, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "system:role_permission:menu", "name": "查看授权", "code": "system:role_permission:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "system:role_permission:menu", "name": "保存授权", "code": "system:role_permission:save", "perm_type": "button", "sort": 2},
         # 菜单管理（权限管理页面）
         {
-            "parent_id": 0, "parent_code": "system", "name": "菜单管理", "code": "system:permission:menu",
+            "parent_id": 0, "parent_code": "authz", "name": "菜单管理", "code": "system:permission:menu",
             "perm_type": "menu", "path": "/system/permissions",
-            "component": "system/permission/index", "icon": "Lock", "sort": 130, "is_visible": True,
+            "component": "system/permission/index", "icon": "Lock", "sort": 30, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "system:permission:menu", "name": "查询菜单", "code": "system:permission:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "system:permission:menu", "name": "新增菜单", "code": "system:permission:create", "perm_type": "button", "sort": 2},
@@ -265,9 +265,9 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "system:permission:menu", "name": "删除菜单", "code": "system:permission:delete", "perm_type": "button", "sort": 4},
         # ── 字典管理（子菜单）────────────────────────────────────────
         {
-            "parent_id": 0, "parent_code": "system", "name": "字典管理", "code": "system:dict:menu",
+            "parent_id": 0, "parent_code": "platform_config", "name": "字典管理", "code": "system:dict:menu",
             "perm_type": "menu", "path": "/system/dicts",
-            "component": "system/dict/index", "icon": "Reading", "sort": 140, "is_visible": True,
+            "component": "system/dict/index", "icon": "Reading", "sort": 20, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "system:dict:menu", "name": "查询字典", "code": "system:dict:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "system:dict:menu", "name": "新增字典", "code": "system:dict:create", "perm_type": "button", "sort": 2},
@@ -275,19 +275,27 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "system:dict:menu", "name": "删除字典", "code": "system:dict:delete", "perm_type": "button", "sort": 4},
         # 配置中心菜单
         {
-            "parent_id": 0, "parent_code": "system", "name": "配置中心", "code": "system:config:menu",
+            "parent_id": 0, "parent_code": "platform_config", "name": "配置中心", "code": "system:config:menu",
             "perm_type": "menu", "path": "/system/config",
-            "component": "system/config/index", "icon": "Tools", "sort": 145, "is_visible": True,
+            "component": "system/config/index", "icon": "Tools", "sort": 10, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "system:config:menu", "name": "查询配置", "code": "config:list", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "system:config:menu", "name": "新增配置", "code": "config:create", "perm_type": "button", "sort": 2},
         {"parent_id": 0, "parent_code": "system:config:menu", "name": "编辑配置", "code": "config:update", "perm_type": "button", "sort": 3},
         {"parent_id": 0, "parent_code": "system:config:menu", "name": "删除配置", "code": "config:delete", "perm_type": "button", "sort": 4},
+        # 集成中心菜单
+        {
+            "parent_id": 0, "parent_code": "resource_integration", "name": "集成中心", "code": "system:integration:menu",
+            "perm_type": "menu", "path": "/system/integrations",
+            "component": "system/integration/index", "icon": "Connection", "sort": 20, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "system:integration:menu", "name": "查看集成", "code": "integration:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "system:integration:menu", "name": "管理集成", "code": "integration:manage", "perm_type": "button", "sort": 2},
         # 文件中心菜单
         {
-            "parent_id": 0, "parent_code": "system", "name": "文件中心", "code": "system:file:menu",
+            "parent_id": 0, "parent_code": "resource_integration", "name": "文件中心", "code": "system:file:menu",
             "perm_type": "menu", "path": "/system/files",
-            "component": "system/file/index", "icon": "FolderOpened", "sort": 150, "is_visible": True,
+            "component": "system/file/index", "icon": "FolderOpened", "sort": 10, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "system:file:menu", "name": "查询文件", "code": "system:file:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "system:file:menu", "name": "上传文件", "code": "system:file:upload", "perm_type": "button", "sort": 2},
@@ -446,6 +454,143 @@ def _get_default_permissions() -> list[dict]:
     return perms
 
 
+def _get_navigation_root_permissions() -> list[dict]:
+    """拆分原系统管理，减少单个菜单下的子项数量。"""
+    return [
+        {
+            "parent_id": 0,
+            "name": "组织与账号",
+            "code": "org",
+            "perm_type": "menu",
+            "path": "/org",
+            "component": "",
+            "icon": "OfficeBuilding",
+            "sort": 100,
+            "is_visible": True,
+        },
+        {
+            "parent_id": 0,
+            "name": "权限中心",
+            "code": "authz",
+            "perm_type": "menu",
+            "path": "/authz",
+            "component": "",
+            "icon": "Lock",
+            "sort": 110,
+            "is_visible": True,
+        },
+        {
+            "parent_id": 0,
+            "name": "平台配置",
+            "code": "platform_config",
+            "perm_type": "menu",
+            "path": "/platform-config",
+            "component": "",
+            "icon": "Setting",
+            "sort": 120,
+            "is_visible": True,
+        },
+        {
+            "parent_id": 0,
+            "name": "资源与集成",
+            "code": "resource_integration",
+            "perm_type": "menu",
+            "path": "/resources",
+            "component": "",
+            "icon": "Connection",
+            "sort": 130,
+            "is_visible": True,
+        },
+    ]
+
+
+def _get_navigation_menu_parent_map() -> dict[str, tuple[str, int]]:
+    """子菜单 code -> (新父级 code, 分组内排序)。"""
+    return {
+        "system:user:menu": ("org", 10),
+        "system:dept:menu": ("org", 20),
+        "system:tenant:menu": ("org", 30),
+        "system:role_permission:menu": ("authz", 10),
+        "system:role:menu": ("authz", 20),
+        "system:permission:menu": ("authz", 30),
+        "system:config:menu": ("platform_config", 10),
+        "system:dict:menu": ("platform_config", 20),
+        "system:file:menu": ("resource_integration", 10),
+        "system:integration:menu": ("resource_integration", 20),
+    }
+
+
+async def ensure_navigation_menus(db) -> None:
+    """整理系统类菜单分组，并给现有角色补齐新根菜单权限。"""
+    from sqlalchemy import select
+    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
+
+    root_by_code: dict[str, SysPermission] = {}
+    for item in _get_navigation_root_permissions():
+        result = await db.execute(
+            select(SysPermission).where(SysPermission.code == item["code"])
+        )
+        perm = result.scalar_one_or_none()
+        if not perm:
+            perm = SysPermission(**item, is_system=True)
+            db.add(perm)
+            await db.flush()
+        else:
+            for key, value in item.items():
+                setattr(perm, key, value)
+            perm.is_system = True
+        root_by_code[perm.code] = perm
+
+    for menu_code, (parent_code, sort) in _get_navigation_menu_parent_map().items():
+        menu_result = await db.execute(
+            select(SysPermission).where(SysPermission.code == menu_code)
+        )
+        menu = menu_result.scalar_one_or_none()
+        parent = root_by_code.get(parent_code)
+        if menu and parent:
+            menu.parent_id = parent.id
+            menu.sort = sort
+            menu.is_visible = True
+
+    old_system_result = await db.execute(
+        select(SysPermission).where(SysPermission.code == "system")
+    )
+    old_system = old_system_result.scalar_one_or_none()
+    if old_system:
+        old_system.is_visible = False
+        old_system.sort = 999
+
+    roles_result = await db.execute(
+        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
+    )
+    roles = list(roles_result.scalars().all())
+    for role in roles:
+        for perm in root_by_code.values():
+            exists = await db.execute(
+                select(SysRolePermission).where(
+                    SysRolePermission.role_id == role.id,
+                    SysRolePermission.permission_id == perm.id,
+                )
+            )
+            if exists.scalar_one_or_none():
+                continue
+            db.add(SysRolePermission(role_id=role.id, permission_id=perm.id))
+
+
+async def clear_permission_cache() -> None:
+    """清理用户权限缓存，确保菜单调整立即生效。"""
+    try:
+        from app.core.redis import get_redis_client
+
+        redis = await get_redis_client()
+        keys = [key async for key in redis.scan_iter("perm:user:*", count=100)]
+        if keys:
+            await redis.delete(*keys)
+    except Exception:
+        # Redis 不可用不应阻断初始化；缓存会在过期后自动刷新。
+        return
+
+
 async def ensure_dashboard_menu(db) -> None:
     """补齐工作台菜单，并给现有角色授权。"""
     from sqlalchemy import select
@@ -496,6 +641,99 @@ async def ensure_dashboard_menu(db) -> None:
         if exists.scalar_one_or_none():
             continue
         db.add(SysRolePermission(role_id=role.id, permission_id=dashboard_perm.id))
+
+
+async def ensure_integration_menu(db) -> None:
+    """补齐集成中心菜单和按钮权限，并给现有角色授权。"""
+    from sqlalchemy import select
+    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
+
+    resource_result = await db.execute(
+        select(SysPermission).where(SysPermission.code == "resource_integration")
+    )
+    resource_perm = resource_result.scalar_one_or_none()
+    if not resource_perm:
+        resource_perm = SysPermission(
+            parent_id=0,
+            name="资源与集成",
+            code="resource_integration",
+            perm_type="menu",
+            path="/resources",
+            component="",
+            icon="Connection",
+            sort=130,
+            is_visible=True,
+            is_system=True,
+        )
+        db.add(resource_perm)
+        await db.flush()
+
+    menu_items = [
+        {
+            "parent_id": resource_perm.id,
+            "name": "集成中心",
+            "code": "system:integration:menu",
+            "perm_type": "menu",
+            "path": "/system/integrations",
+            "component": "system/integration/index",
+            "icon": "Connection",
+            "sort": 20,
+            "is_visible": True,
+            "is_system": True,
+        },
+        {
+            "name": "查看集成",
+            "code": "integration:view",
+            "perm_type": "button",
+            "sort": 1,
+            "is_system": True,
+        },
+        {
+            "name": "管理集成",
+            "code": "integration:manage",
+            "perm_type": "button",
+            "sort": 2,
+            "is_system": True,
+        },
+    ]
+
+    ensured_perms = []
+    menu_perm = None
+    for item in menu_items:
+        result = await db.execute(
+            select(SysPermission).where(SysPermission.code == item["code"])
+        )
+        perm = result.scalar_one_or_none()
+        if not perm:
+            perm = SysPermission(**item)
+            db.add(perm)
+            await db.flush()
+        else:
+            for key, value in item.items():
+                setattr(perm, key, value)
+
+        if item["code"] == "system:integration:menu":
+            menu_perm = perm
+        elif menu_perm:
+            perm.parent_id = menu_perm.id
+        ensured_perms.append(perm)
+    await db.flush()
+
+    roles_result = await db.execute(
+        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
+    )
+    roles = list(roles_result.scalars().all())
+    for role in roles:
+        for perm in ensured_perms:
+            exists = await db.execute(
+                select(SysRolePermission).where(
+                    SysRolePermission.role_id == role.id,
+                    SysRolePermission.permission_id == perm.id,
+                )
+            )
+            if exists.scalar_one_or_none():
+                continue
+            db.add(SysRolePermission(role_id=role.id, permission_id=perm.id))
 
 
 async def init_dicts(db) -> None:

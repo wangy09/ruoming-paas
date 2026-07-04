@@ -106,6 +106,7 @@ app = FastAPI(
         {"name": "消息中心", "description": "平台公告、用户消息"},
         {"name": "文件中心", "description": "文件上传、下载、预览、归档"},
         {"name": "代码生成器", "description": "数据库表结构识别与 CRUD 代码生成"},
+        {"name": "集成中心", "description": "飞书、钉钉、企业微信等协作平台集成"},
         {"name": "AI-模型管理", "description": "LLM 模型配置与连通性测试"},
         {"name": "AI-对话历史", "description": "对话会话与消息记录"},
         {"name": "AI-Agent管理", "description": "Agent 配置、执行与工作流编排"},
@@ -210,6 +211,7 @@ from app.modules.dashboard.router import router as dashboard_router
 from app.modules.message.router import router as message_router
 from app.modules.codegen.router import router as codegen_router
 from app.modules.file_center.router import router as file_center_router
+from app.modules.integration.router import router as integration_router
 
 # 基础路由
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["认证"])
@@ -222,6 +224,7 @@ app.include_router(monitor_router, prefix="/api/v1/monitor", tags=["系统监控
 app.include_router(message_router, prefix="/api/v1/messages", tags=["消息中心"])
 app.include_router(codegen_router, prefix="/api/v1/codegen", tags=["代码生成器"])
 app.include_router(file_center_router, prefix="/api/v1/files", tags=["文件中心"])
+app.include_router(integration_router, prefix="/api/v1/integrations", tags=["集成中心"])
 
 # 提供前端权限初始化入口（无前缀，通过路由内部路径区分）
 # GET /api/v1/my/permissions  -> permission_router
