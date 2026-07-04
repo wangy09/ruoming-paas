@@ -30,8 +30,14 @@
       <template #dropdown>
         <el-dropdown-menu>
           <el-dropdown-item command="refresh">刷新当前</el-dropdown-item>
+          <el-dropdown-item command="close-left">关闭左侧</el-dropdown-item>
+          <el-dropdown-item command="close-right">关闭右侧</el-dropdown-item>
           <el-dropdown-item command="close-others">关闭其他</el-dropdown-item>
           <el-dropdown-item command="close-all">关闭全部</el-dropdown-item>
+          <el-dropdown-item divided command="maximize">
+            {{ appStore.contentMaximized ? '退出最大化' : '最大化当前' }}
+          </el-dropdown-item>
+          <el-dropdown-item command="open-new">新窗口打开</el-dropdown-item>
         </el-dropdown-menu>
       </template>
     </el-dropdown>
@@ -58,20 +64,20 @@
             <span>关闭其他</span>
           </div>
           <div class="context-menu-item" @click="handleContextCommand('close-left')">
-            <el-icon><component :is="ElIcons.ArrowLeft || ElIcons.ArrowDown" /></el-icon>
+            <el-icon><ArrowLeft /></el-icon>
             <span>关闭左边</span>
           </div>
           <div class="context-menu-item" @click="handleContextCommand('close-right')">
-            <el-icon><component :is="ElIcons.ArrowRight || ElIcons.ArrowDown" /></el-icon>
+            <el-icon><ArrowRight /></el-icon>
             <span>关闭右边</span>
           </div>
           <div class="context-menu-divider" />
           <div class="context-menu-item" @click="handleContextCommand('maximize')">
-            <el-icon><component :is="ElIcons.Maximize || ElIcons.FullScreen || ElIcons.ArrowDown" /></el-icon>
-            <span>最大化</span>
+            <el-icon><FullScreen /></el-icon>
+            <span>{{ appStore.contentMaximized ? '退出最大化' : '最大化' }}</span>
           </div>
           <div class="context-menu-item" @click="handleContextCommand('open-new')">
-            <el-icon><component :is="ElIcons.ExternalLink || ElIcons.Link || ElIcons.ArrowDown" /></el-icon>
+            <el-icon><TopRight /></el-icon>
             <span>新窗口打开</span>
           </div>
         </div>
@@ -91,8 +97,7 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import * as ElIcons from '@element-plus/icons-vue'
-import { Close, ArrowDown, Refresh, Remove } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Close, FullScreen, Refresh, Remove, TopRight } from '@element-plus/icons-vue'
 import { useAppStore } from '@/store/app'
 
 interface TabItem {
@@ -122,18 +127,13 @@ function closeTab(path: string) {
   if (isActive(path) && visitedViews.value.length) {
     const target = visitedViews.value[Math.min(idx, visitedViews.value.length - 1)]
     router.push(target.path)
+  } else if (isActive(path)) {
+    router.push('/dashboard')
   }
 }
 
 function handleTabCommand(cmd: string) {
-  if (cmd === 'refresh') {
-    router.go(0)
-  } else if (cmd === 'close-others') {
-    appStore.closeOtherViews(route.path)
-  } else if (cmd === 'close-all') {
-    appStore.closeAllViews()
-    router.push('/dashboard')
-  }
+  executeTabCommand(cmd, route.path)
 }
 
 // 右键菜单
@@ -165,9 +165,11 @@ function closeContextMenu() {
 function handleContextCommand(cmd: string) {
   if (!currentTab.value) return
 
-  const tabPath = currentTab.value.path
-  const currentIdx = visitedViews.value.findIndex(v => v.path === tabPath)
+  executeTabCommand(cmd, currentTab.value.path)
+  closeContextMenu()
+}
 
+function executeTabCommand(cmd: string, tabPath: string) {
   switch (cmd) {
     case 'refresh':
       // 刷新当前标签页
@@ -184,39 +186,29 @@ function handleContextCommand(cmd: string) {
       break
 
     case 'close-others':
-      // 关闭其他，保留当前和固定标签
-      visitedViews.value.forEach(v => {
-        if (v.path !== tabPath && !v.affix) {
-          appStore.removeVisitedView(v.path)
-        }
-      })
+      appStore.closeOtherViews(tabPath)
+      ensureActiveTabVisible(tabPath)
       break
 
     case 'close-left':
-      // 关闭左边所有标签
-      for (let i = currentIdx - 1; i >= 0; i--) {
-        const v = visitedViews.value[i]
-        if (!v.affix) {
-          appStore.removeVisitedView(v.path)
-        }
-      }
+      appStore.closeLeftViews(tabPath)
+      ensureActiveTabVisible(tabPath)
       break
 
     case 'close-right':
-      // 关闭右边所有标签
-      for (let i = visitedViews.value.length - 1; i > currentIdx; i--) {
-        const v = visitedViews.value[i]
-        if (!v.affix) {
-          appStore.removeVisitedView(v.path)
-        }
+      appStore.closeRightViews(tabPath)
+      ensureActiveTabVisible(tabPath)
+      break
+
+    case 'close-all':
+      appStore.closeAllViews()
+      if (!visitedViews.value.some(v => v.path === route.path)) {
+        router.push(visitedViews.value[0]?.path || '/dashboard')
       }
       break
 
     case 'maximize':
-      // 触发浏览器最大化（部分浏览器不支持）
-      if (document.documentElement.requestFullscreen) {
-        document.documentElement.requestFullscreen()
-      }
+      appStore.toggleContentMaximized()
       break
 
     case 'open-new':
@@ -224,8 +216,15 @@ function handleContextCommand(cmd: string) {
       window.open(window.location.origin + tabPath, '_blank')
       break
   }
+}
 
-  closeContextMenu()
+function ensureActiveTabVisible(fallbackPath: string) {
+  if (visitedViews.value.some(v => v.path === route.path)) return
+  if (visitedViews.value.some(v => v.path === fallbackPath)) {
+    router.push(fallbackPath)
+    return
+  }
+  router.push(visitedViews.value[0]?.path || '/dashboard')
 }
 </script>
 

@@ -1,7 +1,7 @@
 <template>
-  <div class="basic-layout" :class="{ 'sidebar-collapsed': appStore.sidebarCollapsed }">
+  <div class="basic-layout" :class="layoutClass">
     <!-- 侧边栏 -->
-    <aside class="sidebar">
+    <aside v-if="!appStore.contentMaximized" class="sidebar">
       <div class="logo">
         <img :src="appStore.logoUrl" alt="logo" class="logo-img" />
         <span v-show="!appStore.sidebarCollapsed" class="logo-text">{{ appStore.appTitle }}</span>
@@ -12,13 +12,13 @@
     <!-- 主内容区 -->
     <div class="main-wrapper">
       <!-- 顶部 Header -->
-      <header class="header">
+      <header v-if="!appStore.contentMaximized" class="header">
         <div class="header-left">
           <el-icon class="collapse-btn" @click="appStore.toggleSidebar()">
             <component :is="appStore.sidebarCollapsed ? 'Expand' : 'Fold'" />
           </el-icon>
           <!-- 面包屑 -->
-          <el-breadcrumb separator="/">
+          <el-breadcrumb v-if="appStore.layoutSettings.showBreadcrumb" separator="/">
             <el-breadcrumb-item v-for="item in breadcrumbs" :key="item.path" :to="item.path">
               {{ item.title }}
             </el-breadcrumb-item>
@@ -31,10 +31,24 @@
           <!-- 新消息提醒 -->
           <MessageBell />
 
+          <!-- 浏览器全屏 -->
+          <el-tooltip :content="appStore.browserFullscreen ? '退出全屏' : '浏览器全屏'">
+            <el-icon class="header-icon" @click="handleBrowserFullscreen">
+              <FullScreen />
+            </el-icon>
+          </el-tooltip>
+
           <!-- 暗色模式 -->
           <el-tooltip :content="appStore.isDark ? '切换亮色' : '切换暗色'">
             <el-icon class="header-icon" @click="appStore.toggleDark()">
               <component :is="appStore.isDark ? 'Sunny' : 'Moon'" />
+            </el-icon>
+          </el-tooltip>
+
+          <!-- 布局设置 -->
+          <el-tooltip content="布局设置">
+            <el-icon class="header-icon" @click="settingDrawerVisible = true">
+              <Setting />
             </el-icon>
           </el-tooltip>
 
@@ -58,10 +72,19 @@
       </header>
 
       <!-- 标签页 -->
-      <TabsBar />
+      <TabsBar v-if="!appStore.contentMaximized && appStore.layoutSettings.showTabsBar" />
 
       <!-- 路由视图 -->
       <main class="content">
+        <el-button
+          v-if="appStore.contentMaximized"
+          class="exit-maximize-btn"
+          type="primary"
+          :icon="FullScreen"
+          @click="appStore.setContentMaximized(false)"
+        >
+          退出最大化
+        </el-button>
         <router-view v-slot="{ Component, route }">
           <keep-alive :include="appStore.cachedViews">
             <component :is="Component" :key="route.path" />
@@ -69,14 +92,16 @@
         </router-view>
       </main>
     </div>
+
+    <LayoutSettingsDrawer v-model="settingDrawerVisible" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessageBox } from 'element-plus'
-import { ArrowDown } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowDown, FullScreen, Setting } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/store/auth'
 import { useAppStore } from '@/store/app'
 import { usePermissionStore } from '@/store/permission'
@@ -84,6 +109,7 @@ import SidebarMenu from './components/SidebarMenu.vue'
 import TabsBar from './components/TabsBar.vue'
 import ErrorLogDrawer from './components/ErrorLogDrawer.vue'
 import MessageBell from './components/MessageBell.vue'
+import LayoutSettingsDrawer from './components/LayoutSettingsDrawer.vue'
 import { resetRouter } from '@/router/guard'
 
 const route = useRoute()
@@ -91,9 +117,22 @@ const router = useRouter()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const permStore = usePermissionStore()
+const settingDrawerVisible = ref(false)
+
+const handleFullscreenChange = () => {
+  appStore.syncBrowserFullscreen()
+}
 
 onMounted(() => {
   void appStore.loadPublicConfig()
+  appStore.syncBrowserFullscreen()
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  window.addEventListener('keydown', handleKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  window.removeEventListener('keydown', handleKeydown)
 })
 
 // 面包屑
@@ -102,6 +141,28 @@ const breadcrumbs = computed(() => {
     .filter(r => r.meta.title)
     .map(r => ({ path: r.path, title: r.meta.title as string }))
 })
+
+const layoutClass = computed(() => ({
+  'sidebar-collapsed': appStore.sidebarCollapsed,
+  'content-maximized': appStore.contentMaximized,
+  'fixed-header': appStore.layoutSettings.fixedHeader,
+  'tabs-hidden': !appStore.layoutSettings.showTabsBar,
+}))
+
+async function handleBrowserFullscreen() {
+  try {
+    await appStore.toggleBrowserFullscreen()
+  } catch {
+    ElMessage.warning('当前浏览器不支持或拒绝全屏操作')
+  }
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  // 内容区最大化后隐藏 Header/TabsBar，按 Esc 可快速退出最大化
+  if (event.key === 'Escape' && appStore.contentMaximized) {
+    appStore.setContentMaximized(false)
+  }
+}
 
 async function handleUserCommand(cmd: string) {
   if (cmd === 'logout') {
@@ -123,6 +184,16 @@ async function handleUserCommand(cmd: string) {
   display: flex;
   height: 100vh;
   overflow: hidden;
+
+  &.content-maximized {
+    .main-wrapper {
+      width: 100%;
+    }
+
+    .content {
+      height: 100vh;
+    }
+  }
 }
 
 // ── 侧边栏 ────────────────────────────────────────────────────────────────────
@@ -168,6 +239,27 @@ async function handleUserCommand(cmd: string) {
   overflow: hidden;
 }
 
+.basic-layout:not(.fixed-header) {
+  .main-wrapper {
+    overflow: auto;
+  }
+
+  .header,
+  :deep(.tabs-bar) {
+    flex-shrink: 0;
+  }
+
+  .content {
+    flex: initial;
+    min-height: calc(100vh - #{$header-height} - #{$tabbar-height});
+    overflow: visible;
+  }
+
+  &.tabs-hidden .content {
+    min-height: calc(100vh - #{$header-height});
+  }
+}
+
 .header {
   height: $header-height;
   background: #fff;
@@ -178,6 +270,7 @@ async function handleUserCommand(cmd: string) {
   padding: 0 16px;
   flex-shrink: 0;
   box-shadow: 0 1px 4px rgba(0,21,41,.08);
+  z-index: 10;
 
   .header-left {
     display: flex;
@@ -219,8 +312,17 @@ async function handleUserCommand(cmd: string) {
 }
 
 .content {
+  position: relative;
   flex: 1;
   overflow: auto;
   background: $bg-base;
+}
+
+.exit-maximize-btn {
+  position: fixed;
+  top: 16px;
+  right: 18px;
+  z-index: 100;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
 }
 </style>

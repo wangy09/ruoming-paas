@@ -11,6 +11,17 @@
   --sidebar-width: #{$sidebar-width};
   --sidebar-collapsed-width: #{$sidebar-collapsed-width};
   --tabbar-height: #{$tabbar-height};
+  --app-bg: #{$bg-base};
+  --app-bg-page: #{$bg-base};
+  --app-bg-card: #{$bg-white};
+  --app-bg-header: #{$bg-white};
+  --app-bg-sidebar: #{$bg-sidebar};
+  --app-bg-hover: rgba(0, 0, 0, 0.04);
+  --app-border-color: #{$border-color};
+  --app-text-primary: #{$text-primary};
+  --app-text-regular: #{$text-regular};
+  --app-text-secondary: #{$text-secondary};
+  --app-shadow-header: 0 1px 4px rgba(0, 21, 41, 0.08);
 }
 
 // ── 重置 ──────────────────────────────────────────────────────────────────────
@@ -27,8 +38,29 @@ html, body, #app {
     'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 14px;
   color: $text-primary;
-  background: $bg-base;
+  background: var(--app-bg);
   -webkit-font-smoothing: antialiased;
+}
+
+html.dark {
+  color-scheme: dark;
+  --app-bg: #0f1117;
+  --app-bg-page: #111827;
+  --app-bg-card: #181c25;
+  --app-bg-header: #181c25;
+  --app-bg-sidebar: #0b1220;
+  --app-bg-hover: rgba(255, 255, 255, 0.08);
+  --app-border-color: #2b3340;
+  --app-text-primary: #e5eaf3;
+  --app-text-regular: #cfd3dc;
+  --app-text-secondary: #8f98a8;
+  --app-shadow-header: 0 1px 4px rgba(0, 0, 0, 0.35);
+
+  body,
+  #app {
+    color: var(--app-text-primary);
+    background: var(--app-bg);
+  }
 }
 
 // ── 滚动条 ────────────────────────────────────────────────────────────────────
@@ -62,10 +94,117 @@ html, body, #app {
 .page-container {
   padding: 16px;
   .page-card {
-    background: $bg-white;
+    background: var(--app-bg-card);
     border-radius: $border-radius;
     padding: 20px;
     box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+}
+
+// ── 暗色模式基础适配 ──────────────────────────────────────────────────────────
+html.dark {
+  .basic-layout {
+    background: var(--app-bg);
+  }
+
+  .basic-layout .sidebar {
+    background: var(--app-bg-sidebar);
+
+    .logo {
+      border-bottom-color: var(--app-border-color);
+    }
+  }
+
+  .basic-layout .header {
+    background: var(--app-bg-header);
+    border-bottom-color: var(--app-border-color);
+    box-shadow: var(--app-shadow-header);
+  }
+
+  .basic-layout .header .collapse-btn,
+  .basic-layout .header .header-icon {
+    color: var(--app-text-regular);
+
+    &:hover {
+      color: var(--el-color-primary);
+    }
+  }
+
+  .basic-layout .header .user-avatar {
+    &:hover {
+      background: var(--app-bg-hover);
+    }
+
+    .username {
+      color: var(--app-text-primary);
+    }
+  }
+
+  .basic-layout .content,
+  .tabs-bar {
+    background: var(--app-bg-page);
+  }
+
+  .tabs-bar {
+    border-bottom-color: var(--app-border-color);
+  }
+
+  .tabs-bar .tab-item {
+    color: var(--app-text-regular);
+    background: var(--app-bg-card);
+    border-color: var(--app-border-color);
+
+    &:hover {
+      color: var(--el-color-primary);
+      border-color: var(--el-color-primary);
+    }
+
+    &.active {
+      color: #fff;
+      background: var(--el-color-primary);
+      border-color: var(--el-color-primary);
+    }
+  }
+
+  .context-menu {
+    background: var(--app-bg-card);
+    border-color: var(--app-border-color);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  .context-menu-item {
+    color: var(--app-text-regular);
+
+    .el-icon {
+      color: var(--app-text-secondary);
+    }
+
+    &:hover {
+      background: var(--app-bg-hover);
+      color: var(--el-color-primary);
+
+      .el-icon {
+        color: var(--el-color-primary);
+      }
+    }
+  }
+
+  .context-menu-divider {
+    background: var(--app-border-color);
+  }
+
+  .page-container .page-card {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  }
+
+  .setting-label,
+  .section-title {
+    color: var(--app-text-primary);
+  }
+
+  .setting-tip,
+  .text-gray {
+    color: var(--app-text-secondary);
   }
 }
 
