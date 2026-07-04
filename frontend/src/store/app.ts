@@ -30,10 +30,20 @@ interface LayoutSettings {
   fixedHeader: boolean
 }
 
+interface VisualSettings {
+  grayMode: boolean
+  colorWeakMode: boolean
+}
+
 const DEFAULT_LAYOUT_SETTINGS: LayoutSettings = {
   showTabsBar: true,
   showBreadcrumb: true,
   fixedHeader: true,
+}
+
+const DEFAULT_VISUAL_SETTINGS: VisualSettings = {
+  grayMode: false,
+  colorWeakMode: false,
 }
 
 function loadVisitedViews(): VisitedView[] {
@@ -54,6 +64,16 @@ function loadLayoutSettings(): LayoutSettings {
     // ignore
   }
   return { ...DEFAULT_LAYOUT_SETTINGS }
+}
+
+function loadVisualSettings(): VisualSettings {
+  try {
+    const data = localStorage.getItem('visual_settings')
+    if (data) return { ...DEFAULT_VISUAL_SETTINGS, ...JSON.parse(data) }
+  } catch {
+    // ignore
+  }
+  return { ...DEFAULT_VISUAL_SETTINGS }
 }
 
 function loadCachedViews(): string[] {
@@ -102,6 +122,7 @@ export const useAppStore = defineStore('app', () => {
   const contentMaximized = ref(false)
   const browserFullscreen = ref(false)
   const layoutSettings = ref<LayoutSettings>(loadLayoutSettings())
+  const visualSettings = ref<VisualSettings>(loadVisualSettings())
   const primaryColor = ref(localStorage.getItem('primary_color') || DEFAULT_PRIMARY_COLOR)
   const appTitle = ref(DEFAULT_APP_TITLE)
   const loginSubtitle = ref(DEFAULT_LOGIN_SUBTITLE)
@@ -122,8 +143,22 @@ export const useAppStore = defineStore('app', () => {
     localStorage.setItem('visited_views', JSON.stringify(visitedViews.value))
   }
 
+  function saveCachedViews() {
+    localStorage.setItem('cached_views', JSON.stringify(cachedViews.value))
+  }
+
   function saveLayoutSettings() {
     localStorage.setItem('layout_settings', JSON.stringify(layoutSettings.value))
+  }
+
+  function saveVisualSettings() {
+    localStorage.setItem('visual_settings', JSON.stringify(visualSettings.value))
+  }
+
+  function applyVisualSettings() {
+    const root = document.documentElement
+    root.classList.toggle('gray-mode', visualSettings.value.grayMode)
+    root.classList.toggle('color-weak-mode', visualSettings.value.colorWeakMode)
   }
 
   function addVisitedView(view: VisitedView) {
@@ -132,19 +167,29 @@ export const useAppStore = defineStore('app', () => {
     saveVisitedViews()
   }
 
+  function addCachedView(name?: string) {
+    if (!name || cachedViews.value.includes(name)) return
+    cachedViews.value.push(name)
+    saveCachedViews()
+  }
+
   function removeVisitedView(path: string) {
+    const target = visitedViews.value.find(v => v.path === path)
     visitedViews.value = visitedViews.value.filter(v => v.path !== path)
     saveVisitedViews()
+    if (target?.name) removeCachedView(target.name)
   }
 
   function closeOtherViews(path: string) {
     visitedViews.value = visitedViews.value.filter(v => v.path === path || v.affix)
     saveVisitedViews()
+    syncCachedViewsWithVisitedViews()
   }
 
   function closeAllViews() {
     visitedViews.value = visitedViews.value.filter(v => v.affix)
     saveVisitedViews()
+    syncCachedViewsWithVisitedViews()
   }
 
   function closeLeftViews(path: string) {
@@ -152,6 +197,7 @@ export const useAppStore = defineStore('app', () => {
     if (currentIdx < 0) return
     visitedViews.value = visitedViews.value.filter((v, index) => index >= currentIdx || v.affix)
     saveVisitedViews()
+    syncCachedViewsWithVisitedViews()
   }
 
   function closeRightViews(path: string) {
@@ -159,6 +205,18 @@ export const useAppStore = defineStore('app', () => {
     if (currentIdx < 0) return
     visitedViews.value = visitedViews.value.filter((v, index) => index <= currentIdx || v.affix)
     saveVisitedViews()
+    syncCachedViewsWithVisitedViews()
+  }
+
+  function removeCachedView(name: string) {
+    cachedViews.value = cachedViews.value.filter(item => item !== name)
+    saveCachedViews()
+  }
+
+  function syncCachedViewsWithVisitedViews() {
+    const names = new Set(visitedViews.value.map(v => v.name).filter(Boolean))
+    cachedViews.value = cachedViews.value.filter(name => names.has(name))
+    saveCachedViews()
   }
 
   function setShowTabsBar(visible: boolean) {
@@ -174,6 +232,29 @@ export const useAppStore = defineStore('app', () => {
   function setFixedHeader(fixed: boolean) {
     layoutSettings.value.fixedHeader = fixed
     saveLayoutSettings()
+  }
+
+  function resetLayoutSettings() {
+    layoutSettings.value = { ...DEFAULT_LAYOUT_SETTINGS }
+    saveLayoutSettings()
+  }
+
+  function setGrayMode(enabled: boolean) {
+    visualSettings.value.grayMode = enabled
+    saveVisualSettings()
+    applyVisualSettings()
+  }
+
+  function setColorWeakMode(enabled: boolean) {
+    visualSettings.value.colorWeakMode = enabled
+    saveVisualSettings()
+    applyVisualSettings()
+  }
+
+  function resetVisualSettings() {
+    visualSettings.value = { ...DEFAULT_VISUAL_SETTINGS }
+    saveVisualSettings()
+    applyVisualSettings()
   }
 
   function setContentMaximized(maximized: boolean) {
@@ -215,6 +296,27 @@ export const useAppStore = defineStore('app', () => {
     localStorage.setItem('primary_color', primaryColor.value)
   }
 
+  function clearPageCache() {
+    cachedViews.value = []
+    visitedViews.value = []
+    saveCachedViews()
+    saveVisitedViews()
+  }
+
+  function resetPublicConfigCache() {
+    publicConfigLoaded.value = false
+    publicConfigPromise = null
+  }
+
+  function clearPreferenceCache() {
+    clearPageCache()
+    resetLayoutSettings()
+    resetVisualSettings()
+    localStorage.removeItem('primary_color')
+    applyPrimaryColor(DEFAULT_PRIMARY_COLOR)
+    resetPublicConfigCache()
+  }
+
   async function loadPublicConfig() {
     if (publicConfigLoaded.value) return
     if (publicConfigPromise) return publicConfigPromise
@@ -239,6 +341,9 @@ export const useAppStore = defineStore('app', () => {
     return publicConfigPromise
   }
 
+  applyPrimaryColor(primaryColor.value)
+  applyVisualSettings()
+
   return {
     isDark,
     toggleDark,
@@ -254,8 +359,15 @@ export const useAppStore = defineStore('app', () => {
     setShowTabsBar,
     setShowBreadcrumb,
     setFixedHeader,
+    resetLayoutSettings,
+    visualSettings,
+    setGrayMode,
+    setColorWeakMode,
+    resetVisualSettings,
     primaryColor,
     setPrimaryColor,
+    clearPageCache,
+    clearPreferenceCache,
     appTitle,
     loginSubtitle,
     logoUrl,
@@ -264,6 +376,7 @@ export const useAppStore = defineStore('app', () => {
     cachedViews,
     visitedViews,
     addVisitedView,
+    addCachedView,
     removeVisitedView,
     closeOtherViews,
     closeAllViews,

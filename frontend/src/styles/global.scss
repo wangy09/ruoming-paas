@@ -63,6 +63,28 @@ html.dark {
   }
 }
 
+// ── 视觉辅助模式 ──────────────────────────────────────────────────────────────
+html.gray-mode {
+  #app,
+  .el-overlay {
+    filter: grayscale(100%);
+  }
+}
+
+html.color-weak-mode {
+  #app,
+  .el-overlay {
+    filter: saturate(0.72) contrast(1.12) hue-rotate(-10deg);
+  }
+}
+
+html.gray-mode.color-weak-mode {
+  #app,
+  .el-overlay {
+    filter: grayscale(100%) saturate(0.72) contrast(1.12) hue-rotate(-10deg);
+  }
+}
+
 // ── 滚动条 ────────────────────────────────────────────────────────────────────
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

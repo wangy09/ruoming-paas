@@ -46,10 +46,16 @@ export function setupRouterGuard(router: Router) {
       try {
         await permStore.loadPermissions()
         // 动态路由注册后，检查并补全恢复的标签页信息
-        appStore.visitedViews.forEach((view: { path: string; title?: string }) => {
+        appStore.visitedViews.forEach((view: { path: string; title?: string; name?: string; affix?: boolean }) => {
           const resolved = router.resolve(view.path)
           if (resolved.matched.length && resolved.meta.title && !view.title) {
             view.title = resolved.meta.title as string
+          }
+          if (typeof resolved.name === 'string' && !view.name) {
+            view.name = resolved.name
+          }
+          if (resolved.meta.affix && view.affix === undefined) {
+            view.affix = Boolean(resolved.meta.affix)
           }
         })
         localStorage.setItem('visited_views', JSON.stringify(appStore.visitedViews))
@@ -71,8 +77,10 @@ export function setupRouterGuard(router: Router) {
       appStore.addVisitedView({
         path: to.path,
         title: to.meta.title as string,
-        name: to.name as string,
+        name: typeof to.name === 'string' ? to.name : undefined,
+        affix: Boolean(to.meta.affix),
       })
+      appStore.addCachedView(typeof to.name === 'string' ? to.name : undefined)
     }
 
     // 检查路由是否存在

@@ -65,18 +65,98 @@
           </el-form>
         </el-card>
       </el-col>
+
+      <el-col :span="24">
+        <el-card class="card preference-card">
+          <template #header>
+            <div class="card-header">
+              <span>系统偏好</span>
+              <el-tag size="small" effect="plain">仅当前浏览器生效</el-tag>
+            </div>
+          </template>
+          <div class="preference-grid">
+            <div class="preference-item">
+              <div>
+                <div class="preference-label">主题色</div>
+                <div class="preference-tip">{{ appStore.primaryColor }}</div>
+              </div>
+              <span class="color-dot" :style="{ backgroundColor: appStore.primaryColor }" />
+            </div>
+            <div class="preference-item">
+              <div>
+                <div class="preference-label">暗色模式</div>
+                <div class="preference-tip">切换页面明暗主题</div>
+              </div>
+              <el-switch v-model="darkMode" />
+            </div>
+            <div class="preference-item">
+              <div>
+                <div class="preference-label">灰色模式</div>
+                <div class="preference-tip">页面整体置灰</div>
+              </div>
+              <el-switch
+                :model-value="appStore.visualSettings.grayMode"
+                @change="appStore.setGrayMode(Boolean($event))"
+              />
+            </div>
+            <div class="preference-item">
+              <div>
+                <div class="preference-label">色弱模式</div>
+                <div class="preference-tip">辅助状态色区分</div>
+              </div>
+              <el-switch
+                :model-value="appStore.visualSettings.colorWeakMode"
+                @change="appStore.setColorWeakMode(Boolean($event))"
+              />
+            </div>
+            <div class="preference-item">
+              <div>
+                <div class="preference-label">布局显示</div>
+                <div class="preference-tip">标签栏 / 面包屑 / 固定 Header</div>
+              </div>
+              <div class="preference-tags">
+                <el-tag :type="appStore.layoutSettings.showTabsBar ? 'success' : 'info'" size="small">
+                  标签栏
+                </el-tag>
+                <el-tag :type="appStore.layoutSettings.showBreadcrumb ? 'success' : 'info'" size="small">
+                  面包屑
+                </el-tag>
+                <el-tag :type="appStore.layoutSettings.fixedHeader ? 'success' : 'info'" size="small">
+                  固定 Header
+                </el-tag>
+              </div>
+            </div>
+            <div class="preference-actions">
+              <el-button @click="handleResetLayout">恢复默认布局</el-button>
+              <el-button @click="handleClearPageCache">清理页面缓存</el-button>
+              <el-button type="danger" plain @click="handleClearPreferenceCache">
+                清理前端偏好
+              </el-button>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
     </el-row>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { computed, ref, reactive, onMounted } from 'vue'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '@/store/auth'
+import { useAppStore } from '@/store/app'
 import { userApi } from '@/api/user'
 import { authApi } from '@/api/auth'
 
 const authStore = useAuthStore()
+const appStore = useAppStore()
+
+const darkMode = computed({
+  get: () => appStore.isDark,
+  set: (value: boolean) => {
+    if (value !== appStore.isDark) appStore.toggleDark()
+  },
+})
 
 // 个人信息
 const profileLoading = ref(false)
@@ -159,6 +239,31 @@ async function handleChangePassword() {
   }
 }
 
+function handleResetLayout() {
+  appStore.resetLayoutSettings()
+  appStore.resetVisualSettings()
+  ElMessage.success('已恢复默认布局')
+}
+
+function handleClearPageCache() {
+  appStore.clearPageCache()
+  ElMessage.success('页面缓存和标签页已清理')
+}
+
+async function handleClearPreferenceCache() {
+  try {
+    await ElMessageBox.confirm(
+      '将清理主题色、布局设置、视觉模式、标签页和页面缓存，不会清理登录状态。确定继续？',
+      '清理前端偏好',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  appStore.clearPreferenceCache()
+  ElMessage.success('前端偏好已清理')
+}
+
 onMounted(() => {
   // 填充当前用户信息
   if (authStore.userInfo) {
@@ -184,6 +289,9 @@ onMounted(() => {
 }
 
 .card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 15px;
   font-weight: 600;
   color: var(--el-text-color-primary);
@@ -195,5 +303,75 @@ onMounted(() => {
 
 :deep(.el-form-item) {
   margin-bottom: 18px;
+}
+
+.preference-card {
+  margin-top: 20px;
+}
+
+.preference-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.preference-item,
+.preference-actions {
+  min-height: 64px;
+  padding: 14px 16px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
+}
+
+.preference-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.preference-label {
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.preference-tip {
+  margin-top: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.color-dot {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--el-border-color);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.preference-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.preference-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 1200px) {
+  .preference-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .preference-actions {
+    justify-content: flex-start;
+  }
 }
 </style>
