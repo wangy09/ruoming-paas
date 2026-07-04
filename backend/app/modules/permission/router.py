@@ -171,6 +171,7 @@ async def create_role(
         parent_id=data.parent_id,
         data_scope=data.data_scope,
         data_scope_depts=json.dumps(data.data_scope_depts) if data.data_scope_depts else None,
+        dashboard_template=data.dashboard_template,
         sort=data.sort,
         tenant_id=tenant_id,
         status=1,
@@ -196,7 +197,7 @@ async def update_role(
     if not role:
         raise NotFoundException("角色")
 
-    update_data = data.model_dump(exclude_none=True)
+    update_data = data.model_dump(exclude_unset=True)
     # 处理 data_scope_depts JSON 转换
     if "data_scope_depts" in update_data:
         update_data["data_scope_depts"] = json.dumps(update_data["data_scope_depts"]) if update_data["data_scope_depts"] else None

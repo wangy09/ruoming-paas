@@ -254,8 +254,12 @@ export interface RoleInfo {
   parent_id?: number
   data_scope: number
   data_scope_depts?: string | null
-  is_system: boolean
-  created_at: string
+  dashboard_template?: 'platform' | 'tenant' | 'developer' | 'personal' | null
+  sort?: number
+  status?: number
+  tenant_id?: number | null
+  is_system?: boolean
+  created_at?: string
 }
 
 export interface RoleCreate {
@@ -265,6 +269,7 @@ export interface RoleCreate {
   parent_id?: number
   data_scope?: number
   data_scope_depts?: number[]
+  dashboard_template?: 'platform' | 'tenant' | 'developer' | 'personal' | null
 }
 
 // ── 部门管理 ────────────────────────────────────────────────────────────────────
@@ -304,9 +309,13 @@ export interface MenuPermission {
   path: string
   component: string
   icon?: string
+  redirect?: string
   children?: MenuPermission[]
   permissionCode?: string
   keepAlive?: boolean
+  isVisible?: boolean
+  isCache?: boolean
+  isExternal?: boolean
 }
 
 export interface UserPermissions {

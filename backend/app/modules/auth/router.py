@@ -114,6 +114,7 @@ async def get_me(
         select(SysRole)
         .join(SysUserRole, SysUserRole.role_id == SysRole.id)
         .where(SysUserRole.user_id == current_user.id, SysRole.is_deleted == False)
+        .order_by(SysRole.sort, SysRole.id)
     )
     roles = list(result.scalars().all())
 
@@ -129,7 +130,15 @@ async def get_me(
         "dept_id": current_user.dept_id,
         "status": current_user.status,
         "last_login": current_user.last_login.isoformat() if current_user.last_login else None,
-        "roles": [{"id": r.id, "name": r.name, "code": r.code} for r in roles],
+        "roles": [
+            {
+                "id": r.id,
+                "name": r.name,
+                "code": r.code,
+                "dashboard_template": r.dashboard_template,
+            }
+            for r in roles
+        ],
     })
 
 

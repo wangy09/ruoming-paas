@@ -37,9 +37,10 @@ async def init_data(reset: bool = False) -> None:
             select(SysUser).where(SysUser.is_superplatform == True)  # noqa: E712
         )
         if existing.scalar_one_or_none() and not reset:
+            await ensure_dashboard_menu(db)
             await init_runtime_configs(db, settings)
             await db.commit()
-            logger.info("already_initialized", msg="种子数据已存在，已补齐运行时配置")
+            logger.info("already_initialized", msg="种子数据已存在，已补齐工作台菜单和运行时配置")
             return
 
         if reset:
@@ -99,6 +100,7 @@ async def init_data(reset: bool = False) -> None:
             description="租户内最高权限角色",
             parent_id=0,
             data_scope=1,
+            dashboard_template="tenant",
             status=1,
             sort=1,
             tenant_id=None,
@@ -112,6 +114,7 @@ async def init_data(reset: bool = False) -> None:
             description="普通成员，基本查看权限",
             parent_id=0,
             data_scope=5,
+            dashboard_template="personal",
             status=1,
             sort=10,
             tenant_id=None,
@@ -189,6 +192,13 @@ async def init_data(reset: bool = False) -> None:
 def _get_default_permissions() -> list[dict]:
     """默认权限数据"""
     perms = [
+        # ── 工作台（固定首位）────────────────────────────────────────
+        {
+            "parent_id": 0, "name": "工作台", "code": "dashboard:menu",
+            "perm_type": "menu", "path": "/dashboard",
+            "component": "dashboard/index", "icon": "Odometer", "sort": 0,
+            "is_visible": True, "is_cache": True,
+        },
         # ── 系统管理（根菜单）────────────────────────────────────────
         {
             "parent_id": 0, "name": "系统管理", "code": "system",
@@ -434,6 +444,58 @@ def _get_default_permissions() -> list[dict]:
         p["is_system"] = True
 
     return perms
+
+
+async def ensure_dashboard_menu(db) -> None:
+    """补齐工作台菜单，并给现有角色授权。"""
+    from sqlalchemy import select
+    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
+
+    result = await db.execute(
+        select(SysPermission).where(SysPermission.code == "dashboard:menu")
+    )
+    dashboard_perm = result.scalar_one_or_none()
+    if dashboard_perm:
+        dashboard_perm.name = "工作台"
+        dashboard_perm.perm_type = "menu"
+        dashboard_perm.path = "/dashboard"
+        dashboard_perm.component = "dashboard/index"
+        dashboard_perm.icon = "Odometer"
+        dashboard_perm.sort = 0
+        dashboard_perm.is_visible = True
+        dashboard_perm.is_cache = True
+        dashboard_perm.is_system = True
+    else:
+        dashboard_perm = SysPermission(
+            parent_id=0,
+            name="工作台",
+            code="dashboard:menu",
+            perm_type="menu",
+            path="/dashboard",
+            component="dashboard/index",
+            icon="Odometer",
+            sort=0,
+            is_visible=True,
+            is_cache=True,
+            is_system=True,
+        )
+        db.add(dashboard_perm)
+        await db.flush()
+
+    roles_result = await db.execute(
+        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
+    )
+    roles = list(roles_result.scalars().all())
+    for role in roles:
+        exists = await db.execute(
+            select(SysRolePermission).where(
+                SysRolePermission.role_id == role.id,
+                SysRolePermission.permission_id == dashboard_perm.id,
+            )
+        )
+        if exists.scalar_one_or_none():
+            continue
+        db.add(SysRolePermission(role_id=role.id, permission_id=dashboard_perm.id))
 
 
 async def init_dicts(db) -> None:

@@ -40,6 +40,9 @@ export const usePermissionStore = defineStore('permission', () => {
 
     // 注册到路由实例
     routes.forEach(route => {
+      if (route.path && router.getRoutes().some(item => item.path === route.path)) {
+        return
+      }
       router.addRoute('root', route)
     })
   }
@@ -51,7 +54,7 @@ export const usePermissionStore = defineStore('permission', () => {
     for (const menu of menus) {
       if (!menu.path || !menu.isVisible) continue
 
-      const route: RouteRecordRaw = {
+      const route = {
         path: menu.path,
         name: menu.path.replace(/\//g, '_').replace(/^_/, ''),
         meta: {
@@ -60,7 +63,7 @@ export const usePermissionStore = defineStore('permission', () => {
           permCode: menu.permissionCode,
           isCache: menu.isCache,
         },
-      }
+      } as unknown as RouteRecordRaw
 
       // 处理组件
       if (menu.component) {

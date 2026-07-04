@@ -16,6 +16,13 @@
         <el-table-column prop="name" label="角色名" min-width="120" />
         <el-table-column prop="code" label="权限码" min-width="140" />
         <el-table-column prop="description" label="描述" min-width="200" />
+        <el-table-column label="默认首页" width="120" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.dashboard_template ? 'primary' : 'info'">
+              {{ getDashboardTemplateLabel(row.dashboard_template) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="系统内置" width="80" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.is_system" type="info" size="small">是</el-tag>
@@ -47,7 +54,7 @@
       </el-table>
     </div>
 
-    <el-dialog v-model="dialogVisible" :title="editId ? '编辑角色' : '新增角色'" width="520px" destroy-on-close>
+    <el-dialog v-model="dialogVisible" :title="editId ? '编辑角色' : '新增角色'" width="560px" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
         <el-form-item label="角色名" prop="name">
           <el-input v-model="form.name" placeholder="如：租户管理员" />
@@ -65,11 +72,17 @@
             <el-option v-for="opt in scopeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
+        <el-form-item label="默认首页">
+          <el-select v-model="form.dashboard_template" placeholder="自动判断" style="width:100%">
+            <el-option v-for="opt in dashboardTemplateOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
+          <div class="form-tip">用户首页设置为“自动”时，优先使用角色默认首页。</div>
+        </el-form-item>
         <el-form-item v-if="form.data_scope === 5" label="授权部门">
           <el-tree-select
             v-model="form.data_scope_depts"
             :data="deptOptions"
-            :props="{ label: 'name', value: 'id', children: 'children', checkStrictly: true }"
+              :props="treeSelectProps"
             multiple
             placeholder="请选择授权部门"
             clearable
@@ -98,9 +111,28 @@ import { Plus } from '@element-plus/icons-vue'
 import { permissionApi } from '@/api/permission'
 import { systemApi } from '@/api/system'
 import { useDataScope } from '@/hooks/useDict'
-import type { RoleInfo, DeptInfo } from '@/types'
+import type { RoleInfo, RoleCreate, DeptInfo } from '@/types'
 
 const { options: scopeOptions, label: getScopeLabel } = useDataScope()
+
+const dashboardTemplateOptions = [
+  { label: '自动判断', value: '' },
+  { label: '平台首页', value: 'platform' },
+  { label: '租户首页', value: 'tenant' },
+  { label: '开发者首页', value: 'developer' },
+  { label: '个人首页', value: 'personal' },
+] as const
+
+const treeSelectProps = {
+  label: 'name',
+  value: 'id',
+  children: 'children',
+  checkStrictly: true,
+} as any
+
+function getDashboardTemplateLabel(value?: string | null) {
+  return dashboardTemplateOptions.find(item => item.value === (value || ''))?.label || '自动判断'
+}
 
 const loading = ref(false)
 const roles = ref<RoleInfo[]>([])
@@ -115,9 +147,10 @@ async function fetchRoles() {
   }
 }
 
-async function handleDelete(row: RoleInfo) {
-  await ElMessageBox.confirm(`确定删除角色「${row.name}」？`, '警告', { type: 'warning' })
-  await permissionApi.roleDelete(row.id)
+async function handleDelete(row: unknown) {
+  const role = row as RoleInfo
+  await ElMessageBox.confirm(`确定删除角色「${role.name}」？`, '警告', { type: 'warning' })
+  await permissionApi.roleDelete(role.id)
   ElMessage.success('删除成功')
   fetchRoles()
 }
@@ -134,13 +167,25 @@ const editId = ref<number | null>(null)
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 
-const form = reactive({
+type RoleDashboardTemplateForm = '' | NonNullable<RoleCreate['dashboard_template']>
+
+const form = reactive<{
+  name: string
+  code: string
+  description: string
+  parent_id: number | undefined
+  data_scope: number
+  data_scope_depts: number[]
+  dashboard_template: RoleDashboardTemplateForm
+  status: number
+}>({
   name: '',
   code: '',
   description: '',
-  parent_id: undefined as number | undefined,
+  parent_id: undefined,
   data_scope: 1,
-  data_scope_depts: [] as number[],
+  data_scope_depts: [],
+  dashboard_template: '',
   status: 1,
 })
 
@@ -155,26 +200,28 @@ function onDataScopeChange(val: number) {
   }
 }
 
-function openDialog(row?: RoleInfo) {
-  editId.value = row?.id ?? null
+function openDialog(row?: unknown) {
+  const role = row as RoleInfo | undefined
+  editId.value = role?.id ?? null
 
   let dataScopeDepts: number[] = []
-  if (row?.data_scope_depts) {
+  if (role?.data_scope_depts) {
     try {
-      dataScopeDepts = JSON.parse(row.data_scope_depts as unknown as string)
+      dataScopeDepts = JSON.parse(role.data_scope_depts as unknown as string)
     } catch {
       dataScopeDepts = []
     }
   }
 
   Object.assign(form, {
-    name: row?.name ?? '',
-    code: row?.code ?? '',
-    description: row?.description ?? '',
-    parent_id: row?.parent_id,
-    data_scope: row?.data_scope ?? 1,
+    name: role?.name ?? '',
+    code: role?.code ?? '',
+    description: role?.description ?? '',
+    parent_id: role?.parent_id,
+    data_scope: role?.data_scope ?? 1,
     data_scope_depts: dataScopeDepts,
-    status: row?.status ?? 1,
+    dashboard_template: role?.dashboard_template ?? '',
+    status: role?.status ?? 1,
   })
   dialogVisible.value = true
 }
@@ -183,9 +230,10 @@ async function handleSubmit() {
   await formRef.value?.validate()
   submitting.value = true
   try {
-    const payload = {
+    const payload: RoleCreate & { status: number } = {
       ...form,
       parent_id: form.parent_id ?? 0,
+      dashboard_template: form.dashboard_template || null,
     }
     if (editId.value) {
       await permissionApi.roleUpdate(editId.value, payload)

@@ -30,6 +30,9 @@ class SysRole(BaseModel):
     data_scope_depts: Mapped[str | None] = mapped_column(
         Text, comment="自定义数据范围部门 ID 列表（JSON，data_scope=2时使用）"
     )
+    dashboard_template: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, comment="默认首页模板：platform/tenant/developer/personal，空=自动"
+    )
     status: Mapped[int] = mapped_column(
         SmallInteger, default=1, server_default="1", comment="状态：1启用 0禁用"
     )
