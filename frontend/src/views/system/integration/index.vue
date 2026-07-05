@@ -184,26 +184,68 @@
           </el-checkbox-group>
         </el-form-item>
 
+        <div class="config-section-header">
+          <div>
+            <div class="config-section-title">配置项</div>
+            <div class="config-section-desc">非敏感配置默认显示；敏感配置默认只显示已启用能力需要填写的字段。</div>
+          </div>
+          <el-switch v-model="showAdvancedConfig" active-text="显示全部高级配置" />
+        </div>
+
         <el-divider content-position="left">非敏感配置</el-divider>
-        <el-empty v-if="configFields.length === 0" description="当前平台暂无非敏感配置项" :image-size="72" />
+        <el-empty
+          v-if="displayConfigFields.length === 0"
+          :description="emptyConfigDescription"
+          :image-size="72"
+        />
         <el-row v-else :gutter="16">
-          <el-col v-for="field in configFields" :key="field" :span="12">
-            <el-form-item :label="fieldLabel(field)">
-              <el-input v-model="form.config[field]" :placeholder="`请输入 ${fieldLabel(field)}`" />
+          <el-col v-for="field in displayConfigFields" :key="`${form.provider}-${field}`" :span="12">
+            <el-form-item>
+              <template #label>
+                <span class="field-label">
+                  {{ fieldLabel(field) }}
+                  <el-tooltip :content="fieldDescription(field)" placement="top" effect="dark">
+                    <el-icon class="field-help"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </span>
+              </template>
+              <el-input
+                v-model="form.config[field]"
+                autocomplete="off"
+                :name="`integration-config-${field}`"
+                :placeholder="`请输入 ${fieldLabel(field)}`"
+              />
+              <div class="field-tip">{{ fieldDescription(field) }}</div>
             </el-form-item>
           </el-col>
         </el-row>
 
         <el-divider content-position="left">敏感配置</el-divider>
-        <el-row :gutter="16">
-          <el-col v-for="field in secretFields" :key="field" :span="12">
-            <el-form-item :label="fieldLabel(field)">
+        <el-empty
+          v-if="displaySecretFields.length === 0"
+          :description="emptySecretDescription"
+          :image-size="72"
+        />
+        <el-row v-else :gutter="16">
+          <el-col v-for="field in displaySecretFields" :key="`${form.provider}-${field}`" :span="12">
+            <el-form-item>
+              <template #label>
+                <span class="field-label">
+                  {{ fieldLabel(field) }}
+                  <el-tooltip :content="fieldDescription(field)" placement="top" effect="dark">
+                    <el-icon class="field-help"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </span>
+              </template>
               <el-input
                 v-model="form.secret_config[field]"
                 type="password"
                 show-password
+                autocomplete="new-password"
+                :name="`integration-secret-${field}`"
                 :placeholder="secretPlaceholder(field)"
               />
+              <div class="field-tip">{{ fieldDescription(field) }}</div>
             </el-form-item>
           </el-col>
         </el-row>
@@ -220,7 +262,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { Plus, QuestionFilled, Refresh, Search } from '@element-plus/icons-vue'
 import { integrationApi } from '@/api/integration'
 import type {
   IntegrationCapabilityCode,
@@ -244,6 +286,30 @@ const formRef = ref<FormInstance>()
 const providers = ref<ProviderInfo[]>([])
 const connections = ref<IntegrationConnection[]>([])
 const allConnections = ref<IntegrationConnection[]>([])
+const showAdvancedConfig = ref(false)
+
+// 能力字段映射仅控制前端动态展示，不改变后端接口字段和保存结构
+const COMMON_CAPABILITY_FIELD_MAP: Partial<Record<IntegrationCapabilityCode, string[]>> = {
+  bot_message: ['webhook_url', 'signing_secret'],
+}
+
+const PROVIDER_CAPABILITY_FIELD_MAP: Partial<
+  Record<IntegrationProviderCode, Partial<Record<IntegrationCapabilityCode, string[]>>>
+> = {
+  feishu: {
+    oauth: ['app_id', 'app_secret'],
+    contact_sync: ['app_id', 'app_secret'],
+    event_callback: ['verification_token', 'encrypt_key'],
+  },
+  dingtalk: {
+    oauth: ['app_key', 'app_secret'],
+    contact_sync: ['app_key', 'app_secret'],
+  },
+  wecom: {
+    contact_sync: ['corp_id', 'corp_secret'],
+    event_callback: ['token', 'encoding_aes_key'],
+  },
+}
 
 const query = reactive({
   provider: '' as IntegrationProviderCode | '',
@@ -268,14 +334,32 @@ const rules: FormRules = {
 }
 
 const dialogTitle = computed(() => (editId.value ? '编辑集成连接' : '新增集成连接'))
-const enabledCount = computed(() => connections.value.filter(item => item.enabled).length)
-const defaultCount = computed(() => connections.value.filter(item => item.is_default).length)
-const currentProvider = computed(() => providers.value.find(item => item.code === form.provider))
+const enabledCount = computed(() => connections.value.filter((item: IntegrationConnection) => item.enabled).length)
+const defaultCount = computed(() => connections.value.filter((item: IntegrationConnection) => item.is_default).length)
+const currentProvider = computed(() => providers.value.find((item: ProviderInfo) => item.code === form.provider))
 const configFields = computed(() => currentProvider.value?.config_fields || [])
 const secretFields = computed(() => {
   const provider = currentProvider.value
   if (!provider) return []
-  return Array.from(new Set([...provider.required_secret_fields, ...provider.optional_secret_fields]))
+  return uniqueFields([
+    ...provider.required_secret_fields,
+    ...provider.optional_secret_fields,
+    ...Array.from(capabilityFields(form.provider, provider.capabilities)),
+  ]).filter(field => !configFields.value.includes(field))
+})
+const displayConfigFields = computed(() => {
+  return configFields.value
+})
+const displaySecretFields = computed(() => {
+  if (showAdvancedConfig.value) return secretFields.value
+  return filterFieldsByCapabilities(secretFields.value)
+})
+const emptyConfigDescription = computed(() => {
+  return '当前平台暂无非敏感配置项'
+})
+const emptySecretDescription = computed(() => {
+  if (!form.capabilities.length) return '请选择启用能力后填写配置'
+  return showAdvancedConfig.value ? '当前平台暂无敏感配置项' : '当前启用能力暂无需要填写的敏感配置'
 })
 
 onMounted(async () => {
@@ -333,29 +417,32 @@ function openEdit(row: IntegrationConnection) {
   form.enabled = row.enabled
   form.is_default = row.is_default
   form.capabilities = [...row.capabilities]
-  form.config = stringifyRecord(row.config || {})
-  form.secret_config = {}
+  // 编辑时保持 form.config 原对象引用，避免动态 v-model 绑定丢失，同时兼容旧接口未返回 config 的情况
+  replaceRecord(form.config, normalizeConfigRecord(row.config, row.provider))
+  replaceRecord(form.secret_config, {})
   form.sort = row.sort
   dialogVisible.value = true
 }
 
 function resetForm() {
   const provider = query.provider || providers.value[0]?.code || 'feishu'
+  showAdvancedConfig.value = false
   form.provider = provider
   form.name = ''
   form.enabled = true
   form.is_default = false
   form.capabilities = defaultCapabilities(provider)
-  form.config = {}
-  form.secret_config = {}
+  replaceRecord(form.config, normalizeConfigRecord({}, provider))
+  replaceRecord(form.secret_config, {})
   form.sort = 0
   formRef.value?.clearValidate()
 }
 
 function handleProviderChange() {
+  showAdvancedConfig.value = false
   form.capabilities = defaultCapabilities(form.provider)
-  form.config = {}
-  form.secret_config = {}
+  replaceRecord(form.config, normalizeConfigRecord({}, form.provider))
+  replaceRecord(form.secret_config, {})
 }
 
 async function submitForm() {
@@ -427,17 +514,58 @@ async function handleDelete(row: IntegrationConnection) {
 }
 
 function defaultCapabilities(providerCode: string): IntegrationCapabilityCode[] {
-  const provider = providers.value.find(item => item.code === providerCode)
+  const provider = providers.value.find((item: ProviderInfo) => item.code === providerCode)
   if (!provider) return ['bot_message']
   return provider.capabilities.includes('bot_message') ? ['bot_message'] : provider.capabilities.slice(0, 1)
 }
 
+function filterFieldsByCapabilities(fields: string[]) {
+  const allowedFields = capabilityFields(form.provider, form.capabilities)
+  return fields.filter(field => allowedFields.has(field))
+}
+
+function capabilityFields(provider: IntegrationProviderCode, capabilities: IntegrationCapabilityCode[]) {
+  const fields = new Set<string>()
+
+  capabilities.forEach(capability => {
+    capabilityFieldMap(provider, capability).forEach((field: string) => fields.add(field))
+  })
+
+  return fields
+}
+
+function capabilityFieldMap(provider: IntegrationProviderCode, capability: IntegrationCapabilityCode) {
+  return PROVIDER_CAPABILITY_FIELD_MAP[provider]?.[capability] || COMMON_CAPABILITY_FIELD_MAP[capability] || []
+}
+
+function uniqueFields(fields: string[]) {
+  return Array.from(new Set(fields.filter(Boolean)))
+}
+
+function normalizeConfigRecord(record: Record<string, unknown> | null | undefined, provider: IntegrationProviderCode) {
+  const normalized = stringifyRecord(record || {})
+  const providerConfigFields = providers.value.find((item: ProviderInfo) => item.code === provider)?.config_fields || []
+  providerConfigFields.forEach((field: string) => {
+    if (!(field in normalized)) {
+      normalized[field] = ''
+    }
+  })
+  return normalized
+}
+
+function replaceRecord(target: Record<string, string>, source: Record<string, string>) {
+  Object.keys(target).forEach((key: string) => {
+    delete target[key]
+  })
+  Object.assign(target, source)
+}
+
 function providerConnectionCount(provider: string) {
-  return allConnections.value.filter(item => item.provider === provider).length
+  return allConnections.value.filter((item: IntegrationConnection) => item.provider === provider).length
 }
 
 function providerCodeText(provider: string) {
-  return providers.value.find(item => item.code === provider)?.name || provider
+  return providers.value.find((item: ProviderInfo) => item.code === provider)?.name || provider
 }
 
 function capabilityText(items: IntegrationCapabilityCode[]) {
@@ -471,6 +599,26 @@ function fieldLabel(value: string) {
     app_type: '应用类型',
   }
   return map[value] || value
+}
+
+function fieldDescription(value: string) {
+  // 配置项中文说明仅用于前端提示，不改变提交给后端的字段名和接口结构
+  const map: Record<string, string> = {
+    webhook_url: '机器人 Webhook 地址，用于发送群消息或通知，请从对应平台机器人配置页复制完整 URL。',
+    signing_secret: '机器人签名密钥，用于校验消息来源和生成请求签名，编辑时留空表示继续使用原密钥。',
+    app_id: '开放平台应用 ID，通常用于 OAuth、事件订阅或接口调用的应用身份识别。',
+    app_key: '开放平台应用 Key，常见于钉钉等平台，用于标识当前应用。',
+    app_secret: '开放平台应用密钥，用于换取访问令牌等敏感操作，请妥善保管。',
+    corp_id: '企业 ID，用于定位企业租户，例如企业微信 CorpID 或钉钉企业标识。',
+    corp_secret: '企业级应用密钥，用于获取企业访问令牌，编辑时留空表示不覆盖原值。',
+    encrypt_key: '事件回调加密 Key，用于解密平台推送的加密消息。',
+    verification_token: '事件订阅校验 Token，用于校验回调请求是否来自平台。',
+    token: '回调 Token，用于事件回调 URL 验证和消息签名校验。',
+    encoding_aes_key: 'EncodingAESKey，用于企业微信等平台回调消息的 AES 加解密。',
+    agent_id: '应用 Agent ID，用于企业微信或钉钉内部应用消息发送和接口调用。',
+    app_type: '应用类型，用于区分自建应用、企业内部应用或第三方应用，请按平台配置填写。',
+  }
+  return map[value] || '请按对应协作平台控制台提供的配置值填写。'
 }
 
 function secretPlaceholder(field: string) {
@@ -598,6 +746,46 @@ function asConnection(row: unknown) {
 
 .secret-tip {
   margin-bottom: 16px;
+}
+
+.config-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+}
+
+.config-section-title {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.config-section-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.field-help {
+  color: var(--el-text-color-secondary);
+  cursor: help;
+}
+
+.field-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .w-full {

@@ -55,6 +55,10 @@ class UserService:
     ) -> tuple[list[SysUser], int]:
         """获取用户列表（分页），支持数据权限过滤"""
         from sqlalchemy import func
+        from app.modules.integration.models import (
+            SysExternalIdentity,
+            SysIntegrationConnection,
+        )
         from app.modules.system.models import SysDept
 
         query = select(SysUser, SysDept.name.label("dept_name")).outerjoin(
@@ -103,6 +107,7 @@ class UserService:
 
         user_ids = [row[0].id for row in rows]
         role_map: dict[int, list[dict]] = {uid: [] for uid in user_ids}
+        source_map: dict[int, dict] = {}
 
         if user_ids:
             role_query = (
@@ -115,10 +120,52 @@ class UserService:
             for ur_id, r_id, r_name, r_code in role_result.all():
                 role_map[ur_id].append({"id": r_id, "name": r_name, "code": r_code})
 
+            source_query = (
+                select(
+                    SysExternalIdentity.local_id,
+                    SysExternalIdentity.provider,
+                    SysExternalIdentity.external_id,
+                    SysExternalIdentity.connection_id,
+                    SysIntegrationConnection.name,
+                )
+                .outerjoin(
+                    SysIntegrationConnection,
+                    SysIntegrationConnection.id == SysExternalIdentity.connection_id,
+                )
+                .where(SysExternalIdentity.local_id.in_(user_ids))
+                .where(SysExternalIdentity.identity_type == "user")
+                .where(SysExternalIdentity.is_deleted == False)  # noqa: E712
+                .order_by(SysExternalIdentity.updated_at.desc())
+            )
+            source_result = await self.db.execute(source_query)
+            for (
+                user_id,
+                provider,
+                external_id,
+                connection_id,
+                connection_name,
+            ) in source_result.all():
+                source_map.setdefault(
+                    user_id,
+                    {
+                        "source_type": "external",
+                        "source_provider": provider,
+                        "source_external_id": external_id,
+                        "source_connection_id": connection_id,
+                        "source_connection_name": connection_name,
+                    },
+                )
+
         items = []
         for user, dept_name in rows:
             user.dept_name = dept_name
             user.roles = role_map.get(user.id, [])
+            source = source_map.get(user.id, {"source_type": "local"})
+            user.source_type = source.get("source_type")
+            user.source_provider = source.get("source_provider")
+            user.source_external_id = source.get("source_external_id")
+            user.source_connection_id = source.get("source_connection_id")
+            user.source_connection_name = source.get("source_connection_name")
             items.append(user)
 
         return items, total

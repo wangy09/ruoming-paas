@@ -10,11 +10,13 @@ from app.core.deps import get_current_user, require_permissions
 from app.core.redis import get_redis
 from app.core.response import ApiResponse, ok, paged
 from app.database import get_db
+from app.modules.integration.contact_sync import ContactSyncService
+from app.modules.integration.schemas import ContactSyncRequest, ContactSyncResult
 from app.modules.permission.service import PermissionService
 from app.modules.user.schemas import (
     UserCreate,
     UserInfo,
-    UserListParams,
+    UserListItem,
     UserPasswordUpdate,
     UserRoleAssign,
     UserUpdate,
@@ -55,11 +57,27 @@ async def list_users(
         data_scope=data_scope,
     )
     return paged(
-        items=[UserInfo.model_validate(u) for u in items],
+        items=[UserListItem.model_validate(u) for u in items],
         total=total,
         page=page,
         page_size=page_size,
     )
+
+
+@router.post(
+    "/sync",
+    response_model=ApiResponse[ContactSyncResult],
+    summary="从第三方通讯录同步用户",
+)
+async def sync_users_from_contacts(
+    data: ContactSyncRequest,
+    current_user=Depends(require_permissions("system:user:sync")),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[ContactSyncResult]:
+    svc = ContactSyncService(db, current_user)
+    result = await svc.sync(data)
+    await db.commit()
+    return ok(result, message="同步完成")
 
 
 @router.post(

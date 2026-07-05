@@ -24,7 +24,7 @@ class SysUser(BaseModel):
     nickname: Mapped[str | None] = mapped_column(String(64), comment="昵称/显示名")
     email: Mapped[str | None] = mapped_column(String(128), unique=True, comment="邮箱")
     phone: Mapped[str | None] = mapped_column(String(20), comment="手机号")
-    avatar: Mapped[str | None] = mapped_column(String(256), comment="头像 URL")
+    avatar: Mapped[str | None] = mapped_column(String(1024), comment="头像 URL")
 
     # 状态
     status: Mapped[int] = mapped_column(

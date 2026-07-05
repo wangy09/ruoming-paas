@@ -65,6 +65,16 @@ class UserInfo(BaseModel):
         from_attributes = True
 
 
+class UserListItem(UserInfo):
+    """用户列表项响应，包含账号来源标识。"""
+
+    source_type: str = Field(default="local", description="来源类型：local/external")
+    source_provider: str | None = Field(None, description="外部通讯录平台")
+    source_connection_id: int | None = Field(None, description="外部集成连接 ID")
+    source_connection_name: str | None = Field(None, description="外部集成连接名称")
+    source_external_id: str | None = Field(None, description="外部通讯录用户 ID")
+
+
 class UserListParams(BaseModel):
     """用户列表查询参数"""
 

@@ -40,6 +40,7 @@ async def init_data(reset: bool = False) -> None:
             await ensure_dashboard_menu(db)
             await ensure_integration_menu(db)
             await ensure_navigation_menus(db)
+            await ensure_user_sync_permission(db)
             await init_runtime_configs(db, settings)
             await clear_permission_cache()
             await db.commit()
@@ -229,6 +230,7 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "system:user:menu", "name": "重置密码", "code": "system:user:reset_pwd", "perm_type": "button", "sort": 5},
         {"parent_id": 0, "parent_code": "system:user:menu", "name": "分配角色", "code": "system:user:assign_role", "perm_type": "button", "sort": 6},
         {"parent_id": 0, "parent_code": "system:user:menu", "name": "导出用户", "code": "system:user:export", "perm_type": "button", "sort": 7},
+        {"parent_id": 0, "parent_code": "system:user:menu", "name": "同步用户", "code": "system:user:sync", "perm_type": "button", "sort": 8},
         # ── 用户列权限示例 ────────────────────────────────────────────────
         {"parent_id": 0,  "parent_code": "system:user:menu","name": "用户手机号列", "code": "system:user:column:phone",
          "perm_type": "column", "resource": "user_list", "sort": 1},
@@ -589,6 +591,54 @@ async def clear_permission_cache() -> None:
     except Exception:
         # Redis 不可用不应阻断初始化；缓存会在过期后自动刷新。
         return
+
+
+async def ensure_user_sync_permission(db) -> None:
+    """补齐用户管理的同步按钮权限，并授权给现有角色。"""
+    from sqlalchemy import select
+    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
+
+    menu_result = await db.execute(
+        select(SysPermission).where(SysPermission.code == "system:user:menu")
+    )
+    menu_perm = menu_result.scalar_one_or_none()
+    if not menu_perm:
+        return
+
+    result = await db.execute(
+        select(SysPermission).where(SysPermission.code == "system:user:sync")
+    )
+    perm = result.scalar_one_or_none()
+    if not perm:
+        perm = SysPermission(
+            parent_id=menu_perm.id,
+            name="同步用户",
+            code="system:user:sync",
+            perm_type="button",
+            sort=8,
+            is_system=True,
+        )
+        db.add(perm)
+        await db.flush()
+    else:
+        perm.parent_id = menu_perm.id
+        perm.name = "同步用户"
+        perm.perm_type = "button"
+        perm.sort = 8
+        perm.is_system = True
+
+    roles_result = await db.execute(
+        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
+    )
+    for role in roles_result.scalars().all():
+        exists = await db.execute(
+            select(SysRolePermission).where(
+                SysRolePermission.role_id == role.id,
+                SysRolePermission.permission_id == perm.id,
+            )
+        )
+        if not exists.scalar_one_or_none():
+            db.add(SysRolePermission(role_id=role.id, permission_id=perm.id))
 
 
 async def ensure_dashboard_menu(db) -> None:

@@ -1,5 +1,13 @@
 import { get, post, put, del } from '@/utils/request'
-import type { ApiResponse, PageData, UserListItem, UserCreate, UserUpdate } from '@/types'
+import type {
+  ApiResponse,
+  ContactSyncRequest,
+  ContactSyncResult,
+  PageData,
+  UserCreate,
+  UserListItem,
+  UserUpdate,
+} from '@/types'
 
 export const userApi = {
   list: (params: {
@@ -14,6 +22,9 @@ export const userApi = {
 
   create: (data: UserCreate) =>
     post<ApiResponse<UserListItem>>('/api/v1/users', data),
+
+  syncContacts: (data: ContactSyncRequest) =>
+    post<ApiResponse<ContactSyncResult>>('/api/v1/users/sync', data),
 
   update: (id: number, data: UserUpdate) =>
     put<ApiResponse<UserListItem>>(`/api/v1/users/${id}`, data),

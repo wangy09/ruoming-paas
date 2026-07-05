@@ -22,6 +22,34 @@ class AdapterResult:
     external_message_id: str | None = None
 
 
+@dataclass(frozen=True)
+class ContactDepartment:
+    external_id: str
+    name: str
+    parent_external_id: str | None = None
+    sort: int = 0
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ContactUser:
+    external_id: str
+    name: str
+    nickname: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    avatar: str | None = None
+    department_external_ids: list[str] = field(default_factory=list)
+    active: bool = True
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ContactSyncData:
+    departments: list[ContactDepartment] = field(default_factory=list)
+    users: list[ContactUser] = field(default_factory=list)
+
+
 class CollaborationAdapter(ABC):
     provider: str
     name: str
@@ -46,3 +74,8 @@ class CollaborationAdapter(ABC):
         metadata: dict[str, Any],
     ) -> AdapterResult:
         """发送统一消息。"""
+
+    async def fetch_contacts(self, ctx: AdapterContext) -> ContactSyncData:
+        """拉取通讯录。仅 contact_sync 能力适配器需要实现。"""
+        _ = ctx
+        raise NotImplementedError("当前平台未实现通讯录同步")

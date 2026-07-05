@@ -53,6 +53,7 @@ class IntegrationService:
         adapter = self._get_adapter(data.provider)
         self._validate_capabilities(adapter.capabilities, data.capabilities)
         self._validate_secret_fields(adapter.required_secret_fields, data.secret_config)
+        self.validate_capability_secret_fields(data.provider, data.capabilities, data.secret_config)
 
         conn = SysIntegrationConnection(
             provider=data.provider,
@@ -87,6 +88,7 @@ class IntegrationService:
             secret_config.update(update_data["secret_config"])
             conn.encrypted_config = self._encrypt_secret_config(secret_config)
         self._validate_secret_fields(adapter.required_secret_fields, secret_config)
+        self.validate_capability_secret_fields(conn.provider, conn.capabilities or [], secret_config)
 
         for field in ("name", "enabled", "is_default", "config", "sort"):
             if field in update_data and update_data[field] is not None:
@@ -248,6 +250,28 @@ class IntegrationService:
         missing = [field for field in required_fields if not secret_config.get(field)]
         if missing:
             raise ValidationException(f"缺少敏感配置: {', '.join(missing)}")
+
+    @staticmethod
+    def validate_capability_secret_fields(provider: str, capabilities: Sequence[str], secret_config: dict[str, str]) -> None:
+        required_map: dict[str, dict[str, list[str]]] = {
+            "feishu": {
+                "oauth": ["app_id", "app_secret"],
+                "contact_sync": ["app_id", "app_secret"],
+            },
+            "dingtalk": {
+                "oauth": ["app_key", "app_secret"],
+                "contact_sync": ["app_key", "app_secret"],
+            },
+            "wecom": {
+                "contact_sync": ["corp_id", "corp_secret"],
+            },
+        }
+        required_fields: list[str] = []
+        for capability in capabilities:
+            required_fields.extend(required_map.get(provider, {}).get(capability, []))
+        missing = [field for field in dict.fromkeys(required_fields) if not secret_config.get(field)]
+        if missing:
+            raise ValidationException(f"当前启用能力缺少敏感配置: {', '.join(missing)}")
 
     @staticmethod
     def _encrypt_secret_config(secret_config: dict[str, str]) -> str | None:

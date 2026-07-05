@@ -18,17 +18,43 @@
             <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
           </el-form-item>
         </el-form>
-        <el-button type="primary" :icon="Plus" v-permission="'system:user:create'" @click="openDialog()">
-          新增用户
-        </el-button>
+        <div class="toolbar-actions">
+          <el-button :icon="Refresh" v-permission="'system:user:sync'" @click="openSyncDialog">
+            同步用户
+          </el-button>
+          <el-button type="primary" :icon="Plus" v-permission="'system:user:create'" @click="openDialog()">
+            新增用户
+          </el-button>
+        </div>
       </div>
 
       <el-divider />
 
       <!-- 表格 -->
       <el-table v-loading="loading" :data="tableData" border stripe>
+        <el-table-column label="头像" width="72" align="center">
+          <template #default="{ row }">
+            <el-avatar :size="36" :src="row.avatar || undefined">
+              {{ getAvatarText(row) }}
+            </el-avatar>
+          </template>
+        </el-table-column>
         <el-table-column prop="username" label="用户名" min-width="120" />
-        <el-table-column prop="nickname" label="昵称" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="nickname" label="用户昵称" min-width="120" show-overflow-tooltip />
+        <el-table-column label="来源" min-width="130" align="center">
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="row.source_provider"
+              :content="getSourceProviderTooltip(row)"
+              placement="top"
+            >
+              <el-tag :type="getSourceProviderTagType(row.source_provider)" size="small">
+                {{ getSourceProviderLabel(row.source_provider) }}
+              </el-tag>
+            </el-tooltip>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="dept_name" label="部门" min-width="120">
           <template #default="{ row }">
             {{ row.dept_name || '-' }}
@@ -112,8 +138,8 @@
         <el-form-item label="用户名" prop="username">
           <el-input v-model="form.username" :disabled="!!editId" placeholder="登录用户名" />
         </el-form-item>
-        <el-form-item label="昵称" prop="nickname">
-          <el-input v-model="form.nickname" placeholder="显示名称" />
+        <el-form-item label="用户姓名" prop="nickname">
+          <el-input v-model="form.nickname" placeholder="用户真实姓名或显示名称" />
         </el-form-item>
         <el-form-item label="部门">
           <el-tree-select
@@ -159,6 +185,61 @@
         <el-button type="primary" :loading="submitting" @click="handleAssignRoles">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 通讯录同步对话框 -->
+    <el-dialog v-model="syncDialogVisible" title="同步外部通讯录" width="520px" destroy-on-close>
+      <el-alert
+        title="第一版会同步部门、用户基础信息和头像 URL；默认不会禁用外部通讯录中缺失的本地用户。"
+        type="info"
+        show-icon
+        :closable="false"
+        class="mb-4"
+      />
+      <el-form label-width="110px">
+        <el-form-item label="同步来源">
+          <el-select v-model="syncForm.provider" style="width: 100%" @change="handleSyncProviderChange">
+            <el-option label="飞书" value="feishu" />
+            <el-option label="企业微信" value="wecom" />
+            <el-option label="钉钉" value="dingtalk" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="集成连接">
+          <el-select
+            v-model="syncForm.connection_id"
+            filterable
+            placeholder="请选择已启用通讯录同步的连接"
+            style="width: 100%"
+            :loading="connectionLoading"
+          >
+            <el-option
+              v-for="item in connectionOptions"
+              :key="item.id"
+              :label="syncConnectionLabel(item)"
+              :value="item.id"
+            />
+          </el-select>
+          <div class="form-tip">
+            同步会使用选中的连接凭证。飞书通讯录同步需要该连接已保存 App ID 和 App Secret。
+          </div>
+        </el-form-item>
+        <el-form-item label="同步内容">
+          <el-checkbox v-model="syncForm.sync_departments">部门</el-checkbox>
+          <el-checkbox v-model="syncForm.sync_users">用户</el-checkbox>
+          <el-checkbox v-model="syncForm.sync_avatar">头像</el-checkbox>
+        </el-form-item>
+        <el-form-item label="缺失用户">
+          <el-switch
+            v-model="syncForm.disable_missing_users"
+            active-text="自动禁用"
+            inactive-text="保持不变"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="syncDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="syncing" @click="handleSyncContacts">开始同步</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -167,16 +248,64 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { userApi } from '@/api/user'
+import { integrationApi } from '@/api/integration'
 import { permissionApi } from '@/api/permission'
 import { systemApi } from '@/api/system'
 import { formatDate } from '@/utils/format'
-import type { UserListItem, RoleInfo, DeptInfo } from '@/types'
+import type { IntegrationConnection, UserListItem, RoleInfo, DeptInfo } from '@/types'
 
 // ── 列表 ──────────────────────────────────────────────────────────────────────
 const loading = ref(false)
 const tableData = ref<UserListItem[]>([])
 const total = ref(0)
 const switchLoadingId = ref<number | null>(null)
+
+type SourceTagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
+
+interface SourceProviderMeta {
+  label: string
+  tagType: SourceTagType
+}
+
+const SOURCE_PROVIDER_MAP: Record<string, SourceProviderMeta> = {
+  feishu: { label: '飞书', tagType: 'primary' },
+  dingtalk: { label: '钉钉', tagType: 'warning' },
+  wecom: { label: '企业微信', tagType: 'success' },
+  custom: { label: '自定义', tagType: 'info' },
+}
+
+function getSourceProviderMeta(provider?: string | null): SourceProviderMeta {
+  const providerCode = provider?.trim()
+  if (!providerCode) {
+    return { label: '-', tagType: 'info' }
+  }
+  return SOURCE_PROVIDER_MAP[providerCode] || { label: providerCode, tagType: 'info' }
+}
+
+function getSourceProviderLabel(provider?: string | null) {
+  return getSourceProviderMeta(provider).label
+}
+
+function getSourceProviderTagType(provider?: string | null) {
+  return getSourceProviderMeta(provider).tagType
+}
+
+function getSourceProviderTooltip(row: UserListItem) {
+  const providerLabel = getSourceProviderLabel(row.source_provider)
+  const details = [
+    `来源：${providerLabel}`,
+    row.source_connection_name ? `连接：${row.source_connection_name}` : '',
+    row.source_external_id ? `外部ID：${row.source_external_id}` : '',
+  ].filter(Boolean)
+
+  // 后端暂未返回连接名或外部 ID 时，至少展示来源名称
+  return details.join('；')
+}
+
+function getAvatarText(row: UserListItem) {
+  const displayName = row.nickname || row.username || ''
+  return displayName.trim().slice(0, 1).toUpperCase() || '用'
+}
 
 const query = reactive({
   page: 1,
@@ -323,6 +452,88 @@ async function handleAssignRoles() {
   }
 }
 
+// ── 外部通讯录同步 ────────────────────────────────────────────────────────────
+const syncDialogVisible = ref(false)
+const syncing = ref(false)
+const connectionLoading = ref(false)
+const connectionOptions = ref<IntegrationConnection[]>([])
+
+const syncForm = reactive({
+  provider: 'wecom' as 'feishu' | 'wecom' | 'dingtalk',
+  connection_id: undefined as number | undefined,
+  sync_departments: true,
+  sync_users: true,
+  sync_avatar: true,
+  disable_missing_users: false,
+})
+
+async function openSyncDialog() {
+  syncDialogVisible.value = true
+  await fetchConnectionOptions()
+}
+
+async function handleSyncProviderChange() {
+  syncForm.connection_id = undefined
+  await fetchConnectionOptions()
+}
+
+async function fetchConnectionOptions() {
+  connectionLoading.value = true
+  try {
+    const res = await integrationApi.connections({
+      provider: syncForm.provider,
+      enabled: true,
+    })
+    connectionOptions.value = (res.data || []).filter(item => item.capabilities.includes('contact_sync'))
+    if (!connectionOptions.value.some(item => item.id === syncForm.connection_id)) {
+      syncForm.connection_id = pickDefaultSyncConnection()?.id
+    }
+  } finally {
+    connectionLoading.value = false
+  }
+}
+
+async function handleSyncContacts() {
+  if (!syncForm.connection_id) {
+    ElMessage.warning('请选择已启用通讯录同步的集成连接')
+    return
+  }
+  if (!syncForm.sync_departments && !syncForm.sync_users) {
+    ElMessage.warning('请至少选择一个同步内容')
+    return
+  }
+  await ElMessageBox.confirm('同步会创建或更新部门、用户资料和头像，确认开始？', '确认同步', {
+    type: 'warning',
+  })
+  syncing.value = true
+  try {
+    const res = await userApi.syncContacts({
+      ...syncForm,
+      connection_id: syncForm.connection_id,
+    })
+    const data = res.data
+    ElMessage.success(
+      `同步完成：部门新增 ${data.departments_created}、更新 ${data.departments_updated}；用户新增 ${data.users_created}、更新 ${data.users_updated}`
+    )
+    if (data.errors?.length) {
+      ElMessage.warning(`同步完成但有 ${data.errors.length} 条提示，请查看接口返回详情`)
+    }
+    syncDialogVisible.value = false
+    fetchDeptOptions()
+    fetchList()
+  } finally {
+    syncing.value = false
+  }
+}
+
+function pickDefaultSyncConnection() {
+  return connectionOptions.value.find(item => item.is_default) || connectionOptions.value[0]
+}
+
+function syncConnectionLabel(item: IntegrationConnection) {
+  return `${item.name}${item.is_default ? '（默认）' : ''}${item.secret_configured ? '' : '（未保存密钥）'}`
+}
+
 onMounted(() => {
   fetchList()
   fetchDeptOptions()
@@ -336,9 +547,22 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
 }
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .mt-4 { margin-top: 16px; }
+.mb-4 { margin-bottom: 16px; }
 .mr-1 { margin-right: 4px; }
 .ml-2 { margin-left: 8px; }
+.text-muted { color: var(--el-text-color-secondary); }
+.form-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.4;
+}
 .role-item {
   padding: 8px 0;
   border-bottom: 1px solid #f0f0f0;

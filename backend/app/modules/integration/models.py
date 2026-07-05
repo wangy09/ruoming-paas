@@ -41,3 +41,24 @@ class SysIntegrationConnection(BaseModel):
     sort: Mapped[int] = mapped_column(Integer, default=0, server_default="0", comment="排序")
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="创建人")
     updated_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="更新人")
+
+
+class SysExternalIdentity(BaseModel):
+    """外部平台身份映射，用于组织通讯录同步。"""
+
+    __tablename__ = "sys_external_identity"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "identity_type",
+            "external_id",
+            name="uq_external_identity_connection_type_external",
+        ),
+    )
+
+    connection_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True, comment="集成连接 ID")
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True, comment="平台：dingtalk/wecom/feishu")
+    identity_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True, comment="身份类型：user/dept")
+    external_id: Mapped[str] = mapped_column(String(128), nullable=False, comment="外部平台 ID")
+    local_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True, comment="本地用户或部门 ID")
+    raw_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="最近一次同步原始数据")

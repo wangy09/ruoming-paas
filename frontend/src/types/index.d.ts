@@ -200,7 +200,7 @@ export interface IntegrationConnection {
   enabled: boolean
   is_default: boolean
   capabilities: IntegrationCapabilityCode[]
-  config: Record<string, unknown>
+  config?: Record<string, unknown> | null
   secret_configured: boolean
   status: 0 | 1 | number
   last_test_status?: IntegrationTestStatus | null
@@ -232,6 +232,27 @@ export interface IntegrationTestResult {
   provider: string
   message: string
   details: Record<string, unknown>
+}
+
+export interface ContactSyncRequest {
+  provider: 'feishu' | 'dingtalk' | 'wecom'
+  connection_id?: number | null
+  sync_departments: boolean
+  sync_users: boolean
+  sync_avatar: boolean
+  disable_missing_users: boolean
+}
+
+export interface ContactSyncResult {
+  provider: string
+  connection_id: number
+  departments_created: number
+  departments_updated: number
+  users_created: number
+  users_updated: number
+  users_disabled: number
+  skipped_users: number
+  errors: string[]
 }
 
 // ── 用户相关 ────────────────────────────────────────────────────────────────────
@@ -273,12 +294,20 @@ export interface UserListItem {
   nickname?: string
   email?: string
   phone?: string
+  avatar?: string
+  status: number
   is_active: boolean
   is_superplatform: boolean
   tenant_id: number
   dept_id?: number
   dept_name?: string
   roles: RoleInfo[]
+  /** 外部同步来源提供商，例如 feishu / dingtalk / wecom */
+  source_provider?: IntegrationProviderCode | string | null
+  /** 外部同步来源连接名称 */
+  source_connection_name?: string | null
+  /** 外部系统用户 ID */
+  source_external_id?: string | null
   created_at: string
   login_fail_count: number
   locked_until?: string
@@ -290,6 +319,7 @@ export interface UserCreate {
   nickname?: string
   email?: string
   phone?: string
+  dept_id?: number
   tenant_id?: number
   role_ids?: number[]
 }
@@ -298,6 +328,8 @@ export interface UserUpdate {
   nickname?: string
   email?: string
   phone?: string
+  dept_id?: number
+  status?: number
   is_active?: boolean
 }
 
