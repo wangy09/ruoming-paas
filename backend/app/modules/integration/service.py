@@ -13,6 +13,7 @@ from app.modules.integration.adapters.base import AdapterContext
 from app.modules.integration.models import SysIntegrationConnection
 from app.modules.integration.registry import integration_registry
 from app.modules.integration.schemas import (
+    ContactSyncStrategy,
     IntegrationConnectionCreate,
     IntegrationConnectionOut,
     IntegrationConnectionUpdate,
@@ -136,6 +137,34 @@ class IntegrationService:
             message=result.message,
             details=result.details,
         )
+
+    async def get_contact_sync_strategy(self, connection_id: int) -> ContactSyncStrategy:
+        conn = await self.get_connection(connection_id)
+        if "contact_sync" not in (conn.capabilities or []):
+            raise ValidationException("当前连接未启用通讯录同步能力")
+        config = conn.config or {}
+        strategy = config.get("contact_sync_strategy")
+        if not isinstance(strategy, dict):
+            return ContactSyncStrategy()
+        try:
+            return ContactSyncStrategy.model_validate(strategy)
+        except Exception:
+            return ContactSyncStrategy()
+
+    async def save_contact_sync_strategy(
+        self,
+        connection_id: int,
+        strategy: ContactSyncStrategy,
+    ) -> ContactSyncStrategy:
+        conn = await self.get_connection(connection_id)
+        if "contact_sync" not in (conn.capabilities or []):
+            raise ValidationException("当前连接未启用通讯录同步能力")
+        config = dict(conn.config or {})
+        config["contact_sync_strategy"] = strategy.model_dump()
+        conn.config = config
+        conn.updated_by = self.current_user.id
+        await self.db.flush()
+        return strategy
 
     async def send_message(self, data: IntegrationSendMessageRequest) -> IntegrationSendMessageResult:
         conn = await self._resolve_connection(data.connection_id, data.provider)

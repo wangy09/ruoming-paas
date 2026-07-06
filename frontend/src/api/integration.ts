@@ -1,6 +1,7 @@
 import { del, get, post, put } from '@/utils/request'
 import type {
   ApiResponse,
+  ContactSyncStrategy,
   IntegrationConnection,
   IntegrationConnectionCreate,
   IntegrationConnectionQuery,
@@ -30,4 +31,10 @@ export const integrationApi = {
 
   testConnection: (id: number) =>
     post<ApiResponse<IntegrationTestResult>>(`${BASE_URL}/connections/${id}/test`),
+
+  contactSyncStrategy: (id: number) =>
+    get<ApiResponse<ContactSyncStrategy>>(`${BASE_URL}/connections/${id}/contact-sync-strategy`),
+
+  saveContactSyncStrategy: (id: number, data: ContactSyncStrategy) =>
+    put<ApiResponse<ContactSyncStrategy>>(`${BASE_URL}/connections/${id}/contact-sync-strategy`, data),
 }

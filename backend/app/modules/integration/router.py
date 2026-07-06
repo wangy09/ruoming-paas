@@ -11,6 +11,7 @@ from app.core.response import ApiResponse, ok
 from app.database import get_db
 from app.modules.integration.registry import integration_registry
 from app.modules.integration.schemas import (
+    ContactSyncStrategy,
     IntegrationConnectionCreate,
     IntegrationConnectionOut,
     IntegrationConnectionUpdate,
@@ -97,6 +98,37 @@ async def test_connection(
     result = await svc.test_connection(connection_id)
     await db.commit()
     return ok(result)
+
+
+@router.get(
+    "/connections/{connection_id}/contact-sync-strategy",
+    response_model=ApiResponse[ContactSyncStrategy],
+    summary="获取通讯录同步默认策略",
+)
+async def get_contact_sync_strategy(
+    connection_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[SysUser, Depends(require_permissions("system:user:sync"))],
+) -> ApiResponse[ContactSyncStrategy]:
+    svc = IntegrationService(db, current_user)
+    return ok(await svc.get_contact_sync_strategy(connection_id))
+
+
+@router.put(
+    "/connections/{connection_id}/contact-sync-strategy",
+    response_model=ApiResponse[ContactSyncStrategy],
+    summary="保存通讯录同步默认策略",
+)
+async def save_contact_sync_strategy(
+    connection_id: int,
+    body: ContactSyncStrategy,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[SysUser, Depends(require_permissions("system:user:sync"))],
+) -> ApiResponse[ContactSyncStrategy]:
+    svc = IntegrationService(db, current_user)
+    strategy = await svc.save_contact_sync_strategy(connection_id, body)
+    await db.commit()
+    return ok(strategy, message="保存成功")
 
 
 @router.post("/messages/send", response_model=ApiResponse[IntegrationSendMessageResult], summary="统一发送协作平台消息")

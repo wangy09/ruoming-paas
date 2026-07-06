@@ -1,6 +1,9 @@
 import { get, post, put, del } from '@/utils/request'
 import type {
   ApiResponse,
+  ContactSyncCheckResult,
+  ContactSyncLogItem,
+  ContactSyncPreviewResult,
   ContactSyncRequest,
   ContactSyncResult,
   PageData,
@@ -25,6 +28,15 @@ export const userApi = {
 
   syncContacts: (data: ContactSyncRequest) =>
     post<ApiResponse<ContactSyncResult>>('/api/v1/users/sync', data),
+
+  checkSyncContacts: (data: ContactSyncRequest) =>
+    post<ApiResponse<ContactSyncCheckResult>>('/api/v1/users/sync/check', data),
+
+  previewSyncContacts: (data: ContactSyncRequest) =>
+    post<ApiResponse<ContactSyncPreviewResult>>('/api/v1/users/sync/preview', data),
+
+  contactSyncLogs: (params?: { provider?: string; limit?: number }) =>
+    get<ApiResponse<ContactSyncLogItem[]>>('/api/v1/users/sync/logs', params),
 
   update: (id: number, data: UserUpdate) =>
     put<ApiResponse<UserListItem>>(`/api/v1/users/${id}`, data),

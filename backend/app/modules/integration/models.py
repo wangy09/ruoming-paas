@@ -62,3 +62,18 @@ class SysExternalIdentity(BaseModel):
     external_id: Mapped[str] = mapped_column(String(128), nullable=False, comment="外部平台 ID")
     local_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True, comment="本地用户或部门 ID")
     raw_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="最近一次同步原始数据")
+
+
+class SysContactSyncLog(BaseModel):
+    """外部通讯录同步日志。"""
+
+    __tablename__ = "sys_contact_sync_log"
+
+    connection_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True, comment="集成连接 ID")
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True, comment="平台：dingtalk/wecom/feishu")
+    operation: Mapped[str] = mapped_column(String(16), nullable=False, index=True, comment="操作：preview/sync")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True, comment="状态：success/partial/failed")
+    operator_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True, comment="操作人 ID")
+    request_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="同步请求参数")
+    result_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="同步结果")
+    detail_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True, comment="同步明细摘要")

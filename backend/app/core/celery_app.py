@@ -1,5 +1,4 @@
 """Celery 异步任务配置"""
-import os
 
 from celery import Celery
 
@@ -9,7 +8,7 @@ celery_app = Celery(
     "ruoming_tasks",
     broker=settings.CELERY_BROKER_URL,
     backend=None,
-    include=["app.ai.knowledge.tasks", "app.modules.monitor.tasks"],
+    include=["app.ai.knowledge.tasks", "app.modules.monitor.tasks", "app.modules.integration.tasks"],
 )
 
 celery_app.conf.update(
@@ -21,6 +20,7 @@ celery_app.conf.update(
     enable_utc=True,
     task_routes={
         "app.ai.knowledge.tasks.*": {"queue": "knowledge"},
+        "app.modules.integration.tasks.*": {"queue": "knowledge"},
         "rmtask_test": {"queue": "knowledge"},
     },
     task_annotations={

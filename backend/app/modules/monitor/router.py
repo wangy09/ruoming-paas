@@ -69,10 +69,11 @@ async def list_tasks(
     current_user: Annotated[SysUser, Depends(get_current_user)],
     page_params: Annotated[PageParams, Depends()],
     name: str | None = Query(None, description="任务名称模糊搜索"),
+    func_name: str | None = Query(None, description="Celery Task 完整路径"),
     status: int | None = Query(None, description="状态：1=启用 0=停用"),
 ):
     svc = TaskService(db)
-    data = await svc.list_tasks(page_params, name=name, status=status)
+    data = await svc.list_tasks(page_params, name=name, func_name=func_name, status=status)
     return ok(data)
 
 

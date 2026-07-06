@@ -107,6 +107,50 @@ services:
       - redis
       - postgres
     command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4 -Q knowledge
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import sys; cmd=open('/proc/1/cmdline','rb').read(); sys.exit(0 if b'celery' in cmd else 1)\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - ruoming_net
+
+  # ── 计划任务调度器 ────────────────────────────────────────────────
+  task_scheduler:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: ruoming_task_scheduler
+    restart: unless-stopped
+    env_file:
+      - ../backend/.env.development
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      TASK_SCHEDULER_POLL_INTERVAL: 10
+    volumes:
+      - ../backend:/app
+      - uploads_data:/app/uploads
+      - ../backend/logs:/app/logs
+    depends_on:
+      - redis
+      - postgres
+      - celery_worker
+    command: python -m app.modules.monitor.scheduler
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import sys; cmd=open('/proc/1/cmdline','rb').read(); sys.exit(0 if b'app.modules.monitor.scheduler' in cmd else 1)\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - ruoming_net
 

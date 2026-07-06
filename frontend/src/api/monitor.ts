@@ -21,7 +21,7 @@ export const taskApi = {
   getFunctions: () => request.get('/api/v1/monitor/tasks/functions'),
 
   /** 任务列表 */
-  list: (params: { page?: number; page_size?: number; name?: string; status?: number }) =>
+  list: (params: { page?: number; page_size?: number; name?: string; func_name?: string; status?: number }) =>
     request.get('/api/v1/monitor/tasks', { params }),
 
   /** 创建任务 */

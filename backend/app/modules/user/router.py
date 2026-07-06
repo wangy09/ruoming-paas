@@ -4,6 +4,7 @@ Author: ruoming
 """
 from fastapi import APIRouter, Body, Depends, Query
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_permissions
@@ -11,7 +12,14 @@ from app.core.redis import get_redis
 from app.core.response import ApiResponse, ok, paged
 from app.database import get_db
 from app.modules.integration.contact_sync import ContactSyncService
-from app.modules.integration.schemas import ContactSyncRequest, ContactSyncResult
+from app.modules.integration.models import SysContactSyncLog
+from app.modules.integration.schemas import (
+    ContactSyncCheckResult,
+    ContactSyncLogItem,
+    ContactSyncPreviewResult,
+    ContactSyncRequest,
+    ContactSyncResult,
+)
 from app.modules.permission.service import PermissionService
 from app.modules.user.schemas import (
     UserCreate,
@@ -62,6 +70,62 @@ async def list_users(
         page=page,
         page_size=page_size,
     )
+
+
+@router.post(
+    "/sync/preview",
+    response_model=ApiResponse[ContactSyncPreviewResult],
+    summary="预览第三方通讯录同步影响",
+)
+async def preview_sync_users_from_contacts(
+    data: ContactSyncRequest,
+    current_user=Depends(require_permissions("system:user:sync")),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[ContactSyncPreviewResult]:
+    svc = ContactSyncService(db, current_user)
+    result = await svc.preview(data)
+    await db.commit()
+    return ok(result, message="预览完成")
+
+
+@router.get(
+    "/sync/logs",
+    response_model=ApiResponse[list[ContactSyncLogItem]],
+    summary="第三方通讯录同步日志",
+)
+async def list_contact_sync_logs(
+    provider: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user=Depends(require_permissions("system:user:sync")),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[ContactSyncLogItem]]:
+    conditions = [SysContactSyncLog.is_deleted == False]  # noqa: E712
+    if not current_user.is_superplatform:
+        conditions.append(SysContactSyncLog.tenant_id == current_user.tenant_id)
+    if provider:
+        conditions.append(SysContactSyncLog.provider == provider)
+    result = await db.scalars(
+        select(SysContactSyncLog)
+        .where(*conditions)
+        .order_by(SysContactSyncLog.created_at.desc())
+        .limit(limit)
+    )
+    return ok([ContactSyncLogItem.model_validate(item) for item in result.all()])
+
+
+@router.post(
+    "/sync/check",
+    response_model=ApiResponse[ContactSyncCheckResult],
+    summary="第三方通讯录同步自检",
+)
+async def check_sync_users_from_contacts(
+    data: ContactSyncRequest,
+    current_user=Depends(require_permissions("system:user:sync")),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[ContactSyncCheckResult]:
+    svc = ContactSyncService(db, current_user)
+    result = await svc.check(data)
+    return ok(result, message="自检完成")
 
 
 @router.post(

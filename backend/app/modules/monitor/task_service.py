@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from celery import Celery
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +30,7 @@ class TaskService:
         self,
         page_params: PageParams,
         name: str | None = None,
+        func_name: str | None = None,
         status: int | None = None,
     ) -> dict:
         stmt = select(SysScheduledTask).where(SysScheduledTask.is_deleted == False).order_by(
@@ -38,6 +38,8 @@ class TaskService:
         )
         if name:
             stmt = stmt.where(SysScheduledTask.name.ilike(f"%{name}%"))
+        if func_name:
+            stmt = stmt.where(SysScheduledTask.func_name == func_name)
         if status is not None:
             stmt = stmt.where(SysScheduledTask.status == status)
 
@@ -45,6 +47,7 @@ class TaskService:
             select(func.count(SysScheduledTask.id)).where(
                 SysScheduledTask.is_deleted == False,
                 *([SysScheduledTask.name.ilike(f"%{name}%")] if name else []),
+                *([SysScheduledTask.func_name == func_name] if func_name else []),
                 *([SysScheduledTask.status == status] if status is not None else []),
             )
         )

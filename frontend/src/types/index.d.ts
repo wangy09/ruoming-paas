@@ -234,13 +234,24 @@ export interface IntegrationTestResult {
   details: Record<string, unknown>
 }
 
-export interface ContactSyncRequest {
-  provider: 'feishu' | 'dingtalk' | 'wecom'
-  connection_id?: number | null
+export interface ContactSyncStrategy {
   sync_departments: boolean
   sync_users: boolean
   sync_avatar: boolean
   disable_missing_users: boolean
+  username_strategy: Array<'email_prefix' | 'phone' | 'name' | 'external_id'>
+  nickname_strategy: Array<'name' | 'nickname' | 'username'>
+  overwrite_email: boolean
+  overwrite_phone: boolean
+  overwrite_department: boolean
+  email_update_mode: 'never' | 'if_empty' | 'always'
+  phone_update_mode: 'never' | 'if_empty' | 'always'
+  department_update_mode: 'never' | 'if_empty' | 'always'
+}
+
+export interface ContactSyncRequest extends ContactSyncStrategy {
+  provider: 'feishu' | 'dingtalk' | 'wecom'
+  connection_id?: number | null
 }
 
 export interface ContactSyncResult {
@@ -253,6 +264,52 @@ export interface ContactSyncResult {
   users_disabled: number
   skipped_users: number
   errors: string[]
+}
+
+export interface ContactSyncPreviewItem {
+  action: string
+  target_type: string
+  external_id?: string | null
+  local_id?: number | null
+  name?: string | null
+  reason?: string | null
+}
+
+export interface ContactSyncPreviewResult extends ContactSyncResult {
+  details: ContactSyncPreviewItem[]
+}
+
+export interface ContactSyncCheckItem {
+  key: string
+  name: string
+  status: 'success' | 'warning' | 'failed' | string
+  message: string
+  details?: Record<string, unknown>
+}
+
+export interface ContactSyncCheckResult {
+  provider: string
+  connection_id?: number | null
+  status: 'success' | 'warning' | 'failed' | string
+  summary: string
+  departments_count: number
+  users_count: number
+  avatar_users_count: number
+  missing_users_count: number
+  checks: ContactSyncCheckItem[]
+}
+
+export interface ContactSyncLogItem {
+  id: number
+  provider: string
+  connection_id: number
+  operation: string
+  status: string
+  operator_id?: number | null
+  request_data?: Record<string, unknown> | null
+  result_data?: Record<string, unknown> | null
+  detail_data?: Record<string, unknown> | null
+  created_at?: string
 }
 
 // ── 用户相关 ────────────────────────────────────────────────────────────────────

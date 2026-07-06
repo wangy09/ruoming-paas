@@ -119,6 +119,73 @@ services:
     networks:
       - ruoming_net
 
+  # ── Celery Worker ────────────────────────────────────────────────
+  celery_worker:
+    image: ruoming/paas-backend:${APP_VERSION:-latest}
+    restart: always
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      LOG_JSON: "true"
+    volumes:
+      - uploads_data:/app/uploads
+      - logs_data:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4 -Q knowledge
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import sys; cmd=open('/proc/1/cmdline','rb').read(); sys.exit(0 if b'celery' in cmd else 1)\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - ruoming_net
+
+  # ── 计划任务调度器（单实例）──────────────────────────────────────
+  task_scheduler:
+    image: ruoming/paas-backend:${APP_VERSION:-latest}
+    restart: always
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      LOG_JSON: "true"
+      TASK_SCHEDULER_POLL_INTERVAL: 10
+    volumes:
+      - uploads_data:/app/uploads
+      - logs_data:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      celery_worker:
+        condition: service_started
+    command: python -m app.modules.monitor.scheduler
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import sys; cmd=open('/proc/1/cmdline','rb').read(); sys.exit(0 if b'app.modules.monitor.scheduler' in cmd else 1)\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - ruoming_net
+
 volumes:
   postgres_data:
     driver: local
