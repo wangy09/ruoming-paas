@@ -8,9 +8,11 @@ FROM node:20-alpine AS deps
 
 WORKDIR /app
 
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+
 # 仅复制依赖文件，利用 Docker 缓存层
 COPY package.json package-lock.json* ./
-RUN npm ci --prefer-offline
+RUN npm ci --prefer-offline --registry=https://registry.npmmirror.com
 
 # ── 构建阶段 ────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
@@ -25,7 +27,7 @@ COPY . .
 ARG VITE_API_BASE_URL=/api
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
-RUN npm run build
+RUN NODE_OPTIONS="--max-old-space-size=1024" npx vite build
 
 # ── 生产阶段（纯静态文件，用 Nginx 托管）────────────────────────
 FROM nginx:1.25-alpine AS runner

@@ -42,12 +42,13 @@
 | **统一认证** | JWT（PyJWT）+ Refresh Token 轮换，支持 API Key、SSO/OIDC/企微/钉钉 |
 | **操作审计** | 所有写操作自动记录变更前后快照，登录日志、安全事件完整可查 |
 | **配置中心** | 四级分层（全局→租户→应用→用户），支持动态下发，无需重启 |
-| **多维限流** | 按 IP / 用户 / 租户 / 接口限流，内置 AI Token 配额控制 |
+| **资源与集成** | 文件中心、集成中心、飞书/钉钉/企业微信通讯录同步 |
+| **计划任务** | 独立调度服务，统一管理定时任务和执行日志 |
 
 ### 🤖 原生 AI 能力
 | 能力 | 说明 |
 |------|------|
-| **统一 LLM 网关** | 追鹿大模型为主，兼容 OpenAI 协议，模型热插拔 |
+| **统一模型网关** | 支持模型配置、OpenAI 兼容协议、默认模型、熔断和回退 |
 | **AI Agent 编排** | 单 Agent / Multi-Agent 工作流，支持工具调用、流式输出 |
 | **场景路由** | 混合模式（前端显式→规则引擎→模型分类），自动匹配 Prompt 和参数 |
 | **知识库 RAG** | 混合检索（向量 + BM25 + Rerank + RRF），支持多格式文档 |
@@ -67,12 +68,12 @@
 ## 技术栈
 
 ```
-后端：FastAPI 0.110+  ·  Python 3.11+  ·  SQLAlchemy 2.x  ·  PostgreSQL 15+
+后端：FastAPI 0.110+  ·  Python 3.11+  ·  SQLAlchemy 2.x  ·  PostgreSQL 16 + pgvector
 缓存：Redis 7+
 AI：LangChain（内部封装）·  追鹿 API  ·  OpenAI 兼容
-向量库：Milvus / Qdrant
+向量存储：PostgreSQL + pgvector
 前端：Vue 3.4+  ·  TypeScript  ·  Element Plus  ·  Vite 5
-部署：Docker Compose  ·  Kubernetes（生产可选）
+部署：Docker Compose  ·  Nginx
 ```
 
 ---
@@ -81,19 +82,19 @@ AI：LangChain（内部封装）·  追鹿 API  ·  OpenAI 兼容
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/your-org/ruoming-saas.git
-cd ruoming-saas
+git clone <your-repository-url>
+cd RuoMingPaas
 
 # 2. 复制环境配置
 cp backend/.env.example backend/.env.development
 
-# 3. 一键启动（Docker Compose）
-docker-compose up -d
+# 3. 一键启动（开发环境）
+bash scripts/start.sh dev
 
 # 4. 访问
 # 前端：http://localhost:3000
-# API 文档：http://localhost:8000/docs
-# 默认账号：admin / admin123
+# API 文档：http://localhost:8000/api/docs
+# 默认账号：admin / ruoming@2024
 ```
 
 > 详细步骤见 [01_快速启动.md](./01_快速启动.md)
@@ -109,12 +110,15 @@ docker-compose up -d
 | [00_产品介绍.md](./00_产品介绍.md) | 定位、核心价值、适用场景、对标竞品 | 5 分钟 |
 | [01_快速启动.md](./01_快速启动.md) | 本地运行、环境要求、常见问题 | 15 分钟 |
 | [02_核心概念.md](./02_核心概念.md) | 租户、模块、Agent、权限等核心概念 | 10 分钟 |
+| [用户手册.md](./用户手册.md) | 启动服务、开发模块、权限菜单接入、内置基础功能 | 20 分钟 |
+| [当前功能清单.md](./当前功能清单.md) | 当前代码已实现的页面、路径和模块索引 | 10 分钟 |
 
 ### 🏗️ 架构设计
 
 | 文档 | 说明 | 版本 |
 |------|------|------|
-| [03_整体架构.md](./01_架构总览.md) | 系统架构、技术选型、模块关系、设计原则 | v3 |
+| [01_架构总览.md](./01_架构总览.md) | 系统架构、技术选型、模块关系、设计原则 | v3.2 |
+| [architecture.html](./architecture.html) | 可视化系统架构图，适合评审、演示和截图 | v3.2 |
 | [04_项目结构.md](./02_项目结构.md) | 目录结构、分层规范、多环境配置 | v2 |
 | [05_多租户设计.md](./06_多租户设计.md) | 租户注册、数据隔离、配额管理 | v2 |
 | [06_权限系统.md](./03_权限系统设计.md) | RBAC + 角色继承 + 细粒度权限 | v2 |
@@ -183,4 +187,10 @@ AI 模块       ── 按需启用（LLM网关/Agent/知识库RAG/工具链/Pro
 
 ---
 
-*文档版本 v3.0 · 更新于 2026-06-17*
+## 平台内文档
+
+用户手册已集成到后台菜单：`帮助中心 / 用户手册`，路由为 `/help/manual`。现有环境重新执行 `python backend/scripts/init_data.py` 后会自动补齐菜单和角色授权。
+
+---
+
+*文档版本 v3.2 · 更新于 2026-07-06*

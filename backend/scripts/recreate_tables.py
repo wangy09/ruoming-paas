@@ -7,6 +7,8 @@ import sys
 
 sys.path.insert(0, '/app')
 
+from sqlalchemy import text  # noqa: E402
+
 
 async def recreate_tables():
     from app.database import _write_engine, Base
@@ -23,6 +25,7 @@ async def recreate_tables():
     from app.modules.monitor.models import SysScheduledTask, SysTaskExecutionLog
     from app.modules.message.models import SysNotice, SysUserMessage
     from app.modules.file_center.models import SysFile
+    from app.modules.integration.models import SysIntegrationConnection, SysExternalIdentity, SysContactSyncLog
 
     from app.ai.conversation.models import (
         AiConversation, AiMessage, AiEntityMemory, AiKeyValueMemory, AiCallLog
@@ -42,6 +45,26 @@ async def recreate_tables():
     async with _write_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+        # sys_config_history 没有 ORM 模型，用原生 SQL 建表
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sys_config_history (
+                id          BIGSERIAL PRIMARY KEY,
+                config_key  VARCHAR(256) NOT NULL,
+                scope_type  VARCHAR(20) NOT NULL,
+                scope_id    BIGINT,
+                old_value   TEXT,
+                new_value   TEXT,
+                changed_by  BIGINT,
+                changed_at  TIMESTAMPTZ DEFAULT NOW(),
+                remark      TEXT
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_sys_config_history_config_key ON sys_config_history (config_key)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_sys_config_history_changed_at ON sys_config_history (changed_at)"
+        ))
     print("Tables recreated successfully")
 
     # 初始化内置计划任务种子数据

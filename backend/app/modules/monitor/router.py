@@ -1,6 +1,6 @@
 """
 若茗 PaaS - 系统监控 API
-包含服务监控（server）和计划任务（task）两个子模块
+包含服务监控（server）、计划任务（task）和熔断器监控（circuit）三个子模块
 Author: ruoming
 """
 from typing import Annotated
@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_permissions
 from app.core.response import ok
 from app.database import get_db
 from app.modules.monitor.server_service import ServerMonitorService
@@ -17,6 +17,122 @@ from app.modules.user.models import SysUser
 from app.core.utils.pagination import PageParams
 
 router = APIRouter()
+
+
+# ══════════════════════════════════════════════════════════════
+# 熔断器监控
+# ══════════════════════════════════════════════════════════════
+
+@router.get("/circuit/breakers", summary="熔断器状态列表")
+async def list_circuit_breakers(
+    current_user: Annotated[SysUser, Depends(require_permissions("monitor:circuit:view"))],
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取所有服务的熔断器状态，包括：
+    - LLM: AI 模型调用
+    - INTEGRATION: 第三方集成（飞书、钉钉、企微）
+    - WEBSEARCH: 网页搜索
+    - CODEGEN: 代码生成
+    
+    状态说明：
+    - CLOSED: 正常，熔断器关闭
+    - OPEN: 熔断中，自动切换到备用模型
+    - HALF_OPEN: 半开状态，允许部分请求尝试恢复
+    """
+    import time
+    from app.core.redis import get_redis_client
+    from app.ai.llm.models import AiModelConfig
+    from sqlalchemy import select
+
+    redis = await get_redis_client()
+
+    stmt = select(AiModelConfig.id, AiModelConfig.name, AiModelConfig.provider)\
+        .where(AiModelConfig.is_deleted == False)\
+        .where(AiModelConfig.status == 1)
+    result = await db.execute(stmt)
+    model_configs = result.all()
+
+    circuit_data = []
+    for config in model_configs:
+        model_config_id = config.id
+
+        state_new = await redis.get(f"circuit:llm:{model_config_id}:state")
+        state_old = await redis.get(f"llm:circuit:{model_config_id}:state")
+        state = state_new or state_old or "closed"
+
+        fail_count_new = await redis.get(f"circuit:llm:{model_config_id}:fail_count")
+        fail_count_old = await redis.get(f"llm:circuit:{model_config_id}:fail_count")
+        fail_count = int(fail_count_new or fail_count_old or "0")
+
+        open_at_new = await redis.get(f"circuit:llm:{model_config_id}:open_at")
+        open_at_old = await redis.get(f"llm:circuit:{model_config_id}:open_at")
+        open_at = open_at_new or open_at_old
+
+        data = {
+            "circuit_type": "llm",
+            "service_id": str(model_config_id),
+            "model_config_id": model_config_id,
+            "model_name": config.name,
+            "provider": config.provider,
+            "state": state.upper(),
+            "fail_count": fail_count,
+            "fail_threshold": 5,
+            "open_timeout": 60,
+        }
+
+        if open_at:
+            elapsed = int(time.time() - float(open_at))
+            remaining = max(0, 60 - elapsed)
+            data["open_at"] = int(float(open_at))
+            data["elapsed_seconds"] = elapsed
+            data["remaining_seconds"] = remaining
+
+        circuit_data.append(data)
+
+    return ok(circuit_data)
+
+
+@router.post("/circuit/breakers/{circuit_type}/{service_id}/reset", summary="重置熔断器")
+async def reset_circuit_breaker(
+    circuit_type: str,
+    service_id: str,
+    current_user: Annotated[SysUser, Depends(require_permissions("monitor:circuit:reset"))],
+):
+    """
+    手动重置指定服务的熔断器状态（强制关闭）。
+    适用于：熔断器误触发、故障已修复需要立即恢复服务。
+    
+    circuit_type: llm / integration / websearch / codegen
+    service_id: 服务标识（模型ID或集成ID）
+    """
+    from app.core.circuit_breaker import CircuitBreakerManager
+
+    success = await CircuitBreakerManager.reset_breaker(circuit_type, service_id)
+    if success:
+        return ok(message="熔断器已重置")
+    return ok(message="重置失败或熔断器不存在")
+
+
+@router.post("/circuit/breakers/{circuit_type}/{service_id}/trip", summary="手动触发熔断")
+async def trip_circuit_breaker(
+    circuit_type: str,
+    service_id: str,
+    current_user: Annotated[SysUser, Depends(require_permissions("monitor:circuit:trip"))],
+):
+    """
+    手动触发指定服务的熔断（强制打开）。
+    适用于：外部服务即将维护、已知故障需要立即隔离。
+    
+    circuit_type: llm / integration / websearch / codegen
+    service_id: 服务标识（模型ID或集成ID）
+    """
+    from app.core.circuit_breaker import CircuitBreakerManager
+
+    success = await CircuitBreakerManager.trip_breaker(circuit_type, service_id)
+    if success:
+        return ok(message="熔断器已触发")
+    return ok(message="触发失败")
 
 # ══════════════════════════════════════════════════════════════
 # 服务监控

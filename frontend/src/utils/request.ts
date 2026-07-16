@@ -169,7 +169,13 @@ request.interceptors.response.use(
       errMsg = '无操作权限'
       ElMessage.error(errMsg)
     } else if (response.status === 429) {
-      errMsg = '请求过于频繁，请稍后重试'
+      const retryAfter = response.headers['retry-after']
+      const backendMsg = response.data?.message || '请求过于频繁，请稍后重试'
+      if (retryAfter) {
+        errMsg = `${backendMsg}（建议 ${retryAfter} 秒后重试）`
+      } else {
+        errMsg = backendMsg
+      }
       ElMessage.warning(errMsg)
     } else if (response.status >= 500) {
       errMsg = response.data?.message || '服务器异常，请稍后重试'

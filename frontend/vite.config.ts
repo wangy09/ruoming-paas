@@ -58,11 +58,6 @@ export default defineConfig(({ mode }) => {
           chunkFileNames: 'assets/js/[name]-[hash].js',
           entryFileNames: 'assets/js/[name]-[hash].js',
           assetFileNames: 'assets/[ext]/[name]-[hash].[ext]',
-          manualChunks: {
-            'vendor-vue': ['vue', 'vue-router', 'pinia'],
-            'vendor-element': ['element-plus', '@element-plus/icons-vue'],
-            'vendor-echarts': ['echarts', 'vue-echarts'],
-          },
         },
       },
     },

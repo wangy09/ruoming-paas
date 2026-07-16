@@ -6,7 +6,7 @@ Author: ruoming
 import time
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ from app.ai.llm.schemas import ChatRequest
 from app.ai.llm.service import LLMService
 from app.core.deps import get_current_user
 from app.core.exceptions import NotFoundException
+from app.core.rate_limit import limiter, get_user_key
 from app.core.response import ApiResponse, PageData, ok, paged
 from app.core.utils.pagination import PageParams
 from app.database import get_db
@@ -63,8 +64,10 @@ async def delete_conversation(
 
 
 @router.post("/chat", summary="AI 对话（支持流式 SSE）")
+@limiter.limit("30/minute", key_func=get_user_key)
 async def chat(
     data: ChatRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):

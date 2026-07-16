@@ -9,22 +9,18 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.core.error_codes import SysErrCode
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
 from app.core.middleware.logging import RequestLoggingMiddleware
+from app.core.middleware.rate_limit import TenantRateLimitMiddleware
 from app.core.middleware.request_id import RequestIDMiddleware
 from app.core.middleware.tenant import TenantMiddleware
+from app.core.rate_limit import limiter, setup_rate_limit
 
 logger = structlog.get_logger(__name__)
-
-# ── 限流器（slowapi）─────────────────────────────────────────────────────────
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -118,8 +114,7 @@ app = FastAPI(
 )
 
 # ── 限流扩展 ──────────────────────────────────────────────────────────────────
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+setup_rate_limit(app)
 
 # ── 中间件（注意顺序：后注册的先执行）──────────────────────────────────────
 # 1. RequestID（最先执行，为后续中间件提供 trace_id）
@@ -131,7 +126,10 @@ app.add_middleware(RequestLoggingMiddleware)
 # 3. 租户解析（在认证之前解析租户）
 app.add_middleware(TenantMiddleware)
 
-# 4. CORS
+# 4. 租户级限流（依赖 tenant_id）
+app.add_middleware(TenantRateLimitMiddleware)
+
+# 5. CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,

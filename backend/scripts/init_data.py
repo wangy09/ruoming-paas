@@ -40,11 +40,12 @@ async def init_data(reset: bool = False) -> None:
             await ensure_dashboard_menu(db)
             await ensure_integration_menu(db)
             await ensure_navigation_menus(db)
+            await ensure_help_manual_menu(db)
             await ensure_user_sync_permission(db)
             await init_runtime_configs(db, settings)
             await clear_permission_cache()
             await db.commit()
-            logger.info("already_initialized", msg="种子数据已存在，已整理导航菜单并补齐运行时配置")
+            logger.info("already_initialized", msg="种子数据已存在，已整理导航菜单、用户手册并补齐运行时配置")
             return
 
         if reset:
@@ -448,6 +449,27 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "monitor:task:menu", "name": "查看执行日志", "code": "monitor:task:log:view", "perm_type": "button", "sort": 6},
         {"parent_id": 0, "parent_code": "monitor:task:menu", "name": "清空日志", "code": "monitor:task:log:clear", "perm_type": "button", "sort": 7},
 
+        {
+            "parent_id": 0, "parent_code": "monitor", "name": "熔断器监控", "code": "monitor:circuit:menu",
+            "perm_type": "menu", "path": "/monitor/circuit",
+            "component": "monitor/circuit/index", "icon": "Shield", "sort": 430, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "monitor:circuit:menu", "name": "查看熔断器", "code": "monitor:circuit:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "monitor:circuit:menu", "name": "重置熔断器", "code": "monitor:circuit:reset", "perm_type": "button", "sort": 2},
+
+        # ── 帮助中心（根菜单）────────────────────────────────────────
+        {
+            "parent_id": 0, "name": "帮助中心", "code": "help",
+            "perm_type": "menu", "path": "/help", "component": "",
+            "icon": "QuestionFilled", "sort": 450, "is_visible": True,
+        },
+        {
+            "parent_id": 0, "parent_code": "help", "name": "用户手册", "code": "help:manual:menu",
+            "perm_type": "menu", "path": "/help/manual",
+            "component": "help/manual/index", "icon": "Reading", "sort": 451, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "help:manual:menu", "name": "查看用户手册", "code": "help:manual:view", "perm_type": "button", "sort": 1},
+
     ]
 
     for p in perms:
@@ -767,6 +789,90 @@ async def ensure_integration_menu(db) -> None:
         elif menu_perm:
             perm.parent_id = menu_perm.id
         ensured_perms.append(perm)
+    await db.flush()
+
+    roles_result = await db.execute(
+        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
+    )
+    roles = list(roles_result.scalars().all())
+    for role in roles:
+        for perm in ensured_perms:
+            exists = await db.execute(
+                select(SysRolePermission).where(
+                    SysRolePermission.role_id == role.id,
+                    SysRolePermission.permission_id == perm.id,
+                )
+            )
+            if exists.scalar_one_or_none():
+                continue
+            db.add(SysRolePermission(role_id=role.id, permission_id=perm.id))
+
+
+async def ensure_help_manual_menu(db) -> None:
+    """补齐平台内用户手册菜单，并给现有角色授权。"""
+    from sqlalchemy import select
+    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
+
+    items = [
+        {
+            "parent_id": 0,
+            "name": "帮助中心",
+            "code": "help",
+            "perm_type": "menu",
+            "path": "/help",
+            "component": "",
+            "icon": "QuestionFilled",
+            "sort": 450,
+            "is_visible": True,
+            "is_system": True,
+        },
+        {
+            "name": "用户手册",
+            "code": "help:manual:menu",
+            "perm_type": "menu",
+            "path": "/help/manual",
+            "component": "help/manual/index",
+            "icon": "Reading",
+            "sort": 451,
+            "is_visible": True,
+            "is_system": True,
+        },
+        {
+            "name": "查看用户手册",
+            "code": "help:manual:view",
+            "perm_type": "button",
+            "sort": 1,
+            "is_system": True,
+        },
+    ]
+
+    ensured_perms = []
+    root_perm = None
+    manual_perm = None
+    for item in items:
+        result = await db.execute(
+            select(SysPermission).where(SysPermission.code == item["code"])
+        )
+        perm = result.scalar_one_or_none()
+        if not perm:
+            perm = SysPermission(**item)
+            db.add(perm)
+            await db.flush()
+        else:
+            for key, value in item.items():
+                setattr(perm, key, value)
+
+        if item["code"] == "help":
+            root_perm = perm
+        elif item["code"] == "help:manual:menu":
+            manual_perm = perm
+            if root_perm:
+                perm.parent_id = root_perm.id
+        elif manual_perm:
+            perm.parent_id = manual_perm.id
+
+        ensured_perms.append(perm)
+
     await db.flush()
 
     roles_result = await db.execute(

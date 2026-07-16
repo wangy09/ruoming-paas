@@ -525,7 +525,7 @@
 <header>
   <div class="logo-badge">Enterprise PaaS Architecture</div>
   <h1>若茗 PaaS 系统架构</h1>
-  <p class="subtitle">企业级 · AI 驱动 · 多租户底座 &nbsp;|&nbsp; <span>v3.0</span> &nbsp;|&nbsp; FastAPI + Vue3 + LLM Gateway</p>
+  <p class="subtitle">企业级 · AI 驱动 · 多租户底座 &nbsp;|&nbsp; <span>v3.2</span> &nbsp;|&nbsp; FastAPI + Vue3 + LLM Gateway + Integration Platform</p>
 </header>
 
 <div class="canvas">
@@ -667,12 +667,13 @@
       <div class="group-label">L2 — 通用引擎</div>
       <div class="module-grid">
         <div class="module-chip chip-l2">📡 事件总线</div>
-        <div class="module-chip chip-l2">⏰ 定时任务</div>
+        <div class="module-chip chip-l2">⏰ 计划任务</div>
         <div class="module-chip chip-l2">🚦 接口限流</div>
         <div class="module-chip chip-l2">📥 数据导入</div>
         <div class="module-chip chip-l2">📤 数据导出</div>
-        <div class="module-chip chip-l2">🔍 全文搜索</div>
-        <div class="module-chip chip-l2">📊 审批流程</div>
+        <div class="module-chip chip-l2">🔄 外部联系人同步</div>
+        <div class="module-chip chip-l2">🧪 同步预检 / 预览</div>
+        <div class="module-chip chip-l2">🧹 配置缓存失效</div>
       </div>
 
       <div class="group-label">L3 — 通用模块</div>
@@ -681,7 +682,8 @@
         <div class="module-chip chip-l3">📁 文件管理</div>
         <div class="module-chip chip-l3">📖 数据字典</div>
         <div class="module-chip chip-l3">📈 系统监控</div>
-        <div class="module-chip chip-l3">🔗 单点登录</div>
+        <div class="module-chip chip-l3">🔗 集成中心</div>
+        <div class="module-chip chip-l3">🔐 凭证脱敏</div>
         <div class="module-chip chip-l3">🤖 代码生成</div>
       </div>
 
@@ -709,6 +711,13 @@
         <div style="text-align:center;color:var(--text-muted);font-size:12px;">↓ 覆盖</div>
         <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:8px 10px;color:#6ee7b7;font-weight:600;">👤 User（用户级）</div>
         <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,.06);padding-top:10px;">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;">运行机制</div>
+          <div style="display:flex;flex-direction:column;gap:3px;font-size:10px;color:#94a3b8;margin-bottom:10px;">
+            <span>config:merged:* Redis 缓存</span>
+            <span>写入后自动清理合并缓存</span>
+            <span>加密配置列表脱敏 / 表单不回显</span>
+            <span>public 接口仅返回公开非加密配置</span>
+          </div>
           <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;">AI 专项配置键</div>
           <div style="display:flex;flex-direction:column;gap:3px;font-size:10px;color:#94a3b8;">
             <span>ai.default_provider</span>
@@ -829,6 +838,48 @@
   <!-- 连接线 -->
   <div class="connector">
     <div class="connector-line"><div class="connector-arrow"></div></div>
+    <span class="connector-label">Async / Integration</span>
+  </div>
+
+  <!-- ════════════════════ 异步任务与外部集成 ════════════════════ -->
+  <div class="layer theme-cyan">
+    <div class="layer-header">
+      <div class="layer-icon">🔄</div>
+      <div class="layer-title">异步任务 · 外部集成</div>
+      <div class="layer-badge">Scheduler + Worker</div>
+    </div>
+    <div class="cards">
+      <div class="card theme-cyan">
+        <span class="card-icon">⏱️</span>
+        <div class="card-name">task_scheduler</div>
+        <div class="card-desc">轮询 SysScheduledTask<br>FOR UPDATE SKIP LOCKED 防重复调度</div>
+      </div>
+      <div class="card theme-cyan">
+        <span class="card-icon">⚙️</span>
+        <div class="card-name">Celery Worker</div>
+        <div class="card-desc">异步任务执行<br>通讯录同步 / 知识库处理 / 导入导出</div>
+      </div>
+      <div class="card theme-cyan">
+        <span class="card-icon">📬</span>
+        <div class="card-name">Redis Broker</div>
+        <div class="card-desc">任务队列 / 结果后端<br>缓存 / PubSub / 分布式锁</div>
+      </div>
+      <div class="card theme-cyan">
+        <span class="card-icon">🔗</span>
+        <div class="card-name">集成连接</div>
+        <div class="card-desc">飞书 / 钉钉 / 企业微信<br>凭证校验 / 能力开关 / 同步日志</div>
+      </div>
+      <div class="card theme-cyan">
+        <span class="card-icon">🧾</span>
+        <div class="card-name">同步治理</div>
+        <div class="card-desc">预检 / 预览 / 执行<br>按 connection_id 去重创建计划任务</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 连接线 -->
+  <div class="connector">
+    <div class="connector-line"><div class="connector-arrow"></div></div>
   </div>
 
   <!-- ════════════════════ 数据存储层 ════════════════════ -->
@@ -841,28 +892,28 @@
     <div class="storage-row">
       <div class="storage-card">
         <span class="storage-card-icon">🐘</span>
-        <div class="storage-card-name">PostgreSQL 15+</div>
+        <div class="storage-card-name">PostgreSQL 16 + pgvector</div>
         <div class="storage-card-desc">主数据库<br>异步 SQLAlchemy 2.x<br>TenantAwareRepository</div>
       </div>
       <div class="storage-card">
         <span class="storage-card-icon">⚡</span>
         <div class="storage-card-name">Redis 7+</div>
-        <div class="storage-card-desc">缓存 · 会话 · 任务队列<br>Pub/Sub 配置失效广播<br>分布式锁</div>
+        <div class="storage-card-desc">缓存 · 会话 · 任务队列<br>config:merged:* 合并配置缓存<br>Pub/Sub 失效广播</div>
       </div>
       <div class="storage-card">
         <span class="storage-card-icon">🧠</span>
-        <div class="storage-card-name">向量数据库</div>
-        <div class="storage-card-desc">pgvector（MVP）<br>→ Milvus / Qdrant（生产）<br>VectorStoreAdapter 抽象切换</div>
+        <div class="storage-card-name">向量存储</div>
+        <div class="storage-card-desc">pgvector 内置<br>知识库 Embedding<br>RAG 相似度检索</div>
       </div>
       <div class="storage-card">
         <span class="storage-card-icon">📦</span>
-        <div class="storage-card-name">对象存储</div>
-        <div class="storage-card-desc">MinIO / 阿里云 OSS<br>文件签名下载<br>权限控制</div>
+        <div class="storage-card-name">文件存储</div>
+        <div class="storage-card-desc">uploads 持久化卷<br>导入导出文件<br>对象存储可扩展</div>
       </div>
       <div class="storage-card">
-        <span class="storage-card-icon">🔍</span>
-        <div class="storage-card-name">全文检索</div>
-        <div class="storage-card-desc">PG FTS（内置）<br>Elasticsearch（可选）<br>BM25 关键词检索</div>
+        <span class="storage-card-icon">🧾</span>
+        <div class="storage-card-name">运行日志</div>
+        <div class="storage-card-desc">操作审计<br>计划任务执行记录<br>联系人同步日志</div>
       </div>
     </div>
   </div>
@@ -885,52 +936,51 @@
         <div class="infra-chip-name">Docker<br>Compose</div>
       </div>
       <div class="infra-chip">
-        <span class="infra-chip-icon">☸️</span>
-        <div class="infra-chip-name">Kubernetes<br>（生产可选）</div>
+        <span class="infra-chip-icon">🚀</span>
+        <div class="infra-chip-name">scripts/start.sh<br>统一启动</div>
       </div>
       <div class="infra-chip" style="position:relative;">
+        <span class="infra-chip-icon">🧩</span>
+        <div class="infra-chip-name">backend<br>API 服务</div>
+      </div>
+      <div class="infra-chip">
+        <span class="infra-chip-icon">🎨</span>
+        <div class="infra-chip-name">frontend<br>Vite 服务</div>
+      </div>
+      <div class="infra-chip">
         <span class="infra-chip-icon">⚙️</span>
-        <div class="infra-chip-name">CI/CD 可插拔<br><span style="font-size:9px;color:#475569;">GitHub / GitLab / Gitea</span></div>
+        <div class="infra-chip-name">celery_worker<br>异步任务</div>
       </div>
       <div class="infra-chip">
-        <span class="infra-chip-icon">🔧</span>
-        <div class="infra-chip-name">Makefile<br>统一脚本层</div>
+        <span class="infra-chip-icon">⏱️</span>
+        <div class="infra-chip-name">task_scheduler<br>计划调度</div>
       </div>
       <div class="infra-chip">
-        <span class="infra-chip-icon">🏠</span>
-        <div class="infra-chip-name">镜像仓库<br>GHCR / Harbor</div>
-      </div>
-      <div class="infra-chip">
-        <span class="infra-chip-icon">📊</span>
-        <div class="infra-chip-name">Prometheus<br>+ Grafana</div>
+        <span class="infra-chip-icon">📦</span>
+        <div class="infra-chip-name">独立卷<br>uploads / node_modules</div>
       </div>
       <div class="infra-chip">
         <span class="infra-chip-icon">📋</span>
-        <div class="infra-chip-name">Loki / ELK<br>日志收集</div>
-      </div>
-      <div class="infra-chip">
-        <span class="infra-chip-icon">🔭</span>
-        <div class="infra-chip-name">OpenTelemetry<br>链路追踪</div>
+        <div class="infra-chip-name">logs<br>宿主机持久化</div>
       </div>
     </div>
     <!-- CI/CD 流水线说明 -->
     <div style="margin-top:12px;padding:10px 14px;background:rgba(100,116,139,.05);border:1px solid rgba(100,116,139,.15);border-radius:8px;font-size:10px;color:#64748b;">
-      <span style="font-weight:600;color:#94a3b8;">CI/CD 流水线：</span>
-      &nbsp;push →
-      <span style="color:#6ee7b7;">lint + test</span> →
-      <span style="color:#93c5fd;">docker build + push</span> →
-      <span style="color:#fcd34d;">deploy dev</span> →
-      <span style="color:#fca5a5;">人工审批</span> →
-      <span style="color:#ef4444;">deploy prod</span>
-      &nbsp;·&nbsp; 业务逻辑统一封装在 Makefile，CI 平台只负责触发
+      <span style="font-weight:600;color:#94a3b8;">本地运行拓扑：</span>
+      &nbsp;postgres + redis →
+      <span style="color:#93c5fd;">backend</span> →
+      <span style="color:#6ee7b7;">frontend</span>，
+      <span style="color:#c4b5fd;">celery_worker</span> 与
+      <span style="color:#fcd34d;">task_scheduler</span>
+      独立进程运行；前端依赖使用专用 node_modules 卷，避免宿主机目录损坏。
     </div>
   </div>
 
 </div><!-- /canvas -->
 
 <footer>
-  若茗 PaaS 系统架构图 &nbsp;<span>v3.1</span>&nbsp; · &nbsp;FastAPI + Vue3 + LangChain + PostgreSQL + pgvector + Redis
-  &nbsp;|&nbsp; 更新时间：<span>2026-06-17</span>
+  若茗 PaaS 系统架构图 &nbsp;<span>v3.2</span>&nbsp; · &nbsp;FastAPI + Vue3 + LangChain + PostgreSQL + pgvector + Redis + Celery
+  &nbsp;|&nbsp; 更新时间：<span>2026-07-06</span>
 </footer>
 
 </body>

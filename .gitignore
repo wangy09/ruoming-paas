@@ -32,6 +32,9 @@
 **/logs/
 # 保留 .gitkeep 占位，确保 logs 目录可以提交到仓库
 !**/logs/.gitkeep
+# 前端操作日志页面目录不是运行日志目录，需要纳入版本管理
+!frontend/src/views/audit/logs/
+!frontend/src/views/audit/logs/index.vue
 **/*.log
 
 # IDE

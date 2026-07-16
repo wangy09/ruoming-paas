@@ -14,6 +14,36 @@ export const monitorApi = {
     request.get('/api/v1/monitor/server/network', { params: iface ? { iface } : {} }),
 }
 
+// ── 熔断器监控 ────────────────────────────────────────────────
+
+export interface CircuitBreakerState {
+  circuit_type: 'llm' | 'integration' | 'websearch' | 'codegen'
+  service_id: string
+  model_config_id?: number
+  model_name?: string
+  provider?: string
+  state: 'CLOSED' | 'OPEN' | 'HALF_OPEN'
+  fail_count: number
+  fail_threshold: number
+  open_timeout: number
+  open_at?: number
+  elapsed_seconds?: number
+  remaining_seconds?: number
+}
+
+export const circuitBreakerApi = {
+  /** 获取所有熔断器状态 */
+  list: () => request.get<{ data: CircuitBreakerState[] }>('/api/v1/monitor/circuit/breakers'),
+
+  /** 重置指定熔断器（关闭熔断） */
+  reset: (circuitType: string, serviceId: string) =>
+    request.post(`/api/v1/monitor/circuit/breakers/${circuitType}/${serviceId}/reset`),
+
+  /** 手动触发熔断（打开熔断器） */
+  trip: (circuitType: string, serviceId: string) =>
+    request.post(`/api/v1/monitor/circuit/breakers/${circuitType}/${serviceId}/trip`),
+}
+
 // ── 计划任务 ──────────────────────────────────────────────────
 
 export const taskApi = {

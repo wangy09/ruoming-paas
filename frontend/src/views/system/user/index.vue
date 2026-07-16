@@ -33,38 +33,38 @@
       <!-- 表格 -->
       <el-table v-loading="loading" :data="tableData" border stripe>
         <el-table-column label="头像" width="72" align="center">
-          <template #default="{ row }">
-            <el-avatar :size="36" :src="row.avatar || undefined">
-              {{ getAvatarText(row) }}
+          <template #default="{ row: r }">
+            <el-avatar :size="36" :src="(r as UserListItem).avatar || undefined">
+              {{ getAvatarText(r as UserListItem) }}
             </el-avatar>
           </template>
         </el-table-column>
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column prop="nickname" label="用户昵称" min-width="120" show-overflow-tooltip />
         <el-table-column label="来源" min-width="130" align="center">
-          <template #default="{ row }">
+          <template #default="{ row: r }">
             <el-tooltip
-              v-if="row.source_provider"
-              :content="getSourceProviderTooltip(row)"
+              v-if="(r as UserListItem).source_provider"
+              :content="getSourceProviderTooltip(r as UserListItem)"
               placement="top"
             >
-              <el-tag :type="getSourceProviderTagType(row.source_provider)" size="small">
-                {{ getSourceProviderLabel(row.source_provider) }}
+              <el-tag :type="getSourceProviderTagType((r as UserListItem).source_provider)" size="small">
+                {{ getSourceProviderLabel((r as UserListItem).source_provider) }}
               </el-tag>
             </el-tooltip>
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="dept_name" label="部门" min-width="120">
-          <template #default="{ row }">
-            {{ row.dept_name || '-' }}
+          <template #default="{ row: r }">
+            {{ (r as UserListItem).dept_name || '-' }}
           </template>
         </el-table-column>
         <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
         <el-table-column label="角色" min-width="160">
-          <template #default="{ row }">
+          <template #default="{ row: r }">
             <el-tag
-              v-for="role in row.roles"
+              v-for="role in (r as UserListItem).roles"
               :key="role.id"
               size="small"
               type="info"
@@ -75,46 +75,46 @@
           </template>
         </el-table-column>
         <el-table-column label="状态" width="80" align="center">
-          <template #default="{ row }">
+          <template #default="{ row: r }">
             <el-switch
-              :model-value="row.status === 1"
-              :loading="switchLoadingId === row.id"
-              @change="toggleActive(row)"
+              :model-value="(r as UserListItem).status === 1"
+              :loading="switchLoadingId === (r as UserListItem).id"
+              @change="toggleActive(r as UserListItem)"
             />
           </template>
         </el-table-column>
         <el-table-column label="超管" width="70" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.is_superplatform" type="danger" size="small">超管</el-tag>
+          <template #default="{ row: r }">
+            <el-tag v-if="(r as UserListItem).is_superplatform" type="danger" size="small">超管</el-tag>
             <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="170">
-          <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+          <template #default="{ row: r }">{{ formatDate((r as UserListItem).created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" min-width="220" fixed="right" align="center">
-          <template #default="{ row }">
+          <template #default="{ row: r }">
             <el-button
               link type="primary"
               v-permission="'system:user:update'"
-              @click="openDialog(row)"
+              @click="openDialog(r as UserListItem)"
             >编辑</el-button>
             <el-button
-              v-if="!row.is_superplatform"
+              v-if="!(r as UserListItem).is_superplatform"
               link type="warning"
               v-permission="'system:user:update'"
-              @click="openRoleDialog(row)"
+              @click="openRoleDialog(r as UserListItem)"
             >角色</el-button>
             <el-button
               link type="warning"
               v-permission="'system:user:reset-password'"
-              @click="handleResetPwd(row)"
+              @click="handleResetPwd(r as UserListItem)"
             >重置密码</el-button>
             <el-button
-              v-if="!row.is_superplatform"
+              v-if="!(r as UserListItem).is_superplatform"
               link type="danger"
               v-permission="'system:user:delete'"
-              @click="handleDelete(row)"
+              @click="handleDelete(r as UserListItem)"
             >删除</el-button>
           </template>
         </el-table-column>
@@ -145,7 +145,9 @@
           <el-tree-select
             v-model="form.dept_id"
             :data="deptOptions"
-            :props="{ label: 'name', value: 'id', children: 'children' }"
+            :props="{ label: 'name', children: 'children' }"
+            node-key="id"
+            value-key="id"
             check-strictly
             placeholder="请选择部门（可选）"
             clearable
@@ -409,30 +411,30 @@
             <div class="sync-log-title">最近同步日志</div>
             <el-table v-loading="syncLogLoading" :data="syncLogs" size="small" max-height="140">
               <el-table-column label="同步时间" width="160">
-                <template #default="{ row }">
-                  {{ formatDate(row.created_at) }}
+                <template #default="{ row: r }">
+                  {{ formatDate((r as ContactSyncLogItem).created_at) }}
                 </template>
               </el-table-column>
               <el-table-column label="操作" width="72">
-                <template #default="{ row }">
-                  {{ getSyncOperationLabel(row.operation) }}
+                <template #default="{ row: r }">
+                  {{ getSyncOperationLabel((r as ContactSyncLogItem).operation) }}
                 </template>
               </el-table-column>
               <el-table-column label="状态" width="78">
-                <template #default="{ row }">
-                  <el-tag :type="getSyncStatusTagType(row.status)" size="small">
-                    {{ getSyncStatusLabel(row.status) }}
+                <template #default="{ row: r }">
+                  <el-tag :type="getSyncStatusTagType((r as ContactSyncLogItem).status)" size="small">
+                    {{ getSyncStatusLabel((r as ContactSyncLogItem).status) }}
                   </el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="结果" min-width="220">
-                <template #default="{ row }">
-                  {{ getSyncLogSummary(row) }}
+                <template #default="{ row: r }">
+                  {{ getSyncLogSummary(r as ContactSyncLogItem) }}
                 </template>
               </el-table-column>
               <el-table-column label="详情" width="64">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="openSyncLogDetail(row)">查看</el-button>
+                <template #default="{ row: r }">
+                  <el-button link type="primary" @click="openSyncLogDetail(r as ContactSyncLogItem)">查看</el-button>
                 </template>
               </el-table-column>
             </el-table>

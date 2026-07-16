@@ -7,6 +7,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
+from app.core.rate_limit import limiter, get_ip_key, get_user_key
 from app.core.redis import get_redis
 from app.core.response import ApiResponse, ok
 from app.database import get_db
@@ -28,7 +29,8 @@ router = APIRouter()
     response_model=ApiResponse,
     summary="获取验证码",
 )
-async def get_captcha(redis: Redis = Depends(get_redis)) -> ApiResponse:
+@limiter.limit("3/minute", key_func=get_ip_key)
+async def get_captcha(request: Request, redis: Redis = Depends(get_redis)) -> ApiResponse:
     """获取图形验证码"""
     svc = CaptchaService(redis)
     result = await svc.generate_captcha()
@@ -44,6 +46,7 @@ async def get_captcha(redis: Redis = Depends(get_redis)) -> ApiResponse:
     summary="用户登录",
     description="用户名/密码登录，返回 Access Token 和 Refresh Token",
 )
+@limiter.limit("10/minute", key_func=get_ip_key)
 async def login(
     req: LoginRequest,
     request: Request,
@@ -70,8 +73,10 @@ async def login(
     summary="刷新 Token",
     description="使用 Refresh Token 获取新的 Access Token（Rotation 轮换，每个 Token 只能使用一次）",
 )
+@limiter.limit("20/minute", key_func=get_ip_key)
 async def refresh_token(
     req: RefreshTokenRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> ApiResponse[RefreshTokenResponse]:

@@ -592,16 +592,30 @@ export interface ChatMessage {
 // ── 审计日志 ────────────────────────────────────────────────────────────────────
 export interface AuditLog {
   id: number
-  user_id?: number
-  username?: string
-  tenant_id?: number
-  action: string
-  resource_type: string
-  resource_id?: string
-  before_data?: Record<string, unknown>
-  after_data?: Record<string, unknown>
-  ip_address?: string
-  status: 'success' | 'fail'
+  tenant_id?: number | null
+  user_id?: number | null
+  username?: string | null
+  module?: string | null
+  action?: string | null
+  resource_type?: string | null
+  resource_id?: string | null
+  event_type: string
+  before_data?: Record<string, unknown> | null
+  after_data?: Record<string, unknown> | null
+  detail?: Record<string, unknown> | null
+  request_body?: Record<string, unknown> | unknown[] | string | number | boolean | null
+  response_body?: Record<string, unknown> | unknown[] | string | number | boolean | null
+  status_code?: number | null
+  request_ip?: string | null
+  user_agent?: string | null
+  browser?: string | null
+  os?: string | null
+  device?: string | null
+  trace_id?: string | null
+  path?: string | null
+  method?: string | null
+  status: number
+  error_msg?: string | null
   created_at: string
 }
 

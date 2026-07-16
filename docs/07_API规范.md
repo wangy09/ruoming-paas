@@ -339,7 +339,7 @@ async def chat_stream(request: ChatRequest, current_user = Depends(get_current_u
 ```python
 # app/main.py
 app = FastAPI(
-    title="RuoMingSaaS API",
+    title="若茗 PaaS API",
     description="企业级 SaaS 框架 API 文档",
     version="1.0.0",
     docs_url="/api/docs" if not settings.is_production else None,

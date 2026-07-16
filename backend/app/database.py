@@ -12,6 +12,7 @@ Author: ruoming
 from collections.abc import AsyncGenerator
 
 import structlog
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -83,6 +84,40 @@ class Base(DeclarativeBase):
     pass
 
 
+def _import_models_for_metadata() -> None:
+    """Import ORM models so Base.metadata contains all tables before create_all."""
+    from app.modules.user.models import SysUser, SysApiKey  # noqa: F401
+    from app.modules.permission.models import (  # noqa: F401
+        SysRole, SysPermission, SysColumnPermission,
+        SysUserRole, SysRolePermission, SysUserPermission, SysRoleDept,
+    )
+    from app.modules.system.models import SysDept, SysDictType, SysDictItem  # noqa: F401
+    from app.modules.tenant.models import SysTenant, SysTenantUsage  # noqa: F401
+    from app.modules.audit.models import SysAuditLog, SysLoginLog, SysSecurityEvent  # noqa: F401
+    from app.modules.config_center.models import SysConfig  # noqa: F401
+    from app.modules.monitor.models import SysScheduledTask, SysTaskExecutionLog  # noqa: F401
+    from app.modules.message.models import SysNotice, SysUserMessage  # noqa: F401
+    from app.modules.file_center.models import SysFile  # noqa: F401
+    from app.modules.integration.models import (  # noqa: F401
+        SysIntegrationConnection, SysExternalIdentity, SysContactSyncLog,
+    )
+
+    from app.ai.conversation.models import (  # noqa: F401
+        AiConversation, AiMessage, AiEntityMemory, AiKeyValueMemory, AiCallLog,
+    )
+    from app.ai.llm.models import AiModelConfig  # noqa: F401
+    from app.ai.agent.models import (  # noqa: F401
+        AiAgent, AiSceneConfig, AiWorkflow, AiWorkflowVersion,
+        AiWorkflowRun, AiWorkflowNodeRun,
+    )
+    from app.ai.prompt.models import AiPromptTemplate, AiPromptVersion  # noqa: F401
+    from app.ai.tool.models import AiTool  # noqa: F401
+    from app.ai.knowledge.models import (  # noqa: F401
+        AiKnowledgeBase, AiKnowledgeBaseShare, AiKnowledgeDoc,
+        AiKnowledgeChunk, AiKnowledgeUploadPart, AiKnowledgeTask,
+    )
+
+
 # ── 依赖注入：写 Session（INSERT / UPDATE / DELETE） ────────────────────────
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
@@ -134,14 +169,33 @@ async def get_read_db() -> AsyncGenerator[AsyncSession, None]:
 # ── 数据库初始化（启动时调用）────────────────────────────────────────────────
 async def init_db() -> None:
     """创建所有表（开发/测试环境使用，生产用 Alembic）"""
+    _import_models_for_metadata()
+
     async with _write_engine.begin() as conn:
         # 确保 pgvector 扩展已安装
-        await conn.execute(
-            __import__("sqlalchemy", fromlist=["text"]).text(
-                "CREATE EXTENSION IF NOT EXISTS vector"
-            )
-        )
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sys_config_history (
+                id          BIGSERIAL PRIMARY KEY,
+                config_key  VARCHAR(256) NOT NULL,
+                scope_type  VARCHAR(20) NOT NULL,
+                scope_id    BIGINT,
+                old_value   TEXT,
+                new_value   TEXT,
+                changed_by  BIGINT,
+                changed_at  TIMESTAMPTZ DEFAULT NOW(),
+                remark      TEXT
+            )
+        """))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_sys_config_history_config_key "
+            "ON sys_config_history (config_key)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_sys_config_history_changed_at "
+            "ON sys_config_history (changed_at)"
+        ))
     logger.info("database_initialized")
 
 

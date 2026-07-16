@@ -483,6 +483,25 @@ class LLMService:
             provider = await self.get_provider(model_config_id, db)
         else:
             provider, config = await self.get_default_provider(db)
+            model_config_id = config.id
+
+        # ── 熔断器检查 ────────────────────────────────────────────────────────
+        circuit_state = await self._get_circuit_state(model_config_id)
+        if circuit_state == CircuitState.OPEN:
+            fallback = await self._get_fallback_config(db, model_config_id)
+            if fallback:
+                logger.warning(
+                    "circuit_breaker_fallback_stream",
+                    primary_model_id=model_config_id,
+                    fallback_model_id=fallback.id,
+                )
+                provider = self._build_provider(fallback)
+                config = fallback
+                model_config_id = fallback.id
+            else:
+                raise RuntimeError(
+                    f"模型 [{config.name}] 当前不可用（熔断中），请稍后重试"
+                )
 
         runtime_values = await get_runtime_config(
             db,
@@ -503,13 +522,18 @@ class LLMService:
         eff_temperature = temperature if temperature is not None else default_temperature
         eff_max_tokens = max_tokens or default_max_tokens
 
-        async for chunk in provider.stream_chat(
-            messages=messages,
-            model=config.model_id,
-            temperature=eff_temperature,
-            max_tokens=eff_max_tokens,
-        ):
-            yield chunk
+        try:
+            async for chunk in provider.stream_chat(
+                messages=messages,
+                model=config.model_id,
+                temperature=eff_temperature,
+                max_tokens=eff_max_tokens,
+            ):
+                yield chunk
+            await self._on_call_success(model_config_id)
+        except Exception as e:
+            await self._on_call_failure(model_config_id)
+            raise
 
     # ── 向量化 ────────────────────────────────────────────────────────────────
 

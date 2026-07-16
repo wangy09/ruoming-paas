@@ -7,7 +7,7 @@ Author: ruoming
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,7 @@ from app.ai.agent.schemas import (
 from app.ai.agent.service import AgentService, WorkflowService
 from app.core.deps import get_current_user, require_permissions
 from app.core.exceptions import NotFoundException
+from app.core.rate_limit import limiter, get_user_key
 from app.core.response import ApiResponse, PageData, created, ok, paged
 from app.core.utils.pagination import PageParams
 from app.database import get_db
@@ -128,9 +129,11 @@ async def delete_agent(
 # ── Agent 执行 ────────────────────────────────────────────────────────────────
 
 @router.post("/agents/{agent_id}/run", summary="执行 Agent（支持流式 SSE）")
+@limiter.limit("30/minute", key_func=get_user_key)
 async def run_agent(
     agent_id: int,
     data: AgentRunRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
@@ -309,9 +312,11 @@ async def get_workflow_versions(
 
 
 @router.post("/workflows/{workflow_id}/run", response_model=ApiResponse[WorkflowRunInfo], summary="执行工作流")
+@limiter.limit("30/minute", key_func=get_user_key)
 async def run_workflow(
     workflow_id: int,
     data: WorkflowRunRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):

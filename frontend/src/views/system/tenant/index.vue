@@ -28,40 +28,40 @@
         <el-table-column prop="name" label="租户名" min-width="140" />
         <el-table-column prop="code" label="租户代码" width="140" />
         <el-table-column label="套餐" width="110" align="center">
-          <template #default="{ row }">
-            <el-tag :type="planTagMap[row.plan]" size="small">{{ planLabelMap[row.plan] }}</el-tag>
+          <template #default="{ row: r }">
+            <el-tag :type="planTagMap[(r as TenantInfo).plan]" size="small">{{ planLabelMap[(r as TenantInfo).plan] }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
-          <template #default="{ row }">
-            <el-tag :type="getStatusTagType(row.status)" size="small">{{ getStatusLabel(row.status) }}</el-tag>
+          <template #default="{ row: r }">
+            <el-tag :type="getStatusTagType((r as TenantInfo).status)" size="small">{{ getStatusLabel((r as TenantInfo).status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="用户数" width="100" align="center">
-          <template #default="{ row }">
-            {{ row.current_users ?? '-' }} / {{ row.max_users }}
+          <template #default="{ row: r }">
+            {{ (r as TenantInfo).current_users ?? '-' }} / {{ (r as TenantInfo).max_users }}
           </template>
         </el-table-column>
         <el-table-column prop="contact_email" label="联系邮箱" min-width="180" show-overflow-tooltip />
         <el-table-column prop="created_at" label="创建时间" width="170">
-          <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+          <template #default="{ row: r }">{{ formatDate((r as TenantInfo).created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="200" fixed="right" align="center">
-          <template #default="{ row }">
-            <el-button link type="primary" v-permission="'system:tenant:update'" @click="openDialog(row)">编辑</el-button>
+          <template #default="{ row: r }">
+            <el-button link type="primary" v-permission="'system:tenant:update'" @click="openDialog(r as TenantInfo)">编辑</el-button>
             <el-button
-              v-if="row.status !== 'active'"
+              v-if="(r as TenantInfo).status !== 'active'"
               link type="success"
               v-permission="'system:tenant:update'"
-              @click="handleApprove(row)"
+              @click="handleApprove(r as TenantInfo)"
             >启用</el-button>
             <el-button
               v-else
               link type="warning"
               v-permission="'system:tenant:update'"
-              @click="handleDisable(row)"
+              @click="handleDisable(r as TenantInfo)"
             >禁用</el-button>
-            <el-button link type="info" @click="showUsage(row)">用量</el-button>
+            <el-button link type="info" @click="showUsage(r as TenantInfo)">用量</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -131,8 +131,9 @@ import { formatDate } from '@/utils/format'
 import { useTenantStatus } from '@/hooks/useDict'
 import type { TenantInfo } from '@/types'
 
+type ElTagType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
 // 套餐映射（暂时保留硬编码）
-const planTagMap: Record<string, string> = { basic: 'info', pro: 'primary', enterprise: 'danger' }
+const planTagMap: Record<string, ElTagType> = { basic: 'info', pro: 'primary', enterprise: 'danger' }
 const planLabelMap: Record<string, string> = { basic: '基础版', pro: '专业版', enterprise: '企业版' }
 
 // 租户状态字典
@@ -191,7 +192,7 @@ const editId = ref<number | null>(null)
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const form = reactive({
-  name: '', code: '', plan: 'basic', contact_email: '',
+  name: '', code: '', plan: 'basic' as 'basic' | 'pro' | 'enterprise', contact_email: '',
   max_users: 10, max_api_calls_per_day: 1000, max_ai_tokens_per_day: 100000,
 })
 const rules: FormRules = {

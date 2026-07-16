@@ -57,7 +57,9 @@
           <el-tree-select
             v-model="form.parent_id"
             :data="deptOptions"
-            :props="{ label: 'name', value: 'id', children: 'children' }"
+            :props="{ label: 'name', children: 'children' }"
+            node-key="id"
+            value-key="id"
             check-strictly
             placeholder="请选择上级部门（空=根部门）"
             clearable

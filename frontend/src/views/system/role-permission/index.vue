@@ -54,7 +54,9 @@
                   <el-tree-select
                     v-model="dataScopeForm.data_scope_depts"
                     :data="deptOptions"
-                    :props="{ label: 'name', value: 'id', children: 'children', checkStrictly: true }"
+                    :props="{ label: 'name', children: 'children' }"
+                    node-key="id"
+                    value-key="id"
                     multiple
                     placeholder="请选择授权部门"
                     clearable
@@ -128,7 +130,8 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, nextTick } from 'vue'
-import { ElMessage, type PermissionItem, type RoleInfo, type DeptInfo } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import type { PermissionItem, RoleInfo, DeptInfo } from '@/types'
 import { Search, Menu, Setting, List, Link, Box } from '@element-plus/icons-vue'
 import * as ElIcons from '@element-plus/icons-vue'
 import { permissionApi } from '@/api/permission'

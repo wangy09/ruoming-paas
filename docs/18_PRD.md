@@ -265,8 +265,8 @@ AI + 企业底座  两者二合一，原生集成      Dify 有 AI 无企业底�
 
 验收标准：
 - clone 代码后，按 README 步骤，15 分钟内完成本地启动
-- 能访问前端页面（http://localhost:3000），使用默认账号 admin/admin123 登录
-- 能访问 API 文档（http://localhost:8000/docs）
+- 能访问前端页面（http://localhost:3000），使用默认账号 admin/ruoming@2024 登录
+- 能访问 API 文档（http://localhost:8000/api/docs）
 - 首次启动自动完成数据库初始化（表结构 + 种子数据）
 ```
 

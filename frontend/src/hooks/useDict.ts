@@ -218,8 +218,8 @@ export function useTenantStatus() {
     value: i.value,
   })))
 
-  const tagType = (value: any) => {
-    const map: Record<string, string> = {
+  const tagType = (value: any): 'primary' | 'success' | 'warning' | 'info' | 'danger' => {
+    const map: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = {
       'active': 'success',
       'inactive': 'danger',
       'suspended': 'warning',
