@@ -456,6 +456,7 @@ const categoryOptions = [
   { label: '界面配置', value: 'ui', description: '主题色、水印等前端公开配置' },
   { label: '文件配置', value: 'file', description: '上传大小、扩展名白名单' },
   { label: '登录安全', value: 'auth', description: '失败锁定、密码和验证码策略' },
+  { label: '限流配置', value: 'rate_limit', description: '全局/IP/用户/租户级限流规则' },
   { label: 'AI 配置', value: 'ai', description: '模型默认参数、调用默认值' },
   { label: '消息配置', value: 'message', description: '消息提醒和公告行为' },
   { label: '任务配置', value: 'task', description: '计划任务和执行日志策略' },

@@ -168,6 +168,22 @@ async def clear_config_cache(
     return ok(data=ConfigCacheClearResult(cleared=cleared), message="配置缓存已清理")
 
 
+@router.post("/refresh", summary="刷新运行时配置")
+async def refresh_runtime_configs(
+    db: AsyncSession = Depends(get_db),
+    current_user: SysUser = Depends(require_permissions("config:update")),
+):
+    """刷新并重新初始化所有运行时配置（限流、多租户等），确保配置项分类和值正确。"""
+    from app.modules.config_center.runtime import ensure_runtime_configs
+    from app.core.rate_limit_config import invalidate_rate_limit_cache
+    from app.core.multi_tenant import invalidate_multi_tenant_cache
+
+    await ensure_runtime_configs(db)
+    await invalidate_rate_limit_cache()
+    await invalidate_multi_tenant_cache()
+    return ok(message="运行时配置已刷新，限流和多租户缓存已失效")
+
+
 @router.post("", summary="创建配置项")
 async def create_config(
     body: ConfigCreate,

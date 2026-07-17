@@ -69,6 +69,7 @@ limiter = Limiter(
     key_func=get_user_key,
     storage_uri=settings.REDIS_URL,
     default_limits=[settings.RATE_LIMIT_DEFAULT],
+    enabled=True,
 )
 
 

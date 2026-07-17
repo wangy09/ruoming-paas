@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     app.state.redis = redis
 
     # 验证数据库连接
-    from app.database import engine
+    from app.database import engine, AsyncSessionFactory
     async with engine.connect() as conn:
         await conn.execute(__import__("sqlalchemy", fromlist=["text"]).text("SELECT 1"))
     logger.info("database_connected")
@@ -55,7 +55,6 @@ async def lifespan(app: FastAPI):
 
     # 从数据库加载自定义工具到注册中心
     from app.ai.tool.router import load_custom_tools_from_db
-    from app.database import AsyncSessionFactory
     async with AsyncSessionFactory() as _db:
         await load_custom_tools_from_db(_db)
     logger.info("custom_tools_loaded")

@@ -1,26 +1,25 @@
 """
 若茗 PaaS - 租户级限流中间件
 
-在接口级限流之上，再增加租户级限流，防止单租户过度消耗资源。
-基于 Redis 实现，支持每日/每月配额，配合 slowapi 使用。
+全局租户级 API 调用频率限制，使用 Redis 滑动窗口计数器。
 
-限流策略：
-  - 每日 API 调用次数限制（默认 10000次/天）
-  - 每日 AI Token 消耗限制（默认 100000 Token/天）
-  - 并发 AI 请求限制（默认 5 个）
+限流规则从配置中心动态读取：
+  - rate_limit.tenant.default: 租户级默认限流（默认 500/minute）
+  - rate_limit.enabled: 是否启用限流（默认 true）
+
+公开路径（登录、注册、验证码等）不受租户级限流限制，但仍受接口级限流保护。
 
 Author: ruoming
 """
-import asyncio
-from datetime import datetime
-from typing import Any
+import time
 
 import structlog
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
-from app.core.redis import get_redis_client, RedisKeys
+from app.core.rate_limit_config import is_rate_limit_enabled, get_rate_limit
+from app.core.redis import get_redis_client
 
 logger = structlog.get_logger(__name__)
 
@@ -37,18 +36,12 @@ _PUBLIC_PATHS = frozenset([
 
 
 class TenantRateLimitMiddleware(BaseHTTPMiddleware):
-    """
-    租户级限流中间件
-
-    在认证中间件之后运行，依赖 request.state.tenant_id 和 request.state.user_id
-    """
-
-    DEFAULT_DAILY_API_LIMIT = 10000
-    DEFAULT_DAILY_TOKEN_LIMIT = 100000
-    DEFAULT_CONCURRENT_AI_LIMIT = 5
+    """租户级 API 调用频率限制中间件"""
 
     async def dispatch(self, request: Request, call_next):
-        # 公开路径不做租户限流
+        if not await is_rate_limit_enabled():
+            return await call_next(request)
+
         if request.url.path in _PUBLIC_PATHS:
             return await call_next(request)
 
@@ -56,88 +49,63 @@ class TenantRateLimitMiddleware(BaseHTTPMiddleware):
         if not tenant_id:
             return await call_next(request)
 
-        redis = await get_redis_client()
-        today = datetime.now().strftime("%Y-%m-%d")
+        try:
+            limit = await get_rate_limit("tenant.default")
+            max_requests, unit = self._parse_limit(limit)
+            window_seconds = self._unit_to_seconds(unit)
 
-        # 1. 每日 API 调用次数限流
-        api_key = RedisKeys.QUOTA_API.format(tenant_id=tenant_id, date=today)
-        api_count = await redis.incr(api_key)
-        if api_count == 1:
-            await redis.expire(api_key, 86400)
+            redis = await get_redis_client()
+            window_key = f"rate:tenant:{tenant_id}:{int(time.time() // window_seconds)}"
 
-        daily_api_limit = await self._get_tenant_config(
-            redis, tenant_id, "daily_api_limit", self.DEFAULT_DAILY_API_LIMIT
-        )
-        if api_count > daily_api_limit:
-            logger.warning(
-                "tenant_api_quota_exceeded",
-                tenant_id=tenant_id,
-                count=api_count,
-                limit=daily_api_limit,
-            )
-            return JSONResponse(
-                status_code=429,
-                content={
-                    "code": 429,
-                    "message": f"租户每日 API 调用次数已达上限（{daily_api_limit}次/天），请联系管理员",
-                    "data": None,
-                },
-            )
+            count = await redis.incr(window_key)
+            await redis.expire(window_key, window_seconds * 2)
 
-        # 2. AI 并发请求限流（仅对 AI 推理接口）
-        if "/ai/" in request.url.path and request.method == "POST":
-            concurrent_key = RedisKeys.CONCURRENT_AI.format(tenant_id=tenant_id)
-            concurrent_count = await redis.incr(concurrent_key)
-
-            if concurrent_count > self.DEFAULT_CONCURRENT_AI_LIMIT:
-                await redis.decr(concurrent_key)
+            if count > max_requests:
                 logger.warning(
-                    "tenant_ai_concurrent_exceeded",
+                    "tenant_rate_limit_exceeded",
                     tenant_id=tenant_id,
-                    count=concurrent_count,
+                    limit=limit,
+                    count=count,
                 )
                 return JSONResponse(
                     status_code=429,
                     content={
                         "code": 429,
-                        "message": f"AI 并发请求已达上限（{self.DEFAULT_CONCURRENT_AI_LIMIT}个），请稍后重试",
+                        "message": "租户 API 调用频率超限，请稍后再试",
                         "data": None,
+                    },
+                    headers={
+                        "Retry-After": str(window_seconds),
+                        "X-RateLimit-Limit": str(max_requests),
+                        "X-RateLimit-Remaining": "0",
                     },
                 )
 
-            try:
-                response = await call_next(request)
-            finally:
-                await redis.decr(concurrent_key)
+            remaining = max(0, max_requests - count)
+            response = await call_next(request)
+            response.headers["X-RateLimit-Limit"] = str(max_requests)
+            response.headers["X-RateLimit-Remaining"] = str(remaining)
             return response
 
-        return await call_next(request)
-
-    async def _get_tenant_config(self, redis, tenant_id: int, key: str, default: Any) -> Any:
-        """获取租户配置（优先从 Redis 缓存读取）"""
-        config_key = f"tenant:config:{tenant_id}:{key}"
-        cached = await redis.get(config_key)
-        if cached:
-            return int(cached)
-
-        try:
-            from app.database import AsyncSessionFactory
-            from sqlalchemy import select
-            from app.modules.tenant.models import SysTenantConfig
-
-            async with AsyncSessionFactory() as db:
-                result = await db.execute(
-                    select(SysTenantConfig.value).where(
-                        SysTenantConfig.tenant_id == tenant_id,
-                        SysTenantConfig.key == key,
-                        SysTenantConfig.is_deleted == False,
-                    )
-                )
-                value = result.scalar_one_or_none()
-                if value:
-                    await redis.setex(config_key, 3600, value)
-                    return int(value)
         except Exception as e:
-            logger.warning("tenant_config_fetch_failed", tenant_id=tenant_id, key=key, error=str(e))
+            logger.warning("tenant_rate_limit_error", tenant_id=tenant_id, error=str(e))
+            return await call_next(request)
 
-        return default
+    @staticmethod
+    def _parse_limit(limit: str) -> tuple[int, str]:
+        """解析限流配置，如 "500/minute" -> (500, "minute")"""
+        parts = limit.split("/")
+        if len(parts) == 2:
+            return int(parts[0]), parts[1]
+        return 500, "minute"
+
+    @staticmethod
+    def _unit_to_seconds(unit: str) -> int:
+        """将时间单位转换为秒"""
+        unit_map = {
+            "second": 1,
+            "minute": 60,
+            "hour": 3600,
+            "day": 86400,
+        }
+        return unit_map.get(unit.lower(), 60)
