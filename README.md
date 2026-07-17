@@ -2,9 +2,9 @@
 
 > **企业级 AI 应用开发底座** | Enterprise-grade AI PaaS Framework
 
-![GitHub Actions](https://github.com/ruoming/ruoming-paas/actions/workflows/ci.yml/badge.svg)
-![GitHub License](https://img.shields.io/github/license/ruoming/ruoming-paas)
-![GitHub Stars](https://img.shields.io/github/stars/ruoming/ruoming-paas?style=social)
+![GitHub Actions](https://github.com/wangy09/ruoming-paas/actions/workflows/ci.yml/badge.svg)
+![GitHub License](https://img.shields.io/github/license/wangy09/ruoming-paas)
+![GitHub Stars](https://img.shields.io/github/stars/wangy09/ruoming-paas?style=social)
 ![Demo](https://img.shields.io/badge/Demo-http%3A%2F%2Fpaas.airuoming.top-blueviolet)
 ![Python Version](https://img.shields.io/badge/python-3.11+-blue)
 ![Node.js Version](https://img.shields.io/badge/node-20+-green)
