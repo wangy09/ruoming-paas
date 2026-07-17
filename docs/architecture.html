@@ -525,7 +525,7 @@
 <header>
   <div class="logo-badge">Enterprise PaaS Architecture</div>
   <h1>若茗 PaaS 系统架构</h1>
-  <p class="subtitle">企业级 · AI 驱动 · 多租户底座 &nbsp;|&nbsp; <span>v3.2</span> &nbsp;|&nbsp; FastAPI + Vue3 + LLM Gateway + Integration Platform</p>
+  <p class="subtitle">企业级 · AI 驱动 · 多租户底座 &nbsp;|&nbsp; <span>v3.3</span> &nbsp;|&nbsp; FastAPI + Vue3 + LLM Gateway + Integration Platform</p>
 </header>
 
 <div class="canvas">
@@ -628,9 +628,18 @@
         <div class="module-chip chip-l1">限流检查</div>
         <div class="module-chip chip-l1">JWT 认证</div>
         <div class="module-chip chip-l1">权限校验</div>
-        <div class="module-chip chip-l2">租户隔离</div>
+        <div class="module-chip chip-l2" style="background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.4);color:#bfdbfe;font-weight:600;">🏢 租户隔离</div>
         <div class="module-chip chip-l2">请求体校验</div>
         <div class="module-chip chip-l3">🔭 链路追踪</div>
+      </div>
+      <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,.06);padding-top:10px;">
+        <div style="font-size:10px;color:var(--text-muted);font-weight:600;margin-bottom:6px;">租户隔离机制</div>
+        <div style="display:flex;flex-direction:column;gap:3px;font-size:10px;color:#94a3b8;">
+          <span>✓ TenantAwareRepository 自动过滤</span>
+          <span>✓ 超管代入审计模式</span>
+          <span>✓ 跨租户访问拦截兜底</span>
+          <span>✓ 所有业务表 tenant_id</span>
+        </div>
       </div>
     </div>
 
@@ -678,12 +687,13 @@
 
       <div class="group-label">L3 — 通用模块</div>
       <div class="module-grid">
+        <div class="module-chip chip-l3">🏠 工作台门户</div>
         <div class="module-chip chip-l3">🔔 消息通知</div>
-        <div class="module-chip chip-l3">📁 文件管理</div>
+        <div class="module-chip chip-l3">📁 文件中心</div>
         <div class="module-chip chip-l3">📖 数据字典</div>
         <div class="module-chip chip-l3">📈 系统监控</div>
         <div class="module-chip chip-l3">🔗 集成中心</div>
-        <div class="module-chip chip-l3">🔐 凭证脱敏</div>
+        <div class="module-chip chip-l3">🧾 外部联系人同步</div>
         <div class="module-chip chip-l3">🤖 代码生成</div>
       </div>
 
@@ -979,8 +989,8 @@
 </div><!-- /canvas -->
 
 <footer>
-  若茗 PaaS 系统架构图 &nbsp;<span>v3.2</span>&nbsp; · &nbsp;FastAPI + Vue3 + LangChain + PostgreSQL + pgvector + Redis + Celery
-  &nbsp;|&nbsp; 更新时间：<span>2026-07-06</span>
+  若茗 PaaS 系统架构图 &nbsp;<span>v3.3</span>&nbsp; · &nbsp;FastAPI + Vue3 + LangChain + PostgreSQL + pgvector + Redis + Celery
+  &nbsp;|&nbsp; 更新时间：<span>2026-07-16</span>
 </footer>
 
 </body>

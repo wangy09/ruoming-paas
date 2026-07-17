@@ -60,9 +60,13 @@ class KnowledgeService:
         ).all()
         return list(items), count or 0
 
-    async def get_by_id(self, kb_id: int) -> AiKnowledgeBase:
-        kb = await self.db.get(AiKnowledgeBase, kb_id)
-        if not kb or kb.is_deleted:
+    async def get_by_id(self, kb_id: int, tenant_id: int | None = None) -> AiKnowledgeBase:
+        stmt = select(AiKnowledgeBase).where(AiKnowledgeBase.id == kb_id, AiKnowledgeBase.is_deleted == False)
+        if tenant_id is not None:
+            stmt = stmt.where(AiKnowledgeBase.tenant_id == tenant_id)
+        result = await self.db.execute(stmt)
+        kb = result.scalar_one_or_none()
+        if not kb:
             raise NotFoundException(f"知识库 ID={kb_id} 不存在")
         return kb
 
@@ -89,24 +93,24 @@ class KnowledgeService:
         await self.db.refresh(kb)
         return kb
 
-    async def update(self, kb_id: int, data: KnowledgeBaseUpdate) -> AiKnowledgeBase:
-        kb = await self.get_by_id(kb_id)
+    async def update(self, kb_id: int, data: KnowledgeBaseUpdate, tenant_id: int | None = None) -> AiKnowledgeBase:
+        kb = await self.get_by_id(kb_id, tenant_id)
         for field, value in data.model_dump(exclude_unset=True).items():
             setattr(kb, field, value)
         await self.db.commit()
         await self.db.refresh(kb)
         return kb
 
-    async def delete(self, kb_id: int) -> None:
-        kb = await self.get_by_id(kb_id)
+    async def delete(self, kb_id: int, tenant_id: int | None = None) -> None:
+        kb = await self.get_by_id(kb_id, tenant_id)
         kb.is_deleted = True
         from app.ai.knowledge.tasks import delete_document_vectors_task
         delete_document_vectors_task.delay(doc_id=0, kb_id=kb_id)
         await self.db.commit()
 
-    async def get_stats(self, kb_id: int) -> dict:
+    async def get_stats(self, kb_id: int, tenant_id: int | None = None) -> dict:
         """获取知识库统计信息"""
-        kb = await self.get_by_id(kb_id)
+        kb = await self.get_by_id(kb_id, tenant_id)
         stats = await self.db.execute(
             select(
                 func.count(AiKnowledgeDoc.id).label("total_docs"),

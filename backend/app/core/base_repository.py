@@ -43,10 +43,13 @@ class TenantAwareRepository:
 
     # ── 查询基础方法 ──────────────────────────────────────────────────
 
-    def _base_query(self, model: type[ModelT]):
+    async def _base_query(self, model: type[ModelT]):
         """构建带 tenant_id 过滤 + 软删除过滤的基础查询"""
         query = select(model).where(model.is_deleted == False)  # noqa: E712
-        if self.tenant_id is not None:
+
+        from app.core.multi_tenant import is_multi_tenant_enabled
+
+        if self.tenant_id is not None and await is_multi_tenant_enabled():
             if not hasattr(model, "tenant_id"):
                 logger.warning(
                     "model_missing_tenant_id",
@@ -59,7 +62,8 @@ class TenantAwareRepository:
 
     async def get_by_id(self, model: type[ModelT], record_id: int) -> ModelT | None:
         """按 ID 查询单条记录，带兜底跨租户检查"""
-        query = self._base_query(model).where(model.id == record_id)
+        query = await self._base_query(model)
+        query = query.where(model.id == record_id)
         result = await self.db.execute(query)
         obj = result.scalar_one_or_none()
 
@@ -79,7 +83,7 @@ class TenantAwareRepository:
 
     async def list_all(self, model: type[ModelT]) -> list[ModelT]:
         """查询全部（无分页）"""
-        result = await self.db.execute(self._base_query(model))
+        result = await self.db.execute(await self._base_query(model))
         return list(result.scalars().all())
 
     async def paginate(
@@ -138,8 +142,7 @@ class TenantAwareRepository:
 
     async def count(self, model: type[ModelT]) -> int:
         """统计当前租户下的记录数"""
-        query = select(func.count()).select_from(
-            self._base_query(model).subquery()
-        )
+        base_query = await self._base_query(model)
+        query = select(func.count()).select_from(base_query.subquery())
         result = await self.db.execute(query)
         return result.scalar_one()

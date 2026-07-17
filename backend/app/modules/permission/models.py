@@ -12,11 +12,15 @@ class SysRole(BaseModel):
     """角色表（支持角色继承）"""
 
     __tablename__ = "sys_role"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_tenant_role_code"),
+    )
 
     name: Mapped[str] = mapped_column(String(64), nullable=False, comment="角色名称")
     code: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False, comment="角色标识（全局唯一）"
+        String(64), nullable=False, comment="角色标识（租户内唯一）"
     )
+    tenant_id: Mapped[int | None] = mapped_column(BigInteger, comment="所属租户 ID（NULL=平台级）")
     description: Mapped[str | None] = mapped_column(Text, comment="角色描述")
     parent_id: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default="0", comment="父角色 ID（0=无父角色，支持角色继承）"

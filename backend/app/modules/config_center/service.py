@@ -266,6 +266,11 @@ class ConfigCenterService:
         # 失效 Redis 缓存
         await self._invalidate_cache(scope, tenant_id, app_key, user_id)
 
+        # 如果是多租户开关变更，失效多租户缓存
+        if config_key == "multi_tenant.enabled":
+            from app.core.multi_tenant import invalidate_multi_tenant_cache
+            await invalidate_multi_tenant_cache()
+
         # 异步写入变更历史（fire-and-forget）
         await self._write_history(
             config_key=config_key,

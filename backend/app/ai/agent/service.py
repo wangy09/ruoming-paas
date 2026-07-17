@@ -49,11 +49,12 @@ class AgentService:
         ).all()
         return list(items), count or 0
 
-    async def get_by_id(self, agent_id: int) -> AiAgent | None:
-        agent = await self.db.get(AiAgent, agent_id)
-        if agent and agent.is_deleted:
-            return None
-        return agent
+    async def get_by_id(self, agent_id: int, tenant_id: int | None = None) -> AiAgent | None:
+        stmt = select(AiAgent).where(AiAgent.id == agent_id, AiAgent.is_deleted == False)
+        if tenant_id is not None:
+            stmt = stmt.where(AiAgent.tenant_id == tenant_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def create(
         self,
@@ -83,8 +84,8 @@ class AgentService:
         await self.db.refresh(agent)
         return agent
 
-    async def update(self, agent_id: int, data: AgentUpdate) -> AiAgent | None:
-        agent = await self.get_by_id(agent_id)
+    async def update(self, agent_id: int, data: AgentUpdate, tenant_id: int | None = None) -> AiAgent | None:
+        agent = await self.get_by_id(agent_id, tenant_id)
         if not agent:
             return None
 
@@ -95,8 +96,8 @@ class AgentService:
         await self.db.refresh(agent)
         return agent
 
-    async def delete(self, agent_id: int) -> bool:
-        agent = await self.get_by_id(agent_id)
+    async def delete(self, agent_id: int, tenant_id: int | None = None) -> bool:
+        agent = await self.get_by_id(agent_id, tenant_id)
         if not agent:
             return False
         agent.is_deleted = True
@@ -154,9 +155,13 @@ class WorkflowService:
         await self.db.refresh(workflow)
         return workflow
 
-    async def update(self, workflow_id: int, data: WorkflowUpdate, user_id: int) -> AiWorkflow | None:
-        workflow = await self.db.get(AiWorkflow, workflow_id)
-        if not workflow or workflow.is_deleted:
+    async def update(self, workflow_id: int, data: WorkflowUpdate, user_id: int, tenant_id: int | None = None) -> AiWorkflow | None:
+        stmt = select(AiWorkflow).where(AiWorkflow.id == workflow_id, AiWorkflow.is_deleted == False)
+        if tenant_id is not None:
+            stmt = stmt.where(AiWorkflow.tenant_id == tenant_id)
+        result = await self.db.execute(stmt)
+        workflow = result.scalar_one_or_none()
+        if not workflow:
             return None
 
         # 若更新了图结构，新增版本快照

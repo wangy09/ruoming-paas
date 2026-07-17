@@ -1083,6 +1083,17 @@ async def init_runtime_configs(db, settings) -> None:
             "max_value": 32768,
             "sort": 310,
         },
+        {
+            "config_key": "multi_tenant.enabled",
+            "config_val": "true",
+            "val_type": "bool",
+            "category": "system",
+            "config_type": "switch",
+            "label": "多租户模式",
+            "description": "开启后系统启用多租户隔离，关闭后所有用户共享同一数据空间",
+            "is_public": False,
+            "sort": 999,
+        },
     ]
 
     for item in configs:

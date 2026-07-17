@@ -131,7 +131,7 @@ class PermissionService:
 
     # ── 角色权限计算（含继承）────────────────────────────────────────
 
-    async def get_role_permission_codes(self, role_id: int) -> set[str]:
+    async def get_role_permission_codes(self, role_id: int, tenant_id: int | None = None) -> set[str]:
         """递归获取角色（含父角色继承链）的全部权限码"""
         role_result = await self.db.execute(
             select(SysRole).where(
@@ -145,9 +145,13 @@ class PermissionService:
 
         codes: set[str] = set()
 
+        # 检查角色租户权限（防止跨租户继承）
+        if tenant_id is not None and role.tenant_id is not None and role.tenant_id != tenant_id:
+            return set()
+
         # 先获取父角色权限（递归，防止循环继承最多 10 层）
         if role.parent_id and role.parent_id != 0:
-            parent_codes = await self.get_role_permission_codes(role.parent_id)
+            parent_codes = await self.get_role_permission_codes(role.parent_id, tenant_id)
             codes.update(parent_codes)
 
         # 再获取本角色权限（叠加，优先级高于父角色）
@@ -170,7 +174,15 @@ class PermissionService:
 
     async def _compute_user_permissions(self, user_id: int) -> set[str]:
         """计算用户最终权限集合（不经缓存，直接计算）"""
-        # 1. 获取用户所有角色
+        from app.modules.user.models import SysUser
+
+        user_result = await self.db.execute(
+            select(SysUser).where(SysUser.id == user_id, SysUser.is_deleted == False)  # noqa: E712
+        )
+        user = user_result.scalar_one_or_none()
+        tenant_id = user.tenant_id if user else None
+
+        # 1. 获取用户所有角色（租户用户只能看到自己租户的角色和平台级角色）
         roles_result = await self.db.execute(
             select(SysRole)
             .join(SysUserRole, SysUserRole.role_id == SysRole.id)
@@ -179,12 +191,15 @@ class PermissionService:
                 SysRole.status == 1,
                 SysRole.is_deleted == False,  # noqa: E712
             )
+            .filter(
+                (SysRole.tenant_id == tenant_id) | (SysRole.tenant_id.is_(None))
+            )
         )
         roles = list(roles_result.scalars().all())
 
         codes: set[str] = set()
         for role in roles:
-            role_codes = await self.get_role_permission_codes(role.id)
+            role_codes = await self.get_role_permission_codes(role.id, tenant_id)
             codes.update(role_codes)
 
         # 2. 加上用户直接授权（白名单）
@@ -306,6 +321,9 @@ class PermissionService:
                 SysUserRole.user_id == user_id,
                 SysRole.status == 1,
                 SysRole.is_deleted == False,  # noqa: E712
+            )
+            .filter(
+                (SysRole.tenant_id == user.tenant_id) | (SysRole.tenant_id.is_(None))
             )
         )
         roles = list(roles_result.scalars().all())

@@ -34,6 +34,9 @@ class SysUser(BaseModel):
         Boolean, default=False, server_default="false", comment="是否平台超级管理员"
     )
 
+    # 多租户字段
+    tenant_id: Mapped[int | None] = mapped_column(BigInteger, comment="所属租户 ID")
+
     # 所属部门（组织）
     dept_id: Mapped[int | None] = mapped_column(BigInteger, comment="所属部门 ID")
 

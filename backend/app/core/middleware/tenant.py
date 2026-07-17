@@ -43,22 +43,25 @@ class TenantMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        tenant_id, impersonated = await self._resolve_tenant(request)
+        from app.core.multi_tenant import is_multi_tenant_enabled
 
-        request.state.tenant_id = tenant_id
-        request.state.tenant_impersonated = impersonated
+        if not await is_multi_tenant_enabled():
+            request.state.tenant_id = None
+            request.state.tenant_impersonated = False
+        else:
+            tenant_id, impersonated = await self._resolve_tenant(request)
+            request.state.tenant_id = tenant_id
+            request.state.tenant_impersonated = impersonated
 
-        # 绑定到 structlog 上下文
-        if tenant_id:
-            structlog.contextvars.bind_contextvars(tenant_id=tenant_id)
+            if tenant_id:
+                structlog.contextvars.bind_contextvars(tenant_id=tenant_id)
+
+            if impersonated and hasattr(request.state, "user_id"):
+                asyncio.create_task(
+                    self._record_impersonation_audit(request, tenant_id)
+                )
 
         response = await call_next(request)
-
-        # 超管代入租户：异步写审计日志（非阻塞）
-        if impersonated and hasattr(request.state, "user_id"):
-            asyncio.create_task(
-                self._record_impersonation_audit(request, tenant_id)
-            )
 
         return response
 

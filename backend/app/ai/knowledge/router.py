@@ -64,10 +64,10 @@ async def update_knowledge_base(
     kb_id: int,
     data: KnowledgeBaseUpdate,
     db: AsyncSession = Depends(get_db),
-    _: SysUser = Depends(require_permissions("ai:kb:update")),
+    current_user: SysUser = Depends(require_permissions("ai:kb:update")),
 ):
     svc = KnowledgeService(db)
-    kb = await svc.update(kb_id, data)
+    kb = await svc.update(kb_id, data, current_user.tenant_id)
     return ok(KnowledgeBaseInfo.model_validate(kb))
 
 
@@ -75,10 +75,10 @@ async def update_knowledge_base(
 async def delete_knowledge_base(
     kb_id: int,
     db: AsyncSession = Depends(get_db),
-    _: SysUser = Depends(require_permissions("ai:kb:delete")),
+    current_user: SysUser = Depends(require_permissions("ai:kb:delete")),
 ):
     svc = KnowledgeService(db)
-    await svc.delete(kb_id)
+    await svc.delete(kb_id, current_user.tenant_id)
     return ok(message="删除成功")
 
 

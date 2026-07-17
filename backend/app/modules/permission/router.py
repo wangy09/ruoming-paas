@@ -125,11 +125,13 @@ async def list_roles(
 ) -> ApiResponse:
     from sqlalchemy import func, or_
 
-    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    tenant_id = current_user.tenant_id
     query = select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
 
-    if tenant_id is not None:
-        query = query.where(SysRole.tenant_id == tenant_id)
+    if not current_user.is_superplatform:
+        query = query.filter(
+            (SysRole.tenant_id == tenant_id) | (SysRole.tenant_id.is_(None))
+        )
     if keyword:
         query = query.where(
             or_(SysRole.name.ilike(f"%{keyword}%"), SysRole.code.ilike(f"%{keyword}%"))
@@ -156,14 +158,18 @@ async def create_role(
     current_user=Depends(require_permissions("system:role:create")),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RoleInfo]:
-    # 校验 code 唯一
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+
+    # 校验 code 唯一（租户内唯一）
     exists = await db.execute(
-        select(SysRole.id).where(SysRole.code == data.code, SysRole.is_deleted == False)  # noqa: E712
+        select(SysRole.id).where(
+            SysRole.code == data.code,
+            SysRole.tenant_id == tenant_id,
+            SysRole.is_deleted == False,  # noqa: E712
+        )
     )
     if exists.scalar_one_or_none():
         raise BusinessException(PermErrCode.ROLE_CODE_EXISTS, f"角色标识 '{data.code}' 已存在")
-
-    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
     role = SysRole(
         name=data.name,
         code=data.code,
@@ -190,15 +196,18 @@ async def update_role(
     current_user=Depends(require_permissions("system:role:update")),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[RoleInfo]:
-    result = await db.execute(
-        select(SysRole).where(SysRole.id == role_id, SysRole.is_deleted == False)  # noqa: E712
-    )
+    from sqlalchemy import or_
+
+    conditions = [SysRole.id == role_id, SysRole.is_deleted == False]
+    if not current_user.is_superplatform:
+        conditions.append(SysRole.tenant_id == current_user.tenant_id)
+
+    result = await db.execute(select(SysRole).where(*conditions))
     role = result.scalar_one_or_none()
     if not role:
         raise NotFoundException("角色")
 
     update_data = data.model_dump(exclude_unset=True)
-    # 处理 data_scope_depts JSON 转换
     if "data_scope_depts" in update_data:
         update_data["data_scope_depts"] = json.dumps(update_data["data_scope_depts"]) if update_data["data_scope_depts"] else None
 
@@ -215,14 +224,15 @@ async def delete_role(
     current_user=Depends(require_permissions("system:role:delete")),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
-    result = await db.execute(
-        select(SysRole).where(SysRole.id == role_id, SysRole.is_deleted == False)  # noqa: E712
-    )
+    conditions = [SysRole.id == role_id, SysRole.is_deleted == False]
+    if not current_user.is_superplatform:
+        conditions.append(SysRole.tenant_id == current_user.tenant_id)
+
+    result = await db.execute(select(SysRole).where(*conditions))
     role = result.scalar_one_or_none()
     if not role:
         raise NotFoundException("角色")
 
-    # 校验是否有子角色
     children = await db.execute(
         select(SysRole.id).where(SysRole.parent_id == role_id, SysRole.is_deleted == False)  # noqa: E712
     )

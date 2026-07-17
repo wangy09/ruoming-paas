@@ -2,8 +2,18 @@
 
 > **企业级 AI 应用开发底座** | Enterprise-grade AI PaaS Framework
 
+![GitHub Actions](https://github.com/ruoming/ruoming-paas/actions/workflows/ci.yml/badge.svg)
+![GitHub License](https://img.shields.io/github/license/ruoming/ruoming-paas)
+![GitHub Stars](https://img.shields.io/github/stars/ruoming/ruoming-paas?style=social)
+![Demo](https://img.shields.io/badge/Demo-http%3A%2F%2Fpaas.airuoming.top-blueviolet)
+![Python Version](https://img.shields.io/badge/python-3.11+-blue)
+![Node.js Version](https://img.shields.io/badge/node-20+-green)
+![FastAPI Version](https://img.shields.io/badge/fastapi-0.100+-orange)
+![Vue Version](https://img.shields.io/badge/vue-3.4+-brightgreen)
+
 **Author**: ruoming  
-**Version**: v2.3.0
+**Demo**: [http://paas.airuoming.top/](http://paas.airuoming.top/)  
+**Version**: v2.3.0  
 **技术栈**: FastAPI + Vue3 + PostgreSQL + Redis + pgvector
 
 ---
@@ -494,5 +504,58 @@ npm run type-check
 - **测试覆盖率**：核心模块 API 层目标 ≥ 80%
 
 ---
+
+## 贡献指南
+
+### 开发流程
+
+1. **Fork 仓库** → 创建个人分支
+2. **分支命名**：`feature/xxx`（新功能）、`fix/xxx`（修复）、`docs/xxx`（文档）
+3. **提交规范**：遵循 [Conventional Commits](https://www.conventionalcommits.org/)
+   ```
+   feat(auth): 添加多因素认证
+   fix(config): 修复配置中心缓存失效问题
+   docs(tenant): 更新多租户文档
+   ```
+4. **代码检查**：提交前运行本地检查
+   ```bash
+   # 后端
+   cd backend && python -m ruff check .
+   
+   # 前端
+   cd frontend && npm run lint
+   ```
+5. **创建 PR** → 等待审核和合并
+
+### 分支策略
+
+| 分支 | 用途 | 保护状态 |
+|------|------|----------|
+| `main` | 生产环境，稳定版本 | ✅ 受保护 |
+| `develop` | 开发分支，集成功能 | ✅ 受保护 |
+| `feature/xxx` | 功能开发分支 | - |
+| `fix/xxx` | Bug 修复分支 | - |
+| `release/xxx` | 版本发布分支 | - |
+
+### 代码规范
+
+- **后端**：Python 3.11+，使用 `ruff` 进行代码检查和格式化
+- **前端**：Vue3 + TypeScript，使用 ESLint + Prettier
+- **数据库**：必须通过 Alembic 迁移，禁止直接修改数据库
+- **测试**：核心模块需编写单元测试，目标覆盖率 ≥ 80%
+
+### 问题反馈
+
+欢迎通过 GitHub Issues 提交问题和建议：
+
+1. **Bug 报告**：描述问题现象、复现步骤、预期结果
+2. **功能请求**：描述需求背景和期望行为
+3. **文档改进**：指出文档中的错误或需要补充的内容
+
+---
+
+## 许可证
+
+MIT License - 详见 [LICENSE](./LICENSE)
 
 *© 2026 ruoming. All rights reserved.*

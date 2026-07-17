@@ -93,9 +93,11 @@ async def get_dept(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
-    result = await db.execute(
-        select(SysDept).where(SysDept.id == dept_id, SysDept.is_deleted == False)  # noqa: E712
-    )
+    conditions = [SysDept.id == dept_id, SysDept.is_deleted == False]
+    if not current_user.is_superplatform:
+        conditions.append(SysDept.tenant_id == current_user.tenant_id)
+
+    result = await db.execute(select(SysDept).where(*conditions))
     dept = result.scalar_one_or_none()
     if not dept:
         raise NotFoundException("部门")
@@ -163,26 +165,27 @@ async def update_dept(
     current_user=Depends(require_permissions("system:dept:update")),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse:
-    result = await db.execute(
-        select(SysDept).where(SysDept.id == dept_id, SysDept.is_deleted == False)  # noqa: E712
-    )
+    conditions = [SysDept.id == dept_id, SysDept.is_deleted == False]
+    if not current_user.is_superplatform:
+        conditions.append(SysDept.tenant_id == current_user.tenant_id)
+
+    result = await db.execute(select(SysDept).where(*conditions))
     dept = result.scalar_one_or_none()
     if not dept:
         raise NotFoundException("部门")
 
-    # 不能将自己设为自己的子部门
     if data.parent_id is not None:
         if data.parent_id == dept_id:
             raise BusinessException(code=400, message="不能将部门设为自己的子部门")
-        # 不能将部门移动到自己的子部门下
         if dept.ancestors and str(dept_id) in dept.ancestors.split(","):
             raise BusinessException(code=400, message="不能将部门移动到自己的子部门下")
 
-        # 更新 ancestors 和 level
         if data.parent_id > 0:
-            parent_result = await db.execute(
-                select(SysDept).where(SysDept.id == data.parent_id, SysDept.is_deleted == False)  # noqa: E712
-            )
+            parent_conditions = [SysDept.id == data.parent_id, SysDept.is_deleted == False]
+            if not current_user.is_superplatform:
+                parent_conditions.append(SysDept.tenant_id == current_user.tenant_id)
+
+            parent_result = await db.execute(select(SysDept).where(*parent_conditions))
             parent = parent_result.scalar_one_or_none()
             if not parent:
                 raise NotFoundException("父部门")
@@ -197,7 +200,6 @@ async def update_dept(
 
     await db.flush()
 
-    # 如果修改了 ancestors，需要更新所有子部门的 ancestors
     if data.parent_id is not None and data.parent_id > 0:
         await _update_children_ancestors(db, dept_id, dept.ancestors or "", dept.level)
 

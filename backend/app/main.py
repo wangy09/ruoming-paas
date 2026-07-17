@@ -210,6 +210,7 @@ from app.modules.message.router import router as message_router
 from app.modules.codegen.router import router as codegen_router
 from app.modules.file_center.router import router as file_center_router
 from app.modules.integration.router import router as integration_router
+from app.modules.tenant.router import router as tenant_router
 
 # 基础路由
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["认证"])
@@ -223,6 +224,7 @@ app.include_router(message_router, prefix="/api/v1/messages", tags=["消息中�
 app.include_router(codegen_router, prefix="/api/v1/codegen", tags=["代码生成器"])
 app.include_router(file_center_router, prefix="/api/v1/files", tags=["文件中心"])
 app.include_router(integration_router, prefix="/api/v1/integrations", tags=["集成中心"])
+app.include_router(tenant_router, prefix="/api/v1/tenants", tags=["租户管理"])
 
 # 提供前端权限初始化入口（无前缀，通过路由内部路径区分）
 # GET /api/v1/my/permissions  -> permission_router

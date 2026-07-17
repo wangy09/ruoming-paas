@@ -34,6 +34,7 @@ from app.modules.auth.schemas import (
     RefreshTokenResponse,
 )
 from app.modules.config_center.runtime import cfg_int, get_runtime_config
+from app.modules.tenant.models import SysTenant
 from app.modules.user.models import SysUser
 
 logger = structlog.get_logger(__name__)
@@ -59,11 +60,33 @@ class AuthService:
         6. 异步记录登录日志
         """
         # 1. 查找用户
-        result = await self.db.execute(
-            select(SysUser).where(
-                (SysUser.username == req.username) | (SysUser.email == req.username),
-                SysUser.is_deleted == False,  # noqa: E712
+        # 如果传入租户代码，先获取租户并限制用户查询范围
+        tenant_id_filter = None
+        if req.tenant_code:
+            tenant_result = await self.db.execute(
+                select(SysTenant.id).where(
+                    SysTenant.code == req.tenant_code,
+                    SysTenant.is_deleted == False,
+                )
             )
+            tenant = tenant_result.scalar_one_or_none()
+            if not tenant:
+                raise BusinessException(
+                    code=400,
+                    message="租户不存在",
+                    http_status=400,
+                )
+            tenant_id_filter = tenant
+
+        conditions = [
+            (SysUser.username == req.username) | (SysUser.email == req.username),
+            SysUser.is_deleted == False,  # noqa: E712
+        ]
+        if tenant_id_filter is not None:
+            conditions.append(SysUser.tenant_id == tenant_id_filter)
+
+        result = await self.db.execute(
+            select(SysUser).where(*conditions)
         )
         user = result.scalar_one_or_none()
 

@@ -475,15 +475,26 @@ export interface TenantInfo {
   id: number
   name: string
   code: string
-  status: 'active' | 'inactive' | 'suspended'
-  plan: 'basic' | 'pro' | 'enterprise'
+  domain?: string
+  logo?: string
+  plan: 'trial' | 'basic' | 'pro' | 'enterprise'
+  status: number
+  expire_at?: string
+  trial_end_at?: string
   max_users: number
-  max_storage_mb: number
-  max_api_calls_per_day: number
-  max_ai_tokens_per_day: number
-  current_users?: number
+  max_storage_gb: number
+  max_api_calls_day: number
+  max_ai_tokens_day: number
+  max_concurrent: number
+  config?: Record<string, any>
   contact_email?: string
+  contact_phone?: string
+  registered_by?: number
+  approved_by?: number
+  approved_at?: string
+  remark?: string
   created_at: string
+  updated_at: string
 }
 
 // ── AI 模型管理 ────────────────────────────────────────────────────────────────

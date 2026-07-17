@@ -104,11 +104,11 @@ async def update_agent(
     agent_id: int,
     data: AgentCreate,
     db: AsyncSession = Depends(get_db),
-    _: SysUser = Depends(require_permissions("ai:agent:update")),
+    current_user: SysUser = Depends(require_permissions("ai:agent:update")),
 ):
     from app.ai.agent.schemas import AgentUpdate
     svc = AgentService(db)
-    agent = await svc.update(agent_id, AgentUpdate(**data.model_dump(exclude_unset=True)))
+    agent = await svc.update(agent_id, AgentUpdate(**data.model_dump(exclude_unset=True)), current_user.tenant_id)
     if not agent:
         raise NotFoundException(f"Agent ID={agent_id} 不存在")
     return ok(AgentInfo.model_validate(agent))
@@ -118,10 +118,10 @@ async def update_agent(
 async def delete_agent(
     agent_id: int,
     db: AsyncSession = Depends(get_db),
-    _: SysUser = Depends(require_permissions("ai:agent:delete")),
+    current_user: SysUser = Depends(require_permissions("ai:agent:delete")),
 ):
     svc = AgentService(db)
-    if not await svc.delete(agent_id):
+    if not await svc.delete(agent_id, current_user.tenant_id):
         raise NotFoundException(f"Agent ID={agent_id} 不存在")
     return ok(message="删除成功")
 
@@ -286,7 +286,7 @@ async def update_workflow(
     current_user: SysUser = Depends(require_permissions("ai:workflow:update")),
 ):
     svc = WorkflowService(db)
-    workflow = await svc.update(workflow_id, data, current_user.id)
+    workflow = await svc.update(workflow_id, data, current_user.id, current_user.tenant_id)
     if not workflow:
         raise NotFoundException(f"工作流 ID={workflow_id} 不存在")
     return ok(WorkflowInfo.model_validate(workflow))
