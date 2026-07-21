@@ -39,8 +39,6 @@ class SysIntegrationConnection(BaseModel):
     )
     last_test_message: Mapped[str | None] = mapped_column(Text, nullable=True, comment="最近连通性测试说明")
     sort: Mapped[int] = mapped_column(Integer, default=0, server_default="0", comment="排序")
-    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="创建人")
-    updated_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="更新人")
 
 
 class SysExternalIdentity(BaseModel):

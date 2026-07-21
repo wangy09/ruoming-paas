@@ -34,7 +34,6 @@ class AiPromptTemplate(BaseModel):
         comment="模板变量声明，如 ['user_name', 'context']"
     )
     status: Mapped[int] = mapped_column(SmallInteger, default=1, server_default="1")
-    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class AiPromptVersion(Base):

@@ -78,6 +78,13 @@ function onRefreshed(token: string) {
 request.interceptors.response.use(
   (response) => {
     NProgress.done()
+
+    // 二进制响应（文件下载）直接返回 response，不解析 JSON
+    const responseType = response.config.responseType
+    if (responseType === 'blob' || responseType === 'arraybuffer') {
+      return response
+    }
+
     const res = response.data
 
     // 业务错误码处理（后端统一返回 200 HTTP + code 字段）

@@ -131,7 +131,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             resp_raw = b"".join(resp_chunks)
 
             # 超过上限截断（仅截日志用，响应正常返回）
-            if len(resp_raw) <= _RESPONSE_BODY_MAX_BYTES:
+            # 跳过二进制响应（文件下载等），响应体无审计价值且可能包含特殊字符
+            media_type = response.media_type or ""
+            if media_type.startswith(("application/octet-stream", "application/zip", "image/", "audio/", "video/")):
+                response_body = None
+            elif len(resp_raw) <= _RESPONSE_BODY_MAX_BYTES:
                 response_body = _desensitize(_try_parse_json(resp_raw))
             else:
                 response_body = {"_truncated": True, "_size_bytes": len(resp_raw)}

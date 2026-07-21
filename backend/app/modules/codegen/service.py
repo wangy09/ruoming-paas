@@ -1,25 +1,34 @@
 """
 若茗 PaaS - 代码生成器服务
 
-第一期只生成代码预览，不直接写入文件，避免覆盖用户代码。
+使用 Jinja2 模板引擎，模板文件存储在 templates/ 目录下
 """
 from __future__ import annotations
 
+import io
 import re
 import os
+import uuid
+import zipfile
+from datetime import datetime
 from pathlib import Path
-from string import Template
 
-from sqlalchemy import text
+from jinja2 import Environment, FileSystemLoader
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundException
+from app.modules.codegen.models import GenTable, GenTableColumn
 from app.modules.codegen.schemas import (
+    BatchGenerateRequest,
+    ColumnConfig,
     ColumnInfo,
+    CreateTableRequest,
     GeneratedFile,
     GeneratedWriteResult,
     GeneratePreviewRequest,
     GenerateWriteRequest,
+    SaveConfigRequest,
     TableInfo,
 )
 
@@ -34,6 +43,20 @@ class CodegenService:
 
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
+        self._init_jinja()
+
+    def _init_jinja(self) -> None:
+        template_dir = Path(__file__).parent / "templates"
+        self.env = Environment(
+            loader=FileSystemLoader(template_dir),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+        )
+
+    def _render(self, template_path: str, context: dict) -> str:
+        template = self.env.get_template(template_path)
+        return template.render(context)
 
     async def list_tables(self, keyword: str | None = None) -> list[TableInfo]:
         params = {"keyword": f"%{keyword or ''}%"}
@@ -70,7 +93,7 @@ class CodegenService:
                   AND c.relname = :table_name
                 """
             ),
-            {"table_name": table_name},
+            {"table_name": table_name.lower()},
         )
         data = row.mappings().first()
         if not data:
@@ -78,7 +101,10 @@ class CodegenService:
         return TableInfo(**dict(data))
 
     async def list_columns(self, table_name: str) -> list[ColumnInfo]:
-        await self.get_table(table_name)
+        try:
+            await self.get_table(table_name)
+        except NotFoundException:
+            return []
         rows = await self.db.execute(
             text(
                 """
@@ -131,15 +157,89 @@ class CodegenService:
         return {"table": table, "columns": columns, "files": files, "results": results}
 
     async def _build_files(self, request: GeneratePreviewRequest) -> tuple[TableInfo, list[ColumnInfo], list[GeneratedFile]]:
-        table = await self.get_table(request.table_name)
-        columns = await self.list_columns(request.table_name)
+        from sqlalchemy import text
+        check_table = await self.db.execute(
+            text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+            {"name": request.table_name.lower()}
+        )
+        table_exists = check_table.scalar_one()
+
+        if table_exists:
+            table = await self.get_table(request.table_name)
+            columns = await self.list_columns(request.table_name)
+        else:
+            table = TableInfo(
+                table_name=request.table_name,
+                table_comment="",
+            )
+            columns: list[ColumnInfo] = []
+            if request.column_configs:
+                for col in request.column_configs:
+                    data_type = getattr(col, "data_type", "VARCHAR")
+                    udt_name = getattr(col, "udt_name", data_type.lower())
+                    columns.append(ColumnInfo(
+                        column_name=col.column_name,
+                        data_type=data_type,
+                        udt_name=udt_name,
+                        is_nullable=getattr(col, "is_nullable", True),
+                        column_default=getattr(col, "column_default", None),
+                        character_maximum_length=getattr(col, "data_length", None),
+                        numeric_precision=getattr(col, "data_length", None),
+                        numeric_scale=getattr(col, "data_scale", None),
+                        column_comment=getattr(col, "column_comment", None),
+                        is_primary_key=getattr(col, "is_primary_key", False),
+                        python_type=self._python_type(data_type, udt_name),
+                        ts_type=self._ts_type(data_type, udt_name),
+                        form_component=col.form_component,
+                    ))
 
         module_name = request.module_name
         entity_name = request.entity_name or self._pascal_case(module_name)
         page_title = request.page_title or table.table_comment or entity_name
         api_prefix = request.api_prefix or f"/api/v1/{module_name.replace('_', '-')}"
+        route_path = f"/{module_name.replace('_', '-')}"
 
-        context = {
+        context = self._build_context(
+            table=table,
+            columns=columns,
+            module_name=module_name,
+            entity_name=entity_name,
+            page_title=page_title,
+            api_prefix=api_prefix,
+            route_path=route_path,
+        )
+
+        files = [
+            GeneratedFile(path=f"backend/app/modules/{module_name}/__init__.py", language="python", content=""),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/models.py", language="python", content=self._render("backend/model.py.tpl", context)),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/schemas.py", language="python", content=self._render("backend/schemas.py.tpl", context)),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/repository.py", language="python", content=self._render("backend/repository.py.tpl", context)),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/service.py", language="python", content=self._render("backend/service.py.tpl", context)),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/router.py", language="python", content=self._render("backend/router.py.tpl", context)),
+            GeneratedFile(path=f"backend/migrations/versions/{context['migration_id']}_add_{module_name}_table.py", language="python", content=self._render("backend/migration.py.tpl", context)),
+            GeneratedFile(path=f"frontend/src/api/{module_name}.ts", language="typescript", content=self._render("frontend/api.ts.tpl", context)),
+            GeneratedFile(path=f"frontend/src/views/{module_name}/index.vue", language="vue", content=self._render("frontend/index.vue.tpl", context)),
+            GeneratedFile(path=f"frontend/src/router/{module_name}.ts", language="typescript", content=self._render("frontend/route.ts.tpl", context)),
+        ]
+        return table, columns, files
+
+    def _build_context(self, table: TableInfo, columns: list[ColumnInfo], module_name: str, entity_name: str, page_title: str, api_prefix: str, route_path: str) -> dict:
+        model_fields = self._render_model_fields(columns)
+        create_schema_fields = self._render_schema_fields(columns, include_common=False, optional=False)
+        update_schema_fields = self._render_schema_fields(columns, include_common=False, optional=True)
+        schema_fields = self._render_schema_fields(columns, include_common=True, optional=False)
+        table_columns = self._render_vue_table_columns(columns)
+        form_items = self._render_vue_form_items(columns)
+        form_defaults = self._render_vue_form_defaults(columns)
+        ts_type_fields = self._render_ts_type_fields(columns)
+        migration_fields = self._render_migration_fields(columns)
+
+        sqlalchemy_imports = self._collect_sqlalchemy_imports(columns)
+        searchable_fields = self._collect_searchable_fields(columns)
+        has_jsonb = any(col.data_type in {"json", "jsonb"} for col in columns)
+        has_search_fields = len(searchable_fields) > 0
+
+        return {
             "table_name": table.table_name,
             "table_comment": table.table_comment or page_title,
             "module_name": module_name,
@@ -147,25 +247,23 @@ class CodegenService:
             "entity_var": self._snake_case(entity_name),
             "page_title": page_title,
             "api_prefix": api_prefix,
-            "model_fields": self._render_model_fields(columns),
-            "schema_fields": self._render_schema_fields(columns),
-            "create_schema_fields": self._render_schema_fields(columns, include_common=False, optional=False),
-            "update_schema_fields": self._render_schema_fields(columns, include_common=False, optional=True),
-            "table_columns": self._render_vue_table_columns(columns),
-            "form_items": self._render_vue_form_items(columns),
-            "form_defaults": self._render_vue_form_defaults(columns),
+            "route_path": route_path,
+            "model_fields": model_fields,
+            "schema_fields": schema_fields,
+            "create_schema_fields": create_schema_fields,
+            "update_schema_fields": update_schema_fields,
+            "table_columns": table_columns,
+            "form_items": form_items,
+            "form_defaults": form_defaults,
+            "ts_type_fields": ts_type_fields,
+            "migration_fields": migration_fields,
+            "sqlalchemy_imports": sqlalchemy_imports,
+            "searchable_fields": searchable_fields,
+            "has_jsonb": has_jsonb,
+            "has_search_fields": has_search_fields,
+            "migration_id": self._generate_migration_id(),
+            "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
-
-        files = [
-            GeneratedFile(path=f"backend/app/modules/{module_name}/__init__.py", language="python", content=""),
-            GeneratedFile(path=f"backend/app/modules/{module_name}/models.py", language="python", content=self._tpl_model(context)),
-            GeneratedFile(path=f"backend/app/modules/{module_name}/schemas.py", language="python", content=self._tpl_schemas(context)),
-            GeneratedFile(path=f"backend/app/modules/{module_name}/service.py", language="python", content=self._tpl_service(context)),
-            GeneratedFile(path=f"backend/app/modules/{module_name}/router.py", language="python", content=self._tpl_router(context)),
-            GeneratedFile(path=f"frontend/src/api/{module_name}.ts", language="typescript", content=self._tpl_api(context)),
-            GeneratedFile(path=f"frontend/src/views/{module_name}/index.vue", language="vue", content=self._tpl_vue(context)),
-        ]
-        return table, columns, files
 
     def _write_file(self, file: GeneratedFile, overwrite: bool) -> GeneratedWriteResult:
         target = self._resolve_output_path(file.path)
@@ -238,6 +336,8 @@ class CodegenService:
             return "boolean"
         if data_type in {"json", "jsonb"}:
             return "Record<string, unknown>"
+        if data_type.startswith("timestamp") or udt_name in {"date", "time"}:
+            return "string"
         return "string"
 
     @staticmethod
@@ -263,7 +363,41 @@ class CodegenService:
         return value.lower()
 
     @staticmethod
-    def _render_model_fields(columns: list[ColumnInfo]) -> str:
+    def _generate_migration_id() -> str:
+        return uuid.uuid4().hex[:12]
+
+    @staticmethod
+    def _collect_sqlalchemy_imports(columns: list[ColumnInfo]) -> list[str]:
+        imports = {"BigInteger", "Boolean", "DateTime", "Numeric", "String", "Text"}
+        for col in columns:
+            if col.data_type == "text":
+                imports.add("Text")
+            elif col.data_type in {"bigint", "integer", "smallint"}:
+                imports.add("BigInteger")
+            elif col.data_type in {"numeric", "real", "double precision"}:
+                imports.add("Numeric")
+            elif col.data_type == "boolean":
+                imports.add("Boolean")
+            elif col.data_type.startswith("timestamp"):
+                imports.add("DateTime")
+            elif col.data_type in {"json", "jsonb"}:
+                pass
+            else:
+                imports.add("String")
+        return sorted(imports)
+
+    @staticmethod
+    def _collect_searchable_fields(columns: list[ColumnInfo]) -> list[str]:
+        searchable = []
+        for col in columns:
+            if col.column_name in COMMON_FIELDS:
+                continue
+            if col.python_type in {"str"} or col.data_type == "text":
+                searchable.append(col.column_name)
+        return searchable
+
+    @staticmethod
+    def _render_model_fields(columns: list[ColumnInfo]) -> list[str]:
         lines: list[str] = []
         for col in columns:
             if col.column_name in COMMON_FIELDS:
@@ -291,13 +425,13 @@ class CodegenService:
             elif col.python_type == "bool":
                 default_part = ", default=False"
             lines.append(
-                f"    {col.column_name}: Mapped[{col.python_type}{nullable}] = "
+                f"{col.column_name}: Mapped[{col.python_type}{nullable}] = "
                 f"mapped_column({column_type}, nullable={str(col.is_nullable)}{default_part}, comment=\"{comment}\")"
             )
-        return "\n".join(lines) or "    pass"
+        return lines or ["    pass"]
 
     @staticmethod
-    def _render_schema_fields(columns: list[ColumnInfo], include_common: bool = True, optional: bool = False) -> str:
+    def _render_schema_fields(columns: list[ColumnInfo], include_common: bool = True, optional: bool = False) -> list[str]:
         lines: list[str] = []
         for col in columns:
             if col.column_name == "is_deleted":
@@ -310,24 +444,28 @@ class CodegenService:
                 default = " = None"
             else:
                 default = ""
-            lines.append(f"    {col.column_name}: {py_type}{default}")
-        return "\n".join(lines) or "    pass"
+            lines.append(f"{col.column_name}: {py_type}{default}")
+        return lines or ["    pass"]
 
     @staticmethod
-    def _render_vue_table_columns(columns: list[ColumnInfo]) -> str:
-        lines: list[str] = []
+    def _render_vue_table_columns(columns: list[ColumnInfo]) -> list[dict]:
+        result: list[dict] = []
         skip = {"is_deleted", "tenant_id", "updated_at"}
         for col in columns:
             if col.column_name in skip:
                 continue
             label = col.column_comment or col.column_name
-            width = " width=\"170\"" if col.column_name.endswith("_at") else ""
-            lines.append(f"      <el-table-column prop=\"{col.column_name}\" label=\"{label}\"{width} show-overflow-tooltip />")
-        return "\n".join(lines)
+            width = ' width="170"' if col.column_name.endswith("_at") else ""
+            result.append({
+                "prop": col.column_name,
+                "label": label,
+                "width": width,
+            })
+        return result
 
     @staticmethod
-    def _render_vue_form_items(columns: list[ColumnInfo]) -> str:
-        lines: list[str] = []
+    def _render_vue_form_items(columns: list[ColumnInfo]) -> list[dict]:
+        result: list[dict] = []
         for col in columns:
             if col.column_name in COMMON_FIELDS:
                 continue
@@ -342,12 +480,15 @@ class CodegenService:
                 control = f"<el-date-picker v-model=\"form.{col.column_name}\" type=\"datetime\" value-format=\"YYYY-MM-DD HH:mm:ss\" style=\"width: 100%\" />"
             else:
                 control = f"<el-input v-model=\"form.{col.column_name}\" />"
-            lines.append(f"        <el-form-item label=\"{label}\">\n          {control}\n        </el-form-item>")
-        return "\n".join(lines)
+            result.append({
+                "label": label,
+                "control": control,
+            })
+        return result
 
     @staticmethod
-    def _render_vue_form_defaults(columns: list[ColumnInfo]) -> str:
-        lines: list[str] = []
+    def _render_vue_form_defaults(columns: list[ColumnInfo]) -> list[dict]:
+        result: list[dict] = []
         for col in columns:
             if col.column_name in COMMON_FIELDS:
                 continue
@@ -359,312 +500,477 @@ class CodegenService:
                 default = "{}"
             else:
                 default = "''"
-            lines.append(f"  {col.column_name}: {default},")
-        return "\n".join(lines)
+            result.append({
+                "name": col.column_name,
+                "default": default,
+            })
+        return result
 
     @staticmethod
-    def _template(content: str, context: dict) -> str:
-        return Template(content.strip() + "\n").safe_substitute(context)
+    def _render_ts_type_fields(columns: list[ColumnInfo]) -> list[dict]:
+        result: list[dict] = []
+        for col in columns:
+            if col.column_name in COMMON_FIELDS:
+                continue
+            result.append({
+                "name": col.column_name,
+                "type": col.ts_type,
+            })
+        return result
 
-    def _tpl_model(self, ctx: dict) -> str:
-        return self._template(
-            '''
-from datetime import datetime
+    @staticmethod
+    def _render_migration_fields(columns: list[ColumnInfo]) -> list[dict]:
+        result: list[dict] = []
+        for col in columns:
+            if col.column_name in COMMON_FIELDS:
+                continue
+            comment = col.column_comment or col.column_name
+            if col.data_type in {"bigint", "integer", "smallint"}:
+                sa_type = "sa.BigInteger()"
+            elif col.data_type in {"numeric", "real", "double precision"}:
+                sa_type = "sa.Numeric()"
+            elif col.data_type == "boolean":
+                sa_type = "sa.Boolean()"
+            elif col.data_type.startswith("timestamp"):
+                sa_type = "sa.DateTime(timezone=True)"
+            elif col.data_type in {"json", "jsonb"}:
+                sa_type = "postgresql.JSONB()"
+            elif col.data_type == "text":
+                sa_type = "sa.Text()"
+            else:
+                length = col.character_maximum_length or 255
+                sa_type = f"sa.String({length})"
+            default = None
+            if col.column_default:
+                if col.column_default.lower() in {"true", "false"}:
+                    default = col.column_default.lower()
+                elif col.column_default.isdigit():
+                    default = col.column_default
+            result.append({
+                "name": col.column_name,
+                "type": sa_type,
+                "nullable": col.is_nullable,
+                "default": default,
+                "comment": comment,
+            })
+        return result
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+    async def save_config(self, request: SaveConfigRequest, created_by: int | None = None) -> GenTable:
+        existing = await self.db.execute(
+            select(GenTable).where(GenTable.table_name == request.table_name, GenTable.is_deleted == False)
+        )
+        existing = existing.scalar_one_or_none()
 
-from app.core.base_model import BaseModel
+        if existing:
+            existing.table_comment = request.table_comment
+            existing.module_name = request.module_name
+            existing.entity_name = request.entity_name
+            existing.page_title = request.page_title
+            existing.api_prefix = request.api_prefix
+            existing.author = request.author
+            existing.remark = request.remark
+            table = existing
+        else:
+            table = GenTable(
+                table_name=request.table_name,
+                table_comment=request.table_comment,
+                module_name=request.module_name,
+                entity_name=request.entity_name,
+                page_title=request.page_title,
+                api_prefix=request.api_prefix,
+                author=request.author,
+                remark=request.remark,
+                created_by=created_by,
+            )
+            self.db.add(table)
+        await self.db.flush()
 
-
-class $entity_name(BaseModel):
-    """$table_comment"""
-
-    __tablename__ = "$table_name"
-
-$model_fields
-            ''',
-            ctx,
+        await self.db.execute(
+            delete(GenTableColumn).where(GenTableColumn.table_id == table.id)
         )
 
-    def _tpl_schemas(self, ctx: dict) -> str:
-        return self._template(
-            '''
-from datetime import datetime
+        for idx, col_config in enumerate(request.columns):
+            column_info = None
+            try:
+                column_info = await self._get_column_info(request.table_name, col_config.column_name)
+            except NotFoundException:
+                pass
 
-from pydantic import BaseModel
+            column = GenTableColumn(
+                table_id=table.id,
+                column_name=col_config.column_name,
+                column_comment=column_info.column_comment if column_info else None,
+                data_type=column_info.data_type if column_info else "",
+                udt_name=column_info.udt_name if column_info else "",
+                is_nullable=column_info.is_nullable if column_info else True,
+                is_primary_key=column_info.is_primary_key if column_info else False,
+                is_list=col_config.is_list,
+                is_form=col_config.is_form,
+                is_search=col_config.is_search,
+                is_required=col_config.is_required,
+                form_component=col_config.form_component,
+                dict_type=col_config.dict_type,
+                sort=col_config.sort or idx,
+            )
+            self.db.add(column)
 
+        await self.db.commit()
+        return table
 
-class $entity_nameCreate(BaseModel):
-$create_schema_fields
+    async def _get_column_info(self, table_name: str, column_name: str) -> ColumnInfo | None:
+        columns = await self.list_columns(table_name)
+        return next((col for col in columns if col.column_name == column_name), None)
 
-
-class $entity_nameUpdate(BaseModel):
-$update_schema_fields
-
-
-class $entity_nameInfo(BaseModel):
-$schema_fields
-
-    class Config:
-        from_attributes = True
-            ''',
-            ctx,
+    async def get_config(self, config_id: int) -> dict:
+        table = await self.db.execute(
+            select(GenTable).where(GenTable.id == config_id, GenTable.is_deleted == False)
         )
+        table = table.scalar_one_or_none()
+        if not table:
+            raise NotFoundException("代码生成配置")
 
-    def _tpl_service(self, ctx: dict) -> str:
-        return self._template(
-            '''
-from sqlalchemy import desc, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.exceptions import NotFoundException
-from app.core.utils.pagination import PageParams
-from app.modules.$module_name.models import $entity_name
-from app.modules.$module_name.schemas import ${entity_name}Create, ${entity_name}Update
-
-
-class ${entity_name}Service:
-    def __init__(self, db: AsyncSession):
-        self.db = db
-
-    async def list(self, page_params: PageParams) -> dict:
-        conditions = [$entity_name.is_deleted == False]
-        total = await self.db.scalar(select(func.count($entity_name.id)).where(*conditions))
-        rows = await self.db.execute(
-            select($entity_name)
-            .where(*conditions)
-            .order_by(desc($entity_name.created_at))
-            .offset(page_params.offset)
-            .limit(page_params.page_size)
+        from sqlalchemy import text
+        check_table = await self.db.execute(
+            text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+            {"name": table.table_name.lower()}
         )
+        table_exists = check_table.scalar_one()
+
+        columns = await self.db.execute(
+            select(GenTableColumn).where(GenTableColumn.table_id == table.id, GenTableColumn.is_deleted == False).order_by(GenTableColumn.sort)
+        )
+        columns = columns.scalars().all()
+
         return {
-            "items": rows.scalars().all(),
-            "total": total or 0,
-            "page": page_params.page,
-            "page_size": page_params.page_size,
+            "id": table.id,
+            "table_name": table.table_name,
+            "table_comment": table.table_comment,
+            "module_name": table.module_name,
+            "entity_name": table.entity_name,
+            "page_title": table.page_title,
+            "api_prefix": table.api_prefix,
+            "author": table.author,
+            "status": table.status,
+            "remark": table.remark,
+            "columns": [self._column_to_dict(col) for col in columns],
+            "table_exists": table_exists,
+            "created_at": table.created_at.isoformat() if table.created_at else None,
+            "updated_at": table.updated_at.isoformat() if table.updated_at else None,
         }
 
-    async def get(self, obj_id: int) -> $entity_name:
-        obj = await self.db.scalar(
-            select($entity_name).where($entity_name.id == obj_id, $entity_name.is_deleted == False)
-        )
-        if not obj:
-            raise NotFoundException("$page_title")
-        return obj
+    async def list_configs(self, page: int = 1, page_size: int = 20, keyword: str | None = None) -> dict:
+        from sqlalchemy import func
 
-    async def create(self, data: ${entity_name}Create) -> $entity_name:
-        obj = $entity_name(**data.model_dump(exclude_unset=True))
-        self.db.add(obj)
+        query = select(GenTable).where(GenTable.is_deleted == False)
+        if keyword:
+            query = query.where(
+                GenTable.table_name.ilike(f"%{keyword}%")
+                | GenTable.table_comment.ilike(f"%{keyword}%")
+                | GenTable.module_name.ilike(f"%{keyword}%")
+            )
+        query = query.order_by(GenTable.created_at.desc())
+
+        count_query = select(func.count()).select_from(query.subquery())
+        count = await self.db.execute(count_query)
+        total = count.scalar_one()
+
+        query = query.offset((page - 1) * page_size).limit(page_size)
+        tables = await self.db.execute(query)
+        tables = tables.scalars().all()
+
+        from sqlalchemy import text
+
+        items = []
+        for table in tables:
+            check_table = await self.db.execute(
+                text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+                {"name": table.table_name.lower()}
+            )
+            table_exists = check_table.scalar_one()
+
+            columns = await self.db.execute(
+                select(GenTableColumn).where(GenTableColumn.table_id == table.id, GenTableColumn.is_deleted == False).order_by(GenTableColumn.sort)
+            )
+            columns = columns.scalars().all()
+            items.append({
+                "id": table.id,
+                "table_name": table.table_name,
+                "table_comment": table.table_comment,
+                "module_name": table.module_name,
+                "entity_name": table.entity_name,
+                "page_title": table.page_title,
+                "api_prefix": table.api_prefix,
+                "author": table.author,
+                "status": table.status,
+                "remark": table.remark,
+                "columns": [self._column_to_dict(col) for col in columns],
+                "table_exists": table_exists,
+                "created_at": table.created_at.isoformat() if table.created_at else None,
+                "updated_at": table.updated_at.isoformat() if table.updated_at else None,
+            })
+
+        return {"total": total, "items": items}
+
+    async def delete_config(self, config_id: int) -> None:
+        table = await self.db.execute(
+            select(GenTable).where(GenTable.id == config_id, GenTable.is_deleted == False)
+        )
+        table = table.scalar_one_or_none()
+        if not table:
+            raise NotFoundException("代码生成配置")
+
+        table.is_deleted = True
+        await self.db.execute(
+            update(GenTableColumn).where(GenTableColumn.table_id == config_id).values(is_deleted=True)
+        )
+        await self.db.commit()
+
+    async def generate_from_config(self, config_id: int, overwrite: bool = False) -> dict:
+        config = await self.get_config(config_id)
+
+        from sqlalchemy import text
+        check_table = await self.db.execute(
+            text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+            {"name": config["table_name"].lower()}
+        )
+        table_exists = check_table.scalar_one()
+
+        if table_exists:
+            request = GenerateWriteRequest(
+                table_name=config["table_name"],
+                module_name=config["module_name"],
+                entity_name=config["entity_name"],
+                page_title=config["page_title"],
+                api_prefix=config["api_prefix"],
+                column_configs=[ColumnConfig(**col) for col in config["columns"]],
+                overwrite=overwrite,
+            )
+            return await self.write(request)
+        else:
+            return await self._generate_from_config_only(config_id, overwrite)
+
+    async def _generate_from_config_only(self, config_id: int, overwrite: bool = False) -> dict:
+        config = await self.get_config(config_id)
+
+        table = TableInfo(
+            table_name=config["table_name"],
+            table_comment=config["table_comment"],
+        )
+
+        columns: list[ColumnInfo] = []
+        for col in config["columns"]:
+            columns.append(ColumnInfo(
+                column_name=col["column_name"],
+                data_type=col.get("data_type", "VARCHAR"),
+                udt_name=col.get("udt_name", col.get("data_type", "varchar").lower()),
+                is_nullable=col.get("is_nullable", True),
+                column_default=col.get("column_default"),
+                character_maximum_length=col.get("data_length"),
+                numeric_precision=col.get("data_length"),
+                numeric_scale=col.get("data_scale"),
+                column_comment=col.get("column_comment"),
+                is_primary_key=col.get("is_primary_key", False),
+                python_type=self._python_type(col.get("data_type", "VARCHAR"), col.get("udt_name", "varchar")),
+                ts_type=self._ts_type(col.get("data_type", "VARCHAR"), col.get("udt_name", "varchar")),
+                form_component=col.get("form_component", "input"),
+            ))
+
+        module_name = config["module_name"]
+        entity_name = config["entity_name"]
+        page_title = config["page_title"] or config["table_comment"] or entity_name
+        api_prefix = config["api_prefix"] or f"/api/v1/{module_name.replace('_', '-')}"
+        route_path = f"/{module_name.replace('_', '-')}"
+
+        context = self._build_context(
+            table=table,
+            columns=columns,
+            module_name=module_name,
+            entity_name=entity_name,
+            page_title=page_title,
+            api_prefix=api_prefix,
+            route_path=route_path,
+        )
+
+        files = [
+            GeneratedFile(path=f"backend/app/modules/{module_name}/__init__.py", language="python", content=""),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/models.py", language="python", content=self._render("backend/model.py.tpl", context)),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/schemas.py", language="python", content=self._render("backend/schemas.py.tpl", context)),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/repository.py", language="python", content=self._render("backend/repository.py.tpl", context)),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/service.py", language="python", content=self._render("backend/service.py.tpl", context)),
+            GeneratedFile(path=f"backend/app/modules/{module_name}/router.py", language="python", content=self._render("backend/router.py.tpl", context)),
+            GeneratedFile(path=f"backend/migrations/versions/{context['migration_id']}_add_{module_name}_table.py", language="python", content=self._render("backend/migration.py.tpl", context)),
+            GeneratedFile(path=f"frontend/src/api/{module_name}.ts", language="typescript", content=self._render("frontend/api.ts.tpl", context)),
+            GeneratedFile(path=f"frontend/src/views/{module_name}/index.vue", language="vue", content=self._render("frontend/index.vue.tpl", context)),
+            GeneratedFile(path=f"frontend/src/router/{module_name}.ts", language="typescript", content=self._render("frontend/route.ts.tpl", context)),
+        ]
+
+        results = [self._write_file(file, overwrite=overwrite) for file in files]
+        return {"table": table, "columns": columns, "files": files, "results": results}
+
+    async def batch_generate(self, request: BatchGenerateRequest) -> list[dict]:
+        results = []
+        for config_id in request.config_ids:
+            result = await self.generate_from_config(config_id, request.overwrite)
+            results.append(result)
+        return results
+
+    async def generate_zip(self, config_id: int) -> bytes:
+        config = await self.get_config(config_id)
+        request = GeneratePreviewRequest(
+            table_name=config["table_name"],
+            module_name=config["module_name"],
+            entity_name=config["entity_name"],
+            page_title=config["page_title"],
+            api_prefix=config["api_prefix"],
+            column_configs=[ColumnConfig(**col) for col in config["columns"]],
+        )
+        preview = await self.preview(request)
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file in preview["files"]:
+                if file.content:
+                    zf.writestr(file.path, file.content)
+
+        buffer.seek(0)
+        return buffer.read()
+
+    @staticmethod
+    def _column_to_dict(col: GenTableColumn) -> dict:
+        return {
+            "id": col.id,
+            "column_name": col.column_name,
+            "column_comment": col.column_comment,
+            "data_type": col.data_type,
+            "udt_name": col.udt_name,
+            "is_nullable": col.is_nullable,
+            "is_primary_key": col.is_primary_key,
+            "is_list": col.is_list,
+            "is_form": col.is_form,
+            "is_search": col.is_search,
+            "is_required": col.is_required,
+            "form_component": col.form_component,
+            "dict_type": col.dict_type,
+            "sort": col.sort,
+            "python_type": CodegenService._python_type(col.data_type, col.udt_name),
+            "ts_type": CodegenService._ts_type(col.data_type, col.udt_name),
+        }
+
+    @staticmethod
+    def _get_supported_field_types() -> list[dict]:
+        return [
+            {"type_name": "VARCHAR", "display_name": "字符串", "default_length": 128, "supports_length": True, "supports_scale": False, "default_nullable": True},
+            {"type_name": "TEXT", "display_name": "文本", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+            {"type_name": "BIGINT", "display_name": "长整型", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+            {"type_name": "INT", "display_name": "整型", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+            {"type_name": "SMALLINT", "display_name": "短整型", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+            {"type_name": "DECIMAL", "display_name": "小数", "default_length": 18, "supports_length": True, "supports_scale": True, "default_nullable": True},
+            {"type_name": "FLOAT", "display_name": "浮点", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+            {"type_name": "BOOLEAN", "display_name": "布尔", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+            {"type_name": "DATE", "display_name": "日期", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+            {"type_name": "TIME", "display_name": "时间", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+            {"type_name": "TIMESTAMP", "display_name": "日期时间", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+            {"type_name": "JSONB", "display_name": "JSON", "default_length": None, "supports_length": False, "supports_scale": False, "default_nullable": True},
+        ]
+
+    async def create_table_from_config(self, request: "CreateTableRequest", created_by: int | None = None) -> dict:
+        from sqlalchemy import text
+
+        existing = await self.db.execute(
+            select(GenTable).where(GenTable.table_name == request.table_name, GenTable.is_deleted == False)
+        )
+        existing = existing.scalar_one_or_none()
+        if existing:
+            raise ValueError(f"表 '{request.table_name}' 的配置已存在")
+
+        if request.create_db_table:
+            check_table = await self.db.execute(
+                text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+                {"name": request.table_name.lower()}
+            )
+            if check_table.scalar_one():
+                raise ValueError(f"数据库表 '{request.table_name}' 已存在")
+
+            field_types = {ft["type_name"]: ft for ft in self._get_supported_field_types()}
+
+            columns_sql = []
+            for field in request.fields:
+                col_sql = f'"{field.column_name}" ' + field.data_type
+                type_info = field_types.get(field.data_type, {})
+                supports_length = type_info.get("supports_length", True)
+                supports_scale = type_info.get("supports_scale", False)
+                if field.data_length and supports_length:
+                    if field.data_scale is not None and supports_scale:
+                        col_sql += f"({field.data_length}, {field.data_scale})"
+                    else:
+                        col_sql += f"({field.data_length})"
+                if not field.is_nullable:
+                    col_sql += " NOT NULL"
+                if field.column_default:
+                    col_sql += f" DEFAULT {field.column_default}"
+                if field.column_comment:
+                    col_sql += f" COMMENT '{field.column_comment}'"
+                columns_sql.append(col_sql)
+
+            default_columns = [
+                '"id" BIGSERIAL PRIMARY KEY',
+                '"created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()',
+                '"updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()',
+                '"is_deleted" BOOLEAN DEFAULT FALSE',
+                '"tenant_id" BIGINT',
+                '"created_by" BIGINT',
+                '"updated_by" BIGINT',
+            ]
+
+            all_columns = columns_sql + default_columns
+
+            create_sql = f"""
+                CREATE TABLE "{request.table_name}" (
+                    {', '.join(all_columns)}
+                )
+            """
+
+            if request.table_comment:
+                create_sql += f" COMMENT = '{request.table_comment}'"
+
+            await self.db.execute(text(create_sql))
+
+        entity_name = request.entity_name or self._pascal_case(request.table_name)
+        api_prefix = request.api_prefix or f"/api/v1/{request.table_name}"
+
+        table = GenTable(
+            table_name=request.table_name,
+            table_comment=request.table_comment,
+            module_name=request.module_name,
+            entity_name=entity_name,
+            page_title=request.page_title,
+            api_prefix=api_prefix,
+            author=request.author,
+            remark=request.remark,
+            created_by=created_by,
+        )
+        self.db.add(table)
         await self.db.flush()
-        return obj
 
-    async def update(self, obj_id: int, data: ${entity_name}Update) -> $entity_name:
-        obj = await self.get(obj_id)
-        for key, value in data.model_dump(exclude_unset=True).items():
-            setattr(obj, key, value)
-        await self.db.flush()
-        return obj
+        for idx, field in enumerate(request.fields):
+            column = GenTableColumn(
+                table_id=table.id,
+                column_name=field.column_name,
+                column_comment=field.column_comment,
+                data_type=field.data_type,
+                udt_name=field.data_type.lower(),
+                is_nullable=field.is_nullable,
+                is_primary_key=field.is_primary_key,
+                is_list=field.is_list,
+                is_form=field.is_form,
+                is_search=field.is_search,
+                is_required=field.is_required,
+                form_component=field.form_component,
+                dict_type=field.dict_type,
+                sort=field.sort or idx,
+            )
+            self.db.add(column)
 
-    async def delete(self, obj_id: int) -> None:
-        obj = await self.get(obj_id)
-        obj.is_deleted = True
-            ''',
-            ctx,
-        )
+        await self.db.commit()
 
-    def _tpl_router(self, ctx: dict) -> str:
-        return self._template(
-            '''
-from typing import Annotated
-
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.deps import require_permissions
-from app.core.response import ApiResponse, ok
-from app.core.utils.pagination import PageParams
-from app.database import get_db
-from app.modules.$module_name.schemas import ${entity_name}Create, ${entity_name}Info, ${entity_name}Update
-from app.modules.$module_name.service import ${entity_name}Service
-from app.modules.user.models import SysUser
-
-router = APIRouter()
-
-
-@router.get("", response_model=ApiResponse, summary="$page_title列表")
-async def list_items(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[SysUser, Depends(require_permissions("$module_name:view"))],
-    page_params: Annotated[PageParams, Depends()],
-) -> ApiResponse:
-    svc = ${entity_name}Service(db)
-    data = await svc.list(page_params)
-    data["items"] = [${entity_name}Info.model_validate(item) for item in data["items"]]
-    return ok(data)
-
-
-@router.post("", response_model=ApiResponse[${entity_name}Info], summary="创建$page_title")
-async def create_item(
-    body: ${entity_name}Create,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[SysUser, Depends(require_permissions("$module_name:create"))],
-) -> ApiResponse[${entity_name}Info]:
-    svc = ${entity_name}Service(db)
-    obj = await svc.create(body)
-    await db.commit()
-    await db.refresh(obj)
-    return ok(${entity_name}Info.model_validate(obj), message="创建成功")
-
-
-@router.put("/{obj_id}", response_model=ApiResponse[${entity_name}Info], summary="编辑$page_title")
-async def update_item(
-    obj_id: int,
-    body: ${entity_name}Update,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[SysUser, Depends(require_permissions("$module_name:update"))],
-) -> ApiResponse[${entity_name}Info]:
-    svc = ${entity_name}Service(db)
-    obj = await svc.update(obj_id, body)
-    await db.commit()
-    await db.refresh(obj)
-    return ok(${entity_name}Info.model_validate(obj), message="保存成功")
-
-
-@router.delete("/{obj_id}", response_model=ApiResponse, summary="删除$page_title")
-async def delete_item(
-    obj_id: int,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[SysUser, Depends(require_permissions("$module_name:delete"))],
-) -> ApiResponse:
-    svc = ${entity_name}Service(db)
-    await svc.delete(obj_id)
-    await db.commit()
-    return ok(message="删除成功")
-            ''',
-            ctx,
-        )
-
-    def _tpl_api(self, ctx: dict) -> str:
-        return self._template(
-            '''
-import request from '@/utils/request'
-
-export const ${module_name}Api = {
-  list: (params: { page?: number; page_size?: number }) =>
-    request.get('$api_prefix', { params }),
-  create: (data: Record<string, unknown>) =>
-    request.post('$api_prefix', data),
-  update: (id: number, data: Record<string, unknown>) =>
-    request.put(`$api_prefix/$${id}`, data),
-  remove: (id: number) =>
-    request.delete(`$api_prefix/$${id}`),
-}
-            ''',
-            ctx,
-        )
-
-    def _tpl_vue(self, ctx: dict) -> str:
-        return self._template(
-            '''
-<template>
-  <div class="page-container">
-    <div class="search-bar">
-      <el-button type="primary" @click="openDialog()">新增$page_title</el-button>
-    </div>
-    <el-table v-loading="loading" :data="items" border stripe>
-$table_columns
-      <el-table-column label="操作" width="140" fixed="right">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
-          <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <el-pagination
-      v-model:current-page="query.page"
-      v-model:page-size="query.page_size"
-      :total="total"
-      layout="total, sizes, prev, pager, next"
-      style="margin-top: 16px; justify-content: flex-end"
-      @current-change="fetchList"
-      @size-change="fetchList"
-    />
-
-    <el-dialog v-model="dialogVisible" :title="editId ? '编辑$page_title' : '新增$page_title'" width="640px">
-      <el-form :model="form" label-width="100px">
-$form_items
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submit">确定</el-button>
-      </template>
-    </el-dialog>
-  </div>
-</template>
-
-<script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { ${module_name}Api } from '@/api/$module_name'
-
-const loading = ref(false)
-const items = ref<any[]>([])
-const total = ref(0)
-const dialogVisible = ref(false)
-const editId = ref<number | null>(null)
-const query = reactive({ page: 1, page_size: 10 })
-const form = reactive({
-$form_defaults
-})
-
-async function fetchList() {
-  loading.value = true
-  try {
-    const res = await ${module_name}Api.list(query)
-    items.value = res.data?.items ?? []
-    total.value = res.data?.total ?? 0
-  } finally {
-    loading.value = false
-  }
-}
-
-function openDialog(row?: any) {
-  editId.value = row?.id ?? null
-  Object.assign(form, row || {})
-  dialogVisible.value = true
-}
-
-async function submit() {
-  if (editId.value) {
-    await ${module_name}Api.update(editId.value, form)
-  } else {
-    await ${module_name}Api.create(form)
-  }
-  ElMessage.success('保存成功')
-  dialogVisible.value = false
-  fetchList()
-}
-
-async function handleDelete(row: any) {
-  await ElMessageBox.confirm('确定删除该数据？', '提示', { type: 'warning' })
-  await ${module_name}Api.remove(row.id)
-  ElMessage.success('删除成功')
-  fetchList()
-}
-
-onMounted(fetchList)
-</script>
-
-<style lang="scss" scoped>
-.search-bar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 16px;
-}
-</style>
-            ''',
-            ctx,
-        )
+        return await self.generate_from_config(table.id)

@@ -53,7 +53,6 @@ class AiKnowledgeBase(BaseModel):
         comment="可见范围：tenant（租户内全员）/ private（仅创建者）/ shared（指定用户/角色）"
     )
     status: Mapped[int] = mapped_column(SmallInteger, default=1, server_default="1")
-    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class AiKnowledgeBaseShare(Base):

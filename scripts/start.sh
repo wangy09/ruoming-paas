@@ -86,9 +86,9 @@ start_dev() {
     log_step "检查数据库初始化状态..."
     local user_count
     user_count=$($(compose_cmd) exec -T backend python -c \
-        "import asyncio; from app.database import AsyncSessionFactory; from sqlalchemy import text; \
+        "import asyncio; from app.database import AsyncSessionLocal; from sqlalchemy import text; \
         async def f(): \
-            async with AsyncSessionFactory() as s: \
+            async with AsyncSessionLocal() as s: \
                 r = await s.execute(text('SELECT COUNT(*) FROM sys_user WHERE is_superplatform = true')); return r.scalar() \
         print(asyncio.run(f()))" 2>/dev/null || echo "0")
 
@@ -96,20 +96,6 @@ start_dev() {
         log_step "首次启动，初始化种子数据..."
         $(compose_cmd) exec backend python /app/scripts/init_data.py
         log_info "种子数据初始化完成 ✓"
-    fi
-
-    local agent_count
-    agent_count=$($(compose_cmd) exec -T backend python -c \
-        "import asyncio; from app.database import AsyncSessionFactory; from sqlalchemy import text; \
-        async def f(): \
-            async with AsyncSessionFactory() as s: \
-                r = await s.execute(text('SELECT COUNT(*) FROM ai_agent WHERE is_deleted = false')); return r.scalar() \
-        print(asyncio.run(f()))" 2>/dev/null || echo "0")
-
-    if [[ "$agent_count" == "0" ]]; then
-        log_step "初始化 Agent 种子数据..."
-        $(compose_cmd) exec backend python /app/scripts/seed_agents.py
-        log_info "Agent 种子数据初始化完成 ✓"
     fi
 
     echo ""
@@ -146,27 +132,24 @@ EOF
     fi
 
     cd "$DEPLOY_DIR"
-    log_step "构建生产镜像（低配服务器按服务顺序构建，降低内存峰值）..."
-    $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml build --no-cache backend
-    $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml build --no-cache frontend-builder
+    $(compose_cmd) -f docker-compose.prod.yml build --no-cache
 
     log_step "启动生产数据库与缓存..."
-    $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml up -d postgres redis
+    $(compose_cmd) -f docker-compose.prod.yml up -d postgres redis
 
     log_step "初始化生产数据库结构..."
-    $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml run --rm backend python -c \
+    $(compose_cmd) -f docker-compose.prod.yml run --rm backend python -c \
         "import asyncio; from app.database import init_db; asyncio.run(init_db())"
 
     log_step "初始化生产种子数据..."
-    $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml run --rm backend python /app/scripts/init_data.py
-    $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml run --rm backend python /app/scripts/seed_agents.py
+    $(compose_cmd) -f docker-compose.prod.yml run --rm backend python /app/scripts/init_data.py
 
     log_step "启动生产应用服务..."
-    $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml up -d
+    $(compose_cmd) -f docker-compose.prod.yml up -d
 
     log_step "等待服务启动..."
     sleep 10
-    $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml ps
+    $(compose_cmd) -f docker-compose.prod.yml ps
 
     log_info "生产环境启动完成 ✓"
     log_info "访问：http://your-domain.com"
@@ -178,7 +161,7 @@ stop_services() {
     cd "$DEPLOY_DIR"
     if [[ "$env" == "prod" ]]; then
         log_step "停止生产环境..."
-        $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml down
+        $(compose_cmd) -f docker-compose.prod.yml down
     else
         log_step "停止开发环境..."
         $(compose_cmd) down
@@ -188,35 +171,20 @@ stop_services() {
 
 # ── 查看状态 ─────────────────────────────────────────────────────
 show_status() {
-    local env="${1:-dev}"
     cd "$DEPLOY_DIR"
     echo ""
-    if [[ "$env" == "prod" ]]; then
-        log_info "=== 生产环境服务状态 ==="
-        $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml ps
-    else
-        log_info "=== 开发环境服务状态 ==="
-        $(compose_cmd) ps
-    fi
+    log_info "=== 开发环境服务状态 ==="
+    $(compose_cmd) ps
 }
 
 # ── 查看日志 ─────────────────────────────────────────────────────
 show_logs() {
-    local env="${1:-dev}"
     local service="${2:-}"
     cd "$DEPLOY_DIR"
-    if [[ "$env" == "prod" ]]; then
-        if [[ -n "$service" ]]; then
-            $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml logs -f --tail=100 "$service"
-        else
-            $(compose_cmd) --env-file .env.production -f docker-compose.prod.yml logs -f --tail=50
-        fi
+    if [[ -n "$service" ]]; then
+        $(compose_cmd) logs -f --tail=100 "$service"
     else
-        if [[ -n "$service" ]]; then
-            $(compose_cmd) logs -f --tail=100 "$service"
-        else
-            $(compose_cmd) logs -f --tail=50
-        fi
+        $(compose_cmd) logs -f --tail=50
     fi
 }
 
@@ -230,21 +198,19 @@ main() {
         dev)      start_dev ;;
         prod)     start_prod ;;
         stop)     stop_services "${2:-dev}" ;;
-        status)   show_status "${2:-dev}" ;;
-        logs)     show_logs "${2:-dev}" "${3:-}" ;;
+        status)   show_status ;;
+        logs)     show_logs "$@" ;;
         *)
             echo "用法：bash scripts/start.sh [命令]"
             echo ""
             echo "命令："
-            echo "  dev          启动开发环境（默认）"
-            echo "  prod         启动生产环境"
-            echo "  stop         停止开发环境"
-            echo "  stop prod    停止生产环境"
-            echo "  status       查看开发环境服务状态"
-            echo "  status prod  查看生产环境服务状态"
-            echo "  logs         查看开发环境所有日志"
-            echo "  logs prod    查看生产环境所有日志"
-            echo "  logs prod backend  查看生产环境后端日志"
+            echo "  dev       启动开发环境（默认）"
+            echo "  prod      启动生产环境"
+            echo "  stop      停止开发环境"
+            echo "  stop prod 停止生产环境"
+            echo "  status    查看服务状态"
+            echo "  logs      查看所有日志"
+            echo "  logs backend  查看后端日志"
             exit 1
             ;;
     esac

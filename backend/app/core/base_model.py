@@ -45,3 +45,9 @@ class BaseModel(Base):
     tenant_id: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True, index=True, comment="租户ID（NULL=平台级）"
     )
+    created_by: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, comment="创建人"
+    )
+    updated_by: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, comment="更新人"
+    )

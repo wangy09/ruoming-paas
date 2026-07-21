@@ -64,7 +64,6 @@ class AiAgent(BaseModel):
     status: Mapped[int] = mapped_column(
         SmallInteger, default=1, server_default="1", comment="状态：1=启用，0=禁用"
     )
-    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="创建人 ID")
 
 
 class AiSceneConfig(Base):
@@ -119,7 +118,6 @@ class AiWorkflow(BaseModel):
         comment="触发方式：manual / api / schedule"
     )
     status: Mapped[int] = mapped_column(SmallInteger, default=1, server_default="1")
-    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class AiWorkflowVersion(Base):
