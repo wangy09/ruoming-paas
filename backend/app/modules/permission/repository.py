@@ -9,7 +9,7 @@ class RoleRepository(TenantAwareRepository):
     def __init__(self, db: AsyncSession, tenant_id: int | None):
         super().__init__(db, tenant_id)
 
-    async def get_by_id(self, obj_id: int) -> SysRole | None:
+    async def get_role_by_id(self, obj_id: int) -> SysRole | None:
         return await super().get_by_id(SysRole, obj_id)
 
     async def get_by_code(self, code: str) -> SysRole | None:
@@ -18,7 +18,7 @@ class RoleRepository(TenantAwareRepository):
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def list_all(self) -> list[SysRole]:
+    async def list_roles(self) -> list[SysRole]:
         return await super().list_all(SysRole)
 
 
@@ -31,7 +31,8 @@ class UserRoleRepository(TenantAwareRepository):
             SysUserRole, SysRole.id == SysUserRole.role_id
         ).where(SysUserRole.user_id == user_id).where(SysRole.is_deleted == False)
         result = await self.db.execute(query)
-        return result.all()
+        rows = result.all()
+        return [(int(row[0]), str(row[1]), str(row[2])) for row in rows]
 
     async def delete_by_user_id(self, user_id: int) -> None:
         from sqlalchemy import delete

@@ -1,4 +1,4 @@
-from sqlalchemy import or_, select
+from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.base_repository import TenantAwareRepository
@@ -9,7 +9,7 @@ class UserRepository(TenantAwareRepository):
     def __init__(self, db: AsyncSession, tenant_id: int | None):
         super().__init__(db, tenant_id)
 
-    async def get_by_id(self, obj_id: int) -> SysUser | None:
+    async def get_user_by_id(self, obj_id: int) -> SysUser | None:
         return await super().get_by_id(SysUser, obj_id)
 
     async def get_by_username(self, username: str) -> SysUser | None:
@@ -24,5 +24,5 @@ class UserRepository(TenantAwareRepository):
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def list_all(self) -> list[SysUser]:
+    async def list_users(self) -> list[SysUser]:
         return await super().list_all(SysUser)

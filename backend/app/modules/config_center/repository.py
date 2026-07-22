@@ -1,4 +1,4 @@
-from sqlalchemy import asc, select
+from sqlalchemy import asc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.base_repository import TenantAwareRepository
@@ -9,7 +9,7 @@ class ConfigRepository(TenantAwareRepository):
     def __init__(self, db: AsyncSession, tenant_id: int | None):
         super().__init__(db, tenant_id)
 
-    async def get_by_id(self, obj_id: int) -> SysConfig | None:
+    async def get_config_by_id(self, obj_id: int) -> SysConfig | None:
         return await super().get_by_id(SysConfig, obj_id)
 
     async def get_by_key_and_scope(
