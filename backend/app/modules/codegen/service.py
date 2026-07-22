@@ -248,7 +248,6 @@ class CodegenService:
             GeneratedFile(path=f"frontend/src/api/{module_name}.ts", language="typescript", content=self._render("frontend/api.ts.tpl", context)),
             GeneratedFile(path=f"frontend/src/views/{module_name}/index.vue", language="vue", content=self._render("frontend/index.vue.tpl", context)),
             GeneratedFile(path=f"frontend/src/views/{module_name}/components/FormDialog.vue", language="vue", content=self._render("frontend/form-dialog.vue.tpl", context)),
-            GeneratedFile(path=f"frontend/src/router/{module_name}.ts", language="typescript", content=self._render("frontend/route.ts.tpl", context)),
         ]
         return table, columns, files
 
