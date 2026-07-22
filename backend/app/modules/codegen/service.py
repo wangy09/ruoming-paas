@@ -221,6 +221,37 @@ class CodegenService:
                         form_component=col.form_component,
                     ))
 
+        sub_tables_info = []
+        if request.sub_tables:
+            for sub_table_config in request.sub_tables:
+                sub_columns: list[ColumnInfo] = []
+                for col in sub_table_config.columns:
+                    data_type = getattr(col, "data_type", "VARCHAR")
+                    udt_name = getattr(col, "udt_name", data_type.lower())
+                    sub_columns.append(ColumnInfo(
+                        column_name=col.column_name,
+                        data_type=data_type,
+                        udt_name=udt_name,
+                        is_nullable=getattr(col, "is_nullable", True),
+                        column_default=getattr(col, "column_default", None),
+                        character_maximum_length=getattr(col, "data_length", None),
+                        numeric_precision=getattr(col, "data_length", None),
+                        numeric_scale=getattr(col, "data_scale", None),
+                        column_comment=getattr(col, "column_comment", None),
+                        is_primary_key=getattr(col, "is_primary_key", False),
+                        python_type=self._python_type(data_type, udt_name),
+                        ts_type=self._ts_type(data_type, udt_name),
+                        form_component=col.form_component,
+                        foreign_key_table=getattr(col, "foreign_key_table", None),
+                    ))
+                sub_tables_info.append({
+                    "table_name": sub_table_config.table_name,
+                    "table_comment": sub_table_config.table_comment or "",
+                    "parent_key": sub_table_config.parent_key,
+                    "entity_name": sub_table_config.entity_name or self._pascal_case(sub_table_config.table_name),
+                    "columns": sub_columns,
+                })
+
         module_name = request.module_name
         entity_name = request.entity_name or self._pascal_case(module_name)
         page_title = request.page_title or table.table_comment or entity_name
@@ -235,6 +266,8 @@ class CodegenService:
             page_title=page_title,
             api_prefix=api_prefix,
             route_path=route_path,
+            sub_tables=sub_tables_info,
+            template_type=request.template_type,
         )
 
         files = [
@@ -251,7 +284,7 @@ class CodegenService:
         ]
         return table, columns, files
 
-    def _build_context(self, table: TableInfo, columns: list[ColumnInfo], module_name: str, entity_name: str, page_title: str, api_prefix: str, route_path: str) -> dict:
+    def _build_context(self, table: TableInfo, columns: list[ColumnInfo], module_name: str, entity_name: str, page_title: str, api_prefix: str, route_path: str, sub_tables: list | None = None, template_type: str = "single") -> dict:
         model_fields = self._render_model_fields(columns)
         create_schema_fields = self._render_schema_fields(columns, include_common=False, optional=False)
         update_schema_fields = self._render_schema_fields(columns, include_common=False, optional=True)
@@ -266,6 +299,36 @@ class CodegenService:
         searchable_fields = self._collect_searchable_fields(columns)
         has_jsonb = any(col.data_type in {"json", "jsonb"} for col in columns)
         has_search_fields = len(searchable_fields) > 0
+
+        sub_tables_context = []
+        if sub_tables:
+            for st in sub_tables:
+                st_model_fields = self._render_model_fields(st["columns"])
+                st_create_fields = self._render_schema_fields(st["columns"], include_common=False, optional=False)
+                st_update_fields = self._render_schema_fields(st["columns"], include_common=False, optional=True)
+                st_schema_fields = self._render_schema_fields(st["columns"], include_common=True, optional=False)
+                st_table_columns = self._render_vue_table_columns(st["columns"])
+                st_form_items = self._render_vue_form_items(st["columns"])
+                st_form_defaults = self._render_vue_form_defaults(st["columns"])
+                st_ts_fields = self._render_ts_type_fields(st["columns"])
+                st_migration_fields = self._render_migration_fields(st["columns"])
+                sub_tables_context.append({
+                    "table_name": st["table_name"],
+                    "table_comment": st["table_comment"],
+                    "parent_key": st["parent_key"],
+                    "entity_name": st["entity_name"],
+                    "entity_var": self._snake_case(st["entity_name"]),
+                    "columns": st["columns"],
+                    "model_fields": st_model_fields,
+                    "create_schema_fields": st_create_fields,
+                    "update_schema_fields": st_update_fields,
+                    "schema_fields": st_schema_fields,
+                    "table_columns": st_table_columns,
+                    "form_items": st_form_items,
+                    "form_defaults": st_form_defaults,
+                    "ts_type_fields": st_ts_fields,
+                    "migration_fields": st_migration_fields,
+                })
 
         return {
             "table_name": table.table_name,
@@ -289,6 +352,12 @@ class CodegenService:
             "searchable_fields": searchable_fields,
             "has_jsonb": has_jsonb,
             "has_search_fields": has_search_fields,
+            "sub_tables": sub_tables_context,
+            "has_sub_tables": len(sub_tables_context) > 0,
+            "template_type": template_type,
+            "is_single_table": template_type == "single",
+            "is_master_detail": template_type == "master_detail",
+            "is_tree": template_type == "tree",
             "migration_id": self._generate_migration_id(),
             "create_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -1054,10 +1123,18 @@ class CodegenService:
             ]
 
             all_columns = columns_sql + default_columns
+            foreign_keys = []
+
+            for field in request.fields:
+                if field.foreign_key_table:
+                    fk_name = f"fk_{request.table_name}_{field.column_name}"
+                    foreign_keys.append(f"CONSTRAINT {fk_name} FOREIGN KEY ({field.column_name}) REFERENCES \"{field.foreign_key_table}\"(id) ON DELETE CASCADE")
+
+            all_definitions = all_columns + foreign_keys
 
             create_sql = f"""
                 CREATE TABLE "{request.table_name}" (
-                    {', '.join(all_columns)}
+                    {', '.join(all_definitions)}
                 )
             """
 
@@ -1101,9 +1178,50 @@ class CodegenService:
                 is_required=field.is_required,
                 form_component=field.form_component,
                 dict_type=field.dict_type,
+                foreign_key_table=field.foreign_key_table,
                 sort=field.sort or idx,
             )
             self.db.add(column)
+
+        if request.sub_tables:
+            for sub_table in request.sub_tables:
+                sub_entity_name = sub_table.entity_name or self._pascal_case(sub_table.table_name)
+                sub_api_prefix = f"/api/v1/{sub_table.table_name.replace('_', '-')}"
+                
+                sub_table_record = GenTable(
+                    table_name=sub_table.table_name,
+                    table_comment=sub_table.table_comment,
+                    module_name=request.module_name,
+                    entity_name=sub_entity_name,
+                    page_title=sub_table.table_comment or sub_entity_name,
+                    api_prefix=sub_api_prefix,
+                    author=request.author,
+                    remark=sub_table.table_comment or "子表",
+                    created_by=created_by,
+                    tenant_id=self.tenant_id,
+                )
+                self.db.add(sub_table_record)
+                await self.db.flush()
+
+                for idx, field in enumerate(sub_table.columns):
+                    sub_column = GenTableColumn(
+                        table_id=sub_table_record.id,
+                        column_name=field.column_name,
+                        column_comment=field.column_comment,
+                        data_type=field.data_type,
+                        udt_name=field.data_type.lower(),
+                        is_nullable=field.is_nullable,
+                        is_primary_key=field.is_primary_key,
+                        is_list=field.is_list,
+                        is_form=field.is_form,
+                        is_search=field.is_search,
+                        is_required=field.is_required,
+                        form_component=field.form_component,
+                        dict_type=field.dict_type,
+                        foreign_key_table=field.foreign_key_table,
+                        sort=field.sort or idx,
+                    )
+                    self.db.add(sub_column)
 
         await self.db.commit()
 

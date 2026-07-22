@@ -142,10 +142,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
             # 重新构造响应，保证客户端收到完整数据
             from starlette.responses import Response as StarletteResponse
+            response_headers = dict(response.headers)
+            response_headers.pop("Content-Length", None)
             response = StarletteResponse(
                 content=resp_raw,
                 status_code=response.status_code,
-                headers=dict(response.headers),
+                headers=response_headers,
                 media_type=response.media_type,
             )
 

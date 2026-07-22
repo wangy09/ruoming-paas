@@ -1,12 +1,12 @@
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundException
 from app.core.utils.pagination import PageParams
 from app.modules.audit.service import audit_log
-from app.modules.{{ module_name }}.models import {{ entity_name }}
+from app.modules.{{ module_name }}.models import {{ entity_name }}{% if has_sub_tables %}{% for st in sub_tables %}, {{ st.entity_name }}{% endfor %}{% endif %}
 from app.modules.{{ module_name }}.repository import {{ entity_name }}Repository
-from app.modules.{{ module_name }}.schemas import {{ entity_name }}Create, {{ entity_name }}Update
+from app.modules.{{ module_name }}.schemas import {{ entity_name }}Create, {{ entity_name }}Update{% if has_sub_tables %}{% for st in sub_tables %}, {{ st.entity_name }}Create, {{ st.entity_name }}Update{% endfor %}{% endif %}
 
 
 class {{ entity_name }}Service:
@@ -48,15 +48,40 @@ class {{ entity_name }}Service:
 
     @audit_log("{{ module_name }}.create", module="{{ module_name }}", action="create", resource_type="{{ table_name }}")
     async def create(self, data: {{ entity_name }}Create) -> {{ entity_name }}:
-        obj = {{ entity_name }}(**data.model_dump(exclude_unset=True))
+        data_dict = data.model_dump(exclude_unset=True)
+{% if has_sub_tables %}
+{% for st in sub_tables %}        {{ st.entity_var }}_list_data = data_dict.pop("{{ st.entity_var }}_list", [])
+{% endfor %}
+{% endif %}
+        obj = {{ entity_name }}(**data_dict)
         await self.repo.create(obj)
+{% if has_sub_tables %}
+{% for st in sub_tables %}        for item_data in {{ st.entity_var }}_list_data:
+            setattr(obj, "{{ st.entity_var }}_list", getattr(obj, "{{ st.entity_var }}_list", []))
+            getattr(obj, "{{ st.entity_var }}_list").append({{ st.entity_name }}(**item_data, {{ st.parent_key }}=obj.id))
+{% endfor %}
+{% endif %}
+        await self.db.flush()
+        await self.db.refresh(obj)
         return obj
 
     @audit_log("{{ module_name }}.update", module="{{ module_name }}", action="update", resource_type="{{ table_name }}")
     async def update(self, obj_id: int, data: {{ entity_name }}Update) -> {{ entity_name }}:
         obj = await self.get(obj_id)
-        for key, value in data.model_dump(exclude_unset=True).items():
+        data_dict = data.model_dump(exclude_unset=True)
+{% if has_sub_tables %}
+{% for st in sub_tables %}        {{ st.entity_var }}_list_data = data_dict.pop("{{ st.entity_var }}_list", None)
+{% endfor %}
+{% endif %}
+        for key, value in data_dict.items():
             setattr(obj, key, value)
+{% if has_sub_tables %}
+{% for st in sub_tables %}        if {{ st.entity_var }}_list_data is not None:
+            await self.db.execute(delete({{ st.entity_name }}).where({{ st.entity_name }}.{{ st.parent_key }} == obj.id))
+            for item_data in {{ st.entity_var }}_list_data:
+                getattr(obj, "{{ st.entity_var }}_list").append({{ st.entity_name }}(**item_data, {{ st.parent_key }}=obj.id))
+{% endfor %}
+{% endif %}
         await self.db.flush()
         await self.db.refresh(obj)
         return obj

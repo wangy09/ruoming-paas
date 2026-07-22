@@ -67,6 +67,13 @@
             <el-switch v-model="row.is_primary_key" size="small" />
           </template>
         </el-table-column>
+        <el-table-column label="外键" width="140">
+          <template #default="{ row }">
+            <el-select v-model="row.foreign_key_table" size="small" placeholder="关联表" :disabled="!['INT', 'BIGINT', 'SMALLINT'].includes(row.data_type)">
+              <el-option v-for="table in availableTables" :key="table.table_name" :label="table.table_comment || table.table_name" :value="table.table_name" />
+            </el-select>
+          </template>
+        </el-table-column>
         <el-table-column prop="column_default" label="默认值" width="100">
           <template #default="{ row }">
             <el-input v-model="row.column_default" size="small" />
@@ -106,13 +113,14 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   codegenApi,
   type CreateTableParams,
   type FieldTypeInfo,
   type TableFieldConfig,
+  type CodegenTable,
 } from '@/api/codegen'
 import { dictApi } from '@/api/dict'
 
@@ -123,6 +131,7 @@ const emit = defineEmits<{
 const createLoading = ref(false)
 const fieldTypes = ref<FieldTypeInfo[]>([])
 const dictTypes = ref<{ id: number; code: string; name: string }[]>([])
+const availableTables = ref<CodegenTable[]>([])
 
 const createForm = reactive({
   table_name: '',
@@ -151,6 +160,15 @@ async function loadDictTypes() {
   }
 }
 
+async function loadTables() {
+  try {
+    const res = await codegenApi.tables()
+    availableTables.value = res.data ?? []
+  } catch {
+    availableTables.value = []
+  }
+}
+
 function getTypeInfo(typeName: string): FieldTypeInfo | undefined {
   return fieldTypes.value.find(ft => ft.type_name === typeName)
 }
@@ -165,6 +183,7 @@ function addField() {
     is_nullable: true,
     is_primary_key: false,
     column_default: undefined,
+    foreign_key_table: undefined,
     is_list: true,
     is_form: true,
     is_search: true,
@@ -193,6 +212,9 @@ function handleFieldTypeChange(row: TableFieldConfig) {
                         row.data_type === 'DECIMAL' || row.data_type === 'INT' || row.data_type === 'BIGINT' || row.data_type === 'SMALLINT' ? 'number' :
                         row.data_type === 'TEXT' ? 'textarea' :
                         row.data_type === 'DATE' || row.data_type === 'TIMESTAMP' ? 'datetime' : 'input'
+    if (!['INT', 'BIGINT', 'SMALLINT'].includes(row.data_type)) {
+      row.foreign_key_table = undefined
+    }
   }
 }
 
@@ -238,6 +260,7 @@ async function handleCreateTable() {
     createForm.create_db_table = true
     createFields.value = []
     emit('tableCreated')
+    loadTables()
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.message || '创建失败')
   } finally {
@@ -246,6 +269,7 @@ async function handleCreateTable() {
 }
 
 function toPascalCase(value: string) {
+  if (!value) return ''
   return value
     .split('_')
     .filter(Boolean)
@@ -253,8 +277,11 @@ function toPascalCase(value: string) {
     .join('')
 }
 
-loadFieldTypes()
-loadDictTypes()
+onMounted(() => {
+  loadFieldTypes()
+  loadDictTypes()
+  loadTables()
+})
 </script>
 
 <style lang="scss" scoped>

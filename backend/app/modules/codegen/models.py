@@ -88,6 +88,9 @@ class GenTableColumn(BaseModel):
     dict_type: Mapped[str | None] = mapped_column(
         String(64), comment="字典类型编码"
     )
+    foreign_key_table: Mapped[str | None] = mapped_column(
+        String(128), comment="外键关联表名"
+    )
     sort: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0", comment="显示排序"
     )

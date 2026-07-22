@@ -70,7 +70,7 @@ async function fetchList() {
 }
 
 function openDialog(row?: {{ entity_name }}Info) {
-  editRow.value = row ?? null
+  editRow.value = row ? { ...row } : null
   dialogVisible.value = true
 }
 

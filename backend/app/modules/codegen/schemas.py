@@ -1,6 +1,8 @@
 """
 若茗 PaaS - 代码生成器 Schema
 """
+from __future__ import annotations
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -27,6 +29,7 @@ class ColumnInfo(BaseModel):
     python_type: str
     ts_type: str
     form_component: str
+    foreign_key_table: str | None = None
 
 
 class ColumnConfig(BaseModel):
@@ -40,6 +43,39 @@ class ColumnConfig(BaseModel):
     form_component: str = "input"
     dict_type: str | None = None
     sort: int = 0
+    is_sub_table: bool = False
+    sub_table_name: str | None = None
+
+
+class TableFieldConfig(BaseModel):
+    """前端建表字段配置"""
+
+    column_name: str = Field(..., min_length=1, max_length=128, description="字段名")
+    column_comment: str | None = Field(None, max_length=256, description="字段注释")
+    data_type: str = Field(..., description="数据类型")
+    data_length: int | None = Field(None, description="长度")
+    data_scale: int | None = Field(None, description="小数位数")
+    is_nullable: bool = Field(True, description="是否可空")
+    is_primary_key: bool = Field(False, description="是否主键")
+    column_default: str | None = Field(None, description="默认值")
+    foreign_key_table: str | None = Field(None, description="外键关联表名")
+    is_list: bool = Field(True, description="是否列表显示")
+    is_form: bool = Field(True, description="是否表单编辑")
+    is_search: bool = Field(False, description="是否搜索条件")
+    is_required: bool = Field(False, description="是否必填")
+    form_component: str = Field("input", description="表单组件")
+    dict_type: str | None = Field(None, description="字典类型编码")
+    sort: int = Field(0, description="排序")
+
+
+class SubTableConfig(BaseModel):
+    """子表配置"""
+
+    table_name: str = Field(..., description="子表名称")
+    table_comment: str | None = Field(None, description="子表注释")
+    parent_key: str = Field(..., description="父表外键字段名")
+    entity_name: str | None = Field(None, description="子表实体类名")
+    columns: list[TableFieldConfig] = Field([], description="子表字段配置")
 
 
 class GeneratePreviewRequest(BaseModel):
@@ -50,7 +86,9 @@ class GeneratePreviewRequest(BaseModel):
     entity_name: str | None = Field(None, max_length=64, description="实体类名，如 Customer")
     page_title: str | None = Field(None, max_length=64, description="页面标题")
     api_prefix: str | None = Field(None, max_length=128, description="API 前缀，如 /api/v1/customers")
+    template_type: str = Field("single", description="生成模板类型：single-单表CRUD, master_detail-主子表CRUD, tree-树形CRUD")
     column_configs: list[ColumnConfig] | None = None
+    sub_tables: list[SubTableConfig] | None = None
 
     @field_validator("module_name")
     @classmethod
@@ -139,6 +177,7 @@ class SaveConfigRequest(BaseModel):
     author: str | None = None
     remark: str | None = None
     columns: list[ColumnConfig] = []
+    sub_tables: list[SubTableConfig] = []
 
     @field_validator("module_name")
     @classmethod
@@ -180,26 +219,6 @@ class FieldTypeInfo(BaseModel):
     default_nullable: bool = Field(True, description="默认是否可空")
 
 
-class TableFieldConfig(BaseModel):
-    """前端建表字段配置"""
-
-    column_name: str = Field(..., min_length=1, max_length=128, description="字段名")
-    column_comment: str | None = Field(None, max_length=256, description="字段注释")
-    data_type: str = Field(..., description="数据类型")
-    data_length: int | None = Field(None, description="长度")
-    data_scale: int | None = Field(None, description="小数位数")
-    is_nullable: bool = Field(True, description="是否可空")
-    is_primary_key: bool = Field(False, description="是否主键")
-    column_default: str | None = Field(None, description="默认值")
-    is_list: bool = Field(True, description="是否列表显示")
-    is_form: bool = Field(True, description="是否表单编辑")
-    is_search: bool = Field(False, description="是否搜索条件")
-    is_required: bool = Field(False, description="是否必填")
-    form_component: str = Field("input", description="表单组件")
-    dict_type: str | None = Field(None, description="字典类型编码")
-    sort: int = Field(0, description="排序")
-
-
 class CreateTableRequest(BaseModel):
     """前端建表请求"""
 
@@ -213,6 +232,7 @@ class CreateTableRequest(BaseModel):
     remark: str | None = Field(None, description="备注")
     fields: list[TableFieldConfig] = Field(..., min_length=1, description="字段列表")
     create_db_table: bool = Field(True, description="是否创建真实数据库表")
+    sub_tables: list[SubTableConfig] | None = Field(None, description="子表配置")
 
     @field_validator("table_name")
     @classmethod

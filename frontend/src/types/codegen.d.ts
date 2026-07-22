@@ -30,12 +30,15 @@ export interface ColumnConfig {
   sort: number
 }
 
+export type TemplateType = 'single' | 'master_detail' | 'tree'
+
 export interface CodegenPreviewParams {
   table_name: string
   module_name: string
   entity_name?: string
   page_title?: string
   api_prefix?: string
+  template_type?: TemplateType
   column_configs?: ColumnConfig[]
 }
 
@@ -116,6 +119,7 @@ export interface TableFieldConfig {
   is_nullable: boolean
   is_primary_key: boolean
   column_default?: string
+  foreign_key_table?: string
   is_list: boolean
   is_form: boolean
   is_search: boolean
@@ -123,6 +127,14 @@ export interface TableFieldConfig {
   form_component: string
   dict_type?: string
   sort: number
+}
+
+export interface SubTableConfig {
+  table_name: string
+  table_comment?: string
+  parent_key?: string
+  entity_name?: string
+  columns: TableFieldConfig[]
 }
 
 export interface CreateTableParams {
@@ -136,4 +148,5 @@ export interface CreateTableParams {
   remark?: string
   fields: TableFieldConfig[]
   create_db_table?: boolean
+  sub_tables?: SubTableConfig[]
 }

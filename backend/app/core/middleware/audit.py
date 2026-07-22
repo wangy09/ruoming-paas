@@ -50,7 +50,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             status_code = response.status_code
 
             if status_code >= 400:
-                response_body = await self._get_response_body(response)
+                response_body, response = await self._get_response_body(response)
 
             return response
 
@@ -96,13 +96,21 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 result[key] = value
         return result
 
-    async def _get_response_body(self, response: Response) -> str | None:
-        """获取响应体内容"""
+    async def _get_response_body(self, response: Response) -> tuple[str | None, Response]:
+        """获取响应体内容并重新构造响应"""
         try:
             body = b""
             if hasattr(response, "body_iterator"):
                 async for chunk in response.body_iterator:
                     body += chunk
+                response_headers = dict(response.headers)
+                response_headers.pop("Content-Length", None)
+                response = Response(
+                    content=body,
+                    status_code=response.status_code,
+                    headers=response_headers,
+                    media_type=response.media_type,
+                )
             elif hasattr(response, "body"):
                 body_bytes = response.body
                 if isinstance(body_bytes, memoryview):
@@ -110,12 +118,12 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 elif isinstance(body_bytes, bytes):
                     body = body_bytes
                 else:
-                    return None
+                    return None, response
             else:
-                return None
-            return body.decode("utf-8", errors="ignore")[:2000]
+                return None, response
+            return body.decode("utf-8", errors="ignore")[:2000], response
         except Exception:
-            return None
+            return None, response
 
     async def _record_audit_log(
         self,

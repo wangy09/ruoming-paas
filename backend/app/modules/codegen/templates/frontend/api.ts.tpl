@@ -1,8 +1,21 @@
 import request from '@/utils/request'
 
+{% if has_sub_tables %}
+{% for st in sub_tables %}
+export interface {{ st.entity_name }}Info {
+{% for field in st.ts_type_fields %}  {{ field.name }}: {{ field.type }}
+{% endfor %}
+}
+{% endfor %}
+{% endif %}
+
 export interface {{ entity_name }}Info {
 {% for field in ts_type_fields %}  {{ field.name }}: {{ field.type }}
 {% endfor %}
+{% if has_sub_tables %}
+{% for st in sub_tables %}  {{ st.entity_var }}_list?: {{ st.entity_name }}Info[]
+{% endfor %}
+{% endif %}
 }
 
 export interface {{ entity_name }}ListParams {

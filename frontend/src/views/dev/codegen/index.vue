@@ -156,9 +156,16 @@
                   <el-input v-model="form.author" placeholder="如 developer" />
                 </el-form-item>
               </el-col>
-              <el-col :span="24">
+              <el-col :span="12">
                 <el-form-item label="备注">
                   <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="备注信息" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="生成模板">
+                  <el-select v-model="form.template_type" size="small">
+                    <el-option label="单表CRUD" value="single" />
+                  </el-select>
                 </el-form-item>
               </el-col>
               <el-col :span="24">
@@ -239,6 +246,7 @@ const form = reactive({
   api_prefix: '',
   author: '',
   remark: '',
+  template_type: 'single' as 'single' | 'master_detail' | 'tree',
 })
 
 async function loadTables() {
