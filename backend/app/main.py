@@ -14,9 +14,12 @@ from app.config import settings
 from app.core.error_codes import SysErrCode
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
+from app.core.middleware.audit import AuditMiddleware
+from app.core.middleware.csrf import CSRFMiddleware
 from app.core.middleware.logging import RequestLoggingMiddleware
 from app.core.middleware.rate_limit import TenantRateLimitMiddleware
 from app.core.middleware.request_id import RequestIDMiddleware
+from app.core.middleware.security_headers import SecurityHeadersMiddleware
 from app.core.middleware.tenant import TenantMiddleware
 from app.core.rate_limit import limiter, setup_rate_limit
 
@@ -128,7 +131,16 @@ app.add_middleware(TenantMiddleware)
 # 4. 租户级限流（依赖 tenant_id）
 app.add_middleware(TenantRateLimitMiddleware)
 
-# 5. CORS
+# 5. 审计日志（记录所有 API 请求）
+app.add_middleware(AuditMiddleware)
+
+# 6. CSRF 防护（在认证之后）
+app.add_middleware(CSRFMiddleware)
+
+# 7. 安全响应头（最外层，确保所有响应都包含安全头）
+app.add_middleware(SecurityHeadersMiddleware)
+
+# 8. CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,

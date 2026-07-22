@@ -9,6 +9,7 @@ import io
 import re
 import os
 import uuid
+import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -41,8 +42,9 @@ FRONTEND_PREFIX = "frontend/"
 class CodegenService:
     """代码生成器服务"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int | None = None) -> None:
         self.db = db
+        self.tenant_id = tenant_id
         self._init_jinja()
 
     def _init_jinja(self) -> None:
@@ -60,7 +62,7 @@ class CodegenService:
 
     async def list_tables(self, keyword: str | None = None) -> list[TableInfo]:
         params = {"keyword": f"%{keyword or ''}%"}
-        rows = await self.db.execute(
+        result = await self.db.execute(
             text(
                 """
                 SELECT
@@ -77,7 +79,11 @@ class CodegenService:
             ),
             params,
         )
-        return [TableInfo(**dict(row._mapping)) for row in rows]
+        tables: list[TableInfo] = []
+        for mapping in result.mappings().all():
+            data: dict = dict(mapping)
+            tables.append(TableInfo(**data))
+        return tables
 
     async def get_table(self, table_name: str) -> TableInfo:
         row = await self.db.execute(
@@ -98,14 +104,15 @@ class CodegenService:
         data = row.mappings().first()
         if not data:
             raise NotFoundException("数据表")
-        return TableInfo(**dict(data))
+        table_data: dict = dict(data)
+        return TableInfo(**table_data)
 
     async def list_columns(self, table_name: str) -> list[ColumnInfo]:
         try:
             await self.get_table(table_name)
         except NotFoundException:
             return []
-        rows = await self.db.execute(
+        result = await self.db.execute(
             text(
                 """
                 SELECT
@@ -138,8 +145,8 @@ class CodegenService:
         )
 
         columns: list[ColumnInfo] = []
-        for row in rows:
-            data = dict(row._mapping)
+        for mapping in result.mappings().all():
+            data: dict = dict(mapping)
             data["is_nullable"] = data["is_nullable"] == "YES"
             data["python_type"] = self._python_type(data["data_type"], data["udt_name"])
             data["ts_type"] = self._ts_type(data["data_type"], data["udt_name"])
@@ -153,13 +160,34 @@ class CodegenService:
 
     async def write(self, request: GenerateWriteRequest) -> dict:
         table, columns, files = await self._build_files(request)
-        results = [self._write_file(file, overwrite=request.overwrite) for file in files]
-        return {"table": table, "columns": columns, "files": files, "results": results}
+        temp_dir = None
+        committed_files = []
+
+        try:
+            temp_dir = self._create_temp_dir()
+            write_results = []
+            for file in files:
+                result = self._write_file_to_temp(file, temp_dir, overwrite=request.overwrite)
+                write_results.append(result)
+                if result.status in ("created", "overwritten"):
+                    committed_files.append((file.path, result))
+
+            for file_path, result in committed_files:
+                self._commit_file(temp_dir, file_path)
+
+            return {"table": table, "columns": columns, "files": files, "results": write_results}
+        except Exception as e:
+            if committed_files:
+                self._rollback_files(committed_files)
+            raise
+        finally:
+            if temp_dir and temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
     async def _build_files(self, request: GeneratePreviewRequest) -> tuple[TableInfo, list[ColumnInfo], list[GeneratedFile]]:
         from sqlalchemy import text
         check_table = await self.db.execute(
-            text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+            text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
             {"name": request.table_name.lower()}
         )
         table_exists = check_table.scalar_one()
@@ -219,6 +247,7 @@ class CodegenService:
             GeneratedFile(path=f"backend/migrations/versions/{context['migration_id']}_add_{module_name}_table.py", language="python", content=self._render("backend/migration.py.tpl", context)),
             GeneratedFile(path=f"frontend/src/api/{module_name}.ts", language="typescript", content=self._render("frontend/api.ts.tpl", context)),
             GeneratedFile(path=f"frontend/src/views/{module_name}/index.vue", language="vue", content=self._render("frontend/index.vue.tpl", context)),
+            GeneratedFile(path=f"frontend/src/views/{module_name}/components/FormDialog.vue", language="vue", content=self._render("frontend/form-dialog.vue.tpl", context)),
             GeneratedFile(path=f"frontend/src/router/{module_name}.ts", language="typescript", content=self._render("frontend/route.ts.tpl", context)),
         ]
         return table, columns, files
@@ -289,6 +318,66 @@ class CodegenService:
             status="overwritten" if existed else "created",
             message="已覆盖" if existed else "已创建",
         )
+
+    def _create_temp_dir(self) -> Path:
+        import tempfile
+        temp_dir = Path(tempfile.mkdtemp(prefix="codegen_"))
+        return temp_dir
+
+    def _write_file_to_temp(self, file: GeneratedFile, temp_dir: Path, overwrite: bool) -> GeneratedWriteResult:
+        target = self._resolve_output_path(file.path)
+        if target is None:
+            return GeneratedWriteResult(
+                path=file.path,
+                status="unavailable",
+                message="当前后端运行环境无法访问该路径，请配置 CODEGEN_WORKSPACE_ROOT 或挂载仓库根目录",
+            )
+
+        if target.exists() and not overwrite:
+            return GeneratedWriteResult(
+                path=file.path,
+                status="skipped",
+                message="文件已存在，未开启覆盖",
+            )
+
+        temp_path = temp_dir / file.path
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path.write_text(file.content, encoding="utf-8")
+        return GeneratedWriteResult(
+            path=file.path,
+            status="overwritten" if target.exists() else "created",
+            message="已覆盖" if target.exists() else "已创建",
+        )
+
+    def _commit_file(self, temp_dir: Path, file_path: str) -> None:
+        target = self._resolve_output_path(file_path)
+        if target is None:
+            return
+        temp_path = temp_dir / file_path
+        if temp_path.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(temp_path), str(target))
+
+    def _rollback_files(self, committed_files: list[tuple[str, GeneratedWriteResult]]) -> None:
+        for file_path, result in committed_files:
+            if result.status == "created":
+                target = self._resolve_output_path(file_path)
+                if target and target.exists():
+                    try:
+                        target.unlink()
+                        self._remove_empty_parent(target.parent)
+                    except Exception:
+                        pass
+            elif result.status == "overwritten":
+                pass
+
+    def _remove_empty_parent(self, directory: Path) -> None:
+        try:
+            if directory.is_dir() and not any(directory.iterdir()):
+                directory.rmdir()
+                self._remove_empty_parent(directory.parent)
+        except Exception:
+            pass
 
     @staticmethod
     def _resolve_output_path(logical_path: str) -> Path | None:
@@ -556,9 +645,10 @@ class CodegenService:
         return result
 
     async def save_config(self, request: SaveConfigRequest, created_by: int | None = None) -> GenTable:
-        existing = await self.db.execute(
-            select(GenTable).where(GenTable.table_name == request.table_name, GenTable.is_deleted == False)
-        )
+        query = select(GenTable).where(GenTable.table_name == request.table_name, GenTable.is_deleted == False)
+        if self.tenant_id is not None:
+            query = query.where(GenTable.tenant_id == self.tenant_id)
+        existing = await self.db.execute(query)
         existing = existing.scalar_one_or_none()
 
         if existing:
@@ -581,6 +671,7 @@ class CodegenService:
                 author=request.author,
                 remark=request.remark,
                 created_by=created_by,
+                tenant_id=self.tenant_id,
             )
             self.db.add(table)
         await self.db.flush()
@@ -631,7 +722,7 @@ class CodegenService:
 
         from sqlalchemy import text
         check_table = await self.db.execute(
-            text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+            text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
             {"name": table.table_name.lower()}
         )
         table_exists = check_table.scalar_one()
@@ -662,6 +753,8 @@ class CodegenService:
         from sqlalchemy import func
 
         query = select(GenTable).where(GenTable.is_deleted == False)
+        if self.tenant_id is not None:
+            query = query.where(GenTable.tenant_id == self.tenant_id)
         if keyword:
             query = query.where(
                 GenTable.table_name.ilike(f"%{keyword}%")
@@ -683,7 +776,7 @@ class CodegenService:
         items = []
         for table in tables:
             check_table = await self.db.execute(
-                text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+                text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
                 {"name": table.table_name.lower()}
             )
             table_exists = check_table.scalar_one()
@@ -730,7 +823,7 @@ class CodegenService:
 
         from sqlalchemy import text
         check_table = await self.db.execute(
-            text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+            text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
             {"name": config["table_name"].lower()}
         )
         table_exists = check_table.scalar_one()
@@ -801,6 +894,7 @@ class CodegenService:
             GeneratedFile(path=f"backend/migrations/versions/{context['migration_id']}_add_{module_name}_table.py", language="python", content=self._render("backend/migration.py.tpl", context)),
             GeneratedFile(path=f"frontend/src/api/{module_name}.ts", language="typescript", content=self._render("frontend/api.ts.tpl", context)),
             GeneratedFile(path=f"frontend/src/views/{module_name}/index.vue", language="vue", content=self._render("frontend/index.vue.tpl", context)),
+            GeneratedFile(path=f"frontend/src/views/{module_name}/components/FormDialog.vue", language="vue", content=self._render("frontend/form-dialog.vue.tpl", context)),
             GeneratedFile(path=f"frontend/src/router/{module_name}.ts", language="typescript", content=self._render("frontend/route.ts.tpl", context)),
         ]
 
@@ -857,6 +951,20 @@ class CodegenService:
         }
 
     @staticmethod
+    def _validate_table_name(table_name: str) -> None:
+        if not re.match(r'^[a-z][a-z0-9_]*$', table_name):
+            raise ValueError("表名只能包含小写字母、数字和下划线，且必须以字母开头")
+        if len(table_name) > 63:
+            raise ValueError("表名长度不能超过63个字符")
+
+    @staticmethod
+    def _validate_column_name(column_name: str) -> None:
+        if not re.match(r'^[a-z][a-z0-9_]*$', column_name):
+            raise ValueError("字段名只能包含小写字母、数字和下划线，且必须以字母开头")
+        if len(column_name) > 63:
+            raise ValueError("字段名长度不能超过63个字符")
+
+    @staticmethod
     def _get_supported_field_types() -> list[dict]:
         return [
             {"type_name": "VARCHAR", "display_name": "字符串", "default_length": 128, "supports_length": True, "supports_scale": False, "default_nullable": True},
@@ -876,27 +984,37 @@ class CodegenService:
     async def create_table_from_config(self, request: "CreateTableRequest", created_by: int | None = None) -> dict:
         from sqlalchemy import text
 
-        existing = await self.db.execute(
-            select(GenTable).where(GenTable.table_name == request.table_name, GenTable.is_deleted == False)
-        )
+        query = select(GenTable).where(GenTable.table_name == request.table_name, GenTable.is_deleted == False)
+        if self.tenant_id is not None:
+            query = query.where(GenTable.tenant_id == self.tenant_id)
+        existing = await self.db.execute(query)
         existing = existing.scalar_one_or_none()
         if existing:
             raise ValueError(f"表 '{request.table_name}' 的配置已存在")
 
         if request.create_db_table:
             check_table = await self.db.execute(
-                text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
+                text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
                 {"name": request.table_name.lower()}
             )
             if check_table.scalar_one():
                 raise ValueError(f"数据库表 '{request.table_name}' 已存在")
 
+            self._validate_table_name(request.table_name)
+
             field_types = {ft["type_name"]: ft for ft in self._get_supported_field_types()}
 
             columns_sql = []
+            params = {}
+            param_counter = 1
+
             for field in request.fields:
-                col_sql = f'"{field.column_name}" ' + field.data_type
-                type_info = field_types.get(field.data_type, {})
+                self._validate_column_name(field.column_name)
+
+                if field.data_type not in field_types:
+                    raise ValueError(f"不支持的数据类型: {field.data_type}")
+                col_sql = f'"{field.column_name}" {field.data_type}'
+                type_info = field_types[field.data_type]
                 supports_length = type_info.get("supports_length", True)
                 supports_scale = type_info.get("supports_scale", False)
                 if field.data_length and supports_length:
@@ -907,9 +1025,23 @@ class CodegenService:
                 if not field.is_nullable:
                     col_sql += " NOT NULL"
                 if field.column_default:
-                    col_sql += f" DEFAULT {field.column_default}"
+                    default_val = field.column_default.strip()
+                    if default_val.lower() in ("true", "false", "now()", "current_timestamp", "current_date", "current_time"):
+                        col_sql += f" DEFAULT {default_val}"
+                    elif default_val.isdigit():
+                        col_sql += f" DEFAULT {default_val}"
+                    elif (default_val.startswith("'") and default_val.endswith("'")) or (default_val.startswith('"') and default_val.endswith('"')):
+                        param_name = f"default_{param_counter}"
+                        params[param_name] = default_val[1:-1]
+                        col_sql += f" DEFAULT :{param_name}"
+                        param_counter += 1
+                    else:
+                        raise ValueError(f"不支持的默认值格式: {field.column_default}")
                 if field.column_comment:
-                    col_sql += f" COMMENT '{field.column_comment}'"
+                    param_name = f"comment_{param_counter}"
+                    params[param_name] = field.column_comment
+                    col_sql += f" COMMENT :{param_name}"
+                    param_counter += 1
                 columns_sql.append(col_sql)
 
             default_columns = [
@@ -931,9 +1063,11 @@ class CodegenService:
             """
 
             if request.table_comment:
-                create_sql += f" COMMENT = '{request.table_comment}'"
+                param_name = f"table_comment_{param_counter}"
+                params[param_name] = request.table_comment
+                create_sql += f" COMMENT = :{param_name}"
 
-            await self.db.execute(text(create_sql))
+            await self.db.execute(text(create_sql), params)
 
         entity_name = request.entity_name or self._pascal_case(request.table_name)
         api_prefix = request.api_prefix or f"/api/v1/{request.table_name}"
@@ -948,6 +1082,7 @@ class CodegenService:
             author=request.author,
             remark=request.remark,
             created_by=created_by,
+            tenant_id=self.tenant_id,
         )
         self.db.add(table)
         await self.db.flush()

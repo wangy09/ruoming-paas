@@ -8,6 +8,7 @@ import mimetypes
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Dict, Set
 
 from fastapi import UploadFile
 from sqlalchemy import Select, func, or_, select
@@ -28,6 +29,27 @@ PREVIEW_MIME_TYPES = {
     "application/pdf",
     "application/json",
     "application/xml",
+}
+
+_FILE_MAGIC_BYTES: Dict[str, Set[bytes]] = {
+    "jpg": {b"\xFF\xD8\xFF"},
+    "jpeg": {b"\xFF\xD8\xFF"},
+    "png": {b"\x89PNG\r\n\x1a\n"},
+    "gif": {b"GIF87a", b"GIF89a"},
+    "bmp": {b"BM"},
+    "webp": {b"RIFF"},
+    "pdf": {b"%PDF-"},
+    "doc": {b"\xD0\xCF\x11\xE0"},
+    "docx": {b"PK\x03\x04"},
+    "xls": {b"\xD0\xCF\x11\xE0"},
+    "xlsx": {b"PK\x03\x04"},
+    "ppt": {b"\xD0\xCF\x11\xE0"},
+    "pptx": {b"PK\x03\x04"},
+    "zip": {b"PK\x03\x04"},
+    "rar": {b"Rar!\x1a\x07"},
+    "txt": set(),
+    "json": set(),
+    "md": set(),
 }
 
 
@@ -216,3 +238,12 @@ class FileCenterService:
         if allowed and ext not in allowed:
             allowed_text = "、".join(sorted(allowed))
             raise ValidationException(f"不支持的文件类型：{ext or '无扩展名'}，允许的类型：{allowed_text}")
+
+        if ext in _FILE_MAGIC_BYTES:
+            magic_patterns = _FILE_MAGIC_BYTES[ext]
+            if magic_patterns:
+                matched = any(content.startswith(pattern) for pattern in magic_patterns)
+                if not matched:
+                    raise ValidationException(
+                        f"文件内容与扩展名不匹配：检测到的文件内容与 {ext.upper()} 格式不符"
+                    )

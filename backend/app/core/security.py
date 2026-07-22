@@ -18,7 +18,8 @@ from app.core.exceptions import AuthException, TokenExpiredException
 
 def hash_password(plain: str) -> str:
     """bcrypt 单向哈希密码"""
-    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+    cost_factor = settings.BCRYPT_COST_FACTOR if hasattr(settings, "BCRYPT_COST_FACTOR") else 12
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt(rounds=cost_factor)).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:

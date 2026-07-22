@@ -133,406 +133,61 @@
     </div>
 
     <!-- 新增/编辑对话框 -->
-    <el-dialog v-model="dialogVisible" :title="editId ? '编辑用户' : '新增用户'" width="500px" destroy-on-close>
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" :disabled="!!editId" placeholder="登录用户名" />
-        </el-form-item>
-        <el-form-item label="用户姓名" prop="nickname">
-          <el-input v-model="form.nickname" placeholder="用户真实姓名或显示名称" />
-        </el-form-item>
-        <el-form-item label="部门">
-          <el-tree-select
-            v-model="form.dept_id"
-            :data="deptOptions"
-            :props="{ label: 'name', children: 'children' }"
-            node-key="id"
-            value-key="id"
-            check-strictly
-            placeholder="请选择部门（可选）"
-            clearable
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="邮箱" prop="email">
-          <el-input v-model="form.email" placeholder="email@example.com" />
-        </el-form-item>
-        <el-form-item label="手机号" prop="phone">
-          <el-input v-model="form.phone" placeholder="选填" />
-        </el-form-item>
-        <el-form-item v-if="!editId" label="密码" prop="password">
-          <el-input v-model="form.password" type="password" show-password placeholder="至少6位" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
-      </template>
-    </el-dialog>
+    <FormDialog
+      v-model:visible="dialogVisible"
+      v-model:model-value="editRow"
+      :dept-options="deptOptions"
+      @submit="handleFormSubmit"
+    />
 
     <!-- 分配角色对话框 -->
-    <el-dialog v-model="roleDialogVisible" title="分配角色" width="480px" destroy-on-close>
-      <el-checkbox-group v-model="selectedRoleIds">
-        <div v-for="role in allRoles" :key="role.id" class="role-item">
-          <el-checkbox :label="role.id" :value="role.id">
-            <div>
-              <span class="font-bold">{{ role.name }}</span>
-              <span class="text-gray text-sm ml-2">{{ role.code }}</span>
-            </div>
-          </el-checkbox>
-        </div>
-      </el-checkbox-group>
-      <template #footer>
-        <el-button @click="roleDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="handleAssignRoles">确定</el-button>
-      </template>
-    </el-dialog>
+    <RoleDialog
+      v-model:visible="roleDialogVisible"
+      v-model:model-value="editRow"
+      :all-roles="allRoles"
+      @submit="handleRoleSubmit"
+    />
 
     <!-- 通讯录同步对话框 -->
-    <el-dialog v-model="syncDialogVisible" title="同步外部通讯录" width="min(760px, 92vw)" class="sync-dialog" destroy-on-close>
-      <el-alert
-        title="支持先预览影响再同步部门、用户基础信息和头像；外部通讯录中缺失的本地用户默认保持不变，可手动开启自动禁用。"
-        type="info"
-        show-icon
-        :closable="false"
-        class="sync-dialog-tip"
-      />
-      <el-form label-width="96px" class="sync-form">
-        <div class="sync-section">
-          <div class="sync-section-title">基础信息</div>
-          <div class="sync-form-grid sync-basic-grid">
-            <el-form-item label="同步来源">
-              <el-select v-model="syncForm.provider" style="width: 100%" @change="handleSyncProviderChange">
-                <el-option label="飞书" value="feishu" />
-                <el-option label="企业微信" value="wecom" />
-                <el-option label="钉钉" value="dingtalk" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="集成连接">
-              <el-select
-                v-model="syncForm.connection_id"
-                filterable
-                placeholder="请选择已启用通讯录同步的连接"
-                style="width: 100%"
-                :loading="connectionLoading"
-                @change="handleSyncConnectionChange"
-              >
-                <el-option
-                  v-for="item in connectionOptions"
-                  :key="item.id"
-                  :label="syncConnectionLabel(item)"
-                  :value="item.id"
-                />
-              </el-select>
-              <div class="form-tip">
-                {{ getSyncCredentialTip() }}
-              </div>
-            </el-form-item>
-          </div>
-        </div>
+    <SyncDialog
+      v-model:visible="syncDialogVisible"
+      :sync-form="syncForm"
+      :connection-options="connectionOptions"
+      :sync-check-result="syncCheckResult"
+      :sync-preview-result="syncPreviewResult"
+      :sync-logs="syncLogs"
+      :connection-loading="connectionLoading"
+      :strategy-loading="strategyLoading"
+      :strategy-saving="strategySaving"
+      :sync-task-creating="syncTaskCreating"
+      :checking="checking"
+      :previewing="previewing"
+      :syncing="syncing"
+      :sync-busy="syncBusy"
+      @provider-change="handleSyncProviderChange"
+      @connection-change="handleSyncConnectionChange"
+      @clear-results="clearSyncResults"
+      @save-strategy="handleSaveSyncStrategy"
+      @reload-strategy="handleReloadSyncStrategy"
+      @create-task="handleCreateContactSyncTask"
+      @check="handleCheckSyncContacts"
+      @preview="handlePreviewSyncContacts"
+      @sync="handleSyncContacts"
+      @open-log-detail="openSyncLogDetail"
+    />
 
-        <div class="sync-section">
-          <div class="sync-section-title">同步范围</div>
-          <div class="sync-option-row">
-            <el-form-item label="同步内容" class="sync-inline-item">
-              <el-checkbox v-model="syncForm.sync_departments" @change="clearSyncResults">部门</el-checkbox>
-              <el-checkbox v-model="syncForm.sync_users" @change="clearSyncResults">用户</el-checkbox>
-              <el-checkbox v-model="syncForm.sync_avatar" @change="clearSyncResults">头像</el-checkbox>
-            </el-form-item>
-            <el-form-item label="缺失用户" class="sync-inline-item">
-              <el-switch
-                v-model="syncForm.disable_missing_users"
-                active-text="自动禁用"
-                inactive-text="保持不变"
-                @change="clearSyncResults"
-              />
-            </el-form-item>
-          </div>
-        </div>
-
-        <div class="sync-section">
-          <div class="sync-section-title">字段策略</div>
-          <div class="sync-form-grid">
-            <el-form-item label="用户名">
-              <el-select
-                v-model="syncForm.username_strategy"
-                multiple
-                collapse-tags
-                collapse-tags-tooltip
-                style="width: 100%"
-                @change="clearSyncResults"
-              >
-                <el-option
-                  v-for="item in usernameStrategyOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </el-select>
-              <div class="form-tip">仅新建用户时生效，按选择顺序依次取值。</div>
-            </el-form-item>
-            <el-form-item label="昵称">
-              <el-select
-                v-model="syncForm.nickname_strategy"
-                multiple
-                collapse-tags
-                collapse-tags-tooltip
-                style="width: 100%"
-                @change="clearSyncResults"
-              >
-                <el-option
-                  v-for="item in nicknameStrategyOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </el-select>
-              <div class="form-tip">新建和更新用户都会使用；为空时保留已有昵称。</div>
-            </el-form-item>
-            <el-form-item label="邮箱更新">
-              <el-select v-model="syncForm.email_update_mode" style="width: 100%" @change="clearSyncResults">
-                <el-option
-                  v-for="item in fieldUpdateModeOptions"
-                  :key="`email-${item.value}`"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="手机号更新">
-              <el-select v-model="syncForm.phone_update_mode" style="width: 100%" @change="clearSyncResults">
-                <el-option
-                  v-for="item in fieldUpdateModeOptions"
-                  :key="`phone-${item.value}`"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="部门归属">
-              <el-select v-model="syncForm.department_update_mode" style="width: 100%" @change="clearSyncResults">
-                <el-option
-                  v-for="item in fieldUpdateModeOptions"
-                  :key="`dept-${item.value}`"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </el-select>
-              <div class="form-tip">字段为空或外部未返回时不会清空本地数据。</div>
-            </el-form-item>
-          </div>
-        </div>
-
-        <div class="sync-section sync-strategy-panel">
-          <div class="sync-strategy-info">
-            <div class="sync-section-title">策略与计划</div>
-            <div class="sync-strategy-desc">
-              先保存当前字段策略，再创建系统计划任务。计划任务默认停用，确认周期和策略后再启用。
-            </div>
-          </div>
-          <div class="sync-strategy-actions">
-            <el-button
-              :loading="strategySaving"
-              :disabled="syncBusy || !syncForm.connection_id"
-              @click="handleSaveSyncStrategy"
-            >
-              保存为默认策略
-            </el-button>
-            <el-button
-              :loading="strategyLoading"
-              :disabled="syncBusy || !syncForm.connection_id"
-              @click="handleReloadSyncStrategy"
-            >
-              恢复默认策略
-            </el-button>
-            <el-button
-              type="primary"
-              :loading="syncTaskCreating"
-              :disabled="syncBusy || !syncForm.connection_id"
-              @click="handleCreateContactSyncTask"
-            >
-              创建计划任务
-            </el-button>
-          </div>
-        </div>
-
-        <div class="sync-result-section">
-          <el-alert
-            v-if="syncCheckResult"
-            :type="getSyncCheckAlertType(syncCheckResult.status)"
-            show-icon
-            :closable="false"
-            class="sync-check-alert"
-          >
-            <template #title>
-              {{ syncCheckResult.summary }}：部门 {{ syncCheckResult.departments_count }} 个，用户 {{ syncCheckResult.users_count }} 个，头像 {{ syncCheckResult.avatar_users_count }} 个
-            </template>
-            <el-table :data="syncCheckResult.checks" size="small" class="sync-check-table" max-height="140">
-              <el-table-column label="检查项" prop="name" width="100" />
-              <el-table-column label="状态" width="82">
-                <template #default="{ row }">
-                  <el-tag :type="getSyncStatusTagType(row.status)" size="small">
-                    {{ getSyncStatusLabel(row.status) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="说明" prop="message" min-width="220" />
-            </el-table>
-          </el-alert>
-          <el-alert
-            v-if="syncPreviewResult"
-            type="info"
-            show-icon
-            :closable="false"
-            class="sync-preview-alert"
-          >
-            <template #title>
-              预览结果：部门新增 {{ syncPreviewResult.departments_created }}、更新 {{ syncPreviewResult.departments_updated }}；
-              用户新增 {{ syncPreviewResult.users_created }}、更新 {{ syncPreviewResult.users_updated }}、禁用 {{ syncPreviewResult.users_disabled }}
-            </template>
-            <div v-if="syncForm.sync_departments && isNoDepartmentSyncChange(syncPreviewResult)" class="sync-preview-details">
-              外部平台未返回可同步部门，可能用户都在根部门，或应用通讯录权限范围未包含部门信息。
-            </div>
-            <div v-if="syncPreviewResult.details.length" class="sync-preview-details">
-              <div
-                v-for="(item, index) in syncPreviewResult.details.slice(0, 8)"
-                :key="`${item.target_type}-${item.action}-${index}`"
-              >
-                {{ getPreviewActionLabel(item.action) }}{{ getPreviewTargetLabel(item.target_type) }}：
-                {{ item.name || item.external_id || item.local_id || '-' }}
-                <span v-if="item.reason">（{{ item.reason }}）</span>
-              </div>
-              <div v-if="syncPreviewResult.details.length > 8">
-                仅展示前 8 条，完整明细已记录在同步日志。
-              </div>
-            </div>
-          </el-alert>
-          <div class="sync-log-box">
-            <div class="sync-log-title">最近同步日志</div>
-            <el-table v-loading="syncLogLoading" :data="syncLogs" size="small" max-height="140">
-              <el-table-column label="同步时间" width="160">
-                <template #default="{ row: r }">
-                  {{ formatDate((r as ContactSyncLogItem).created_at) }}
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="72">
-                <template #default="{ row: r }">
-                  {{ getSyncOperationLabel((r as ContactSyncLogItem).operation) }}
-                </template>
-              </el-table-column>
-              <el-table-column label="状态" width="78">
-                <template #default="{ row: r }">
-                  <el-tag :type="getSyncStatusTagType((r as ContactSyncLogItem).status)" size="small">
-                    {{ getSyncStatusLabel((r as ContactSyncLogItem).status) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="结果" min-width="220">
-                <template #default="{ row: r }">
-                  {{ getSyncLogSummary(r as ContactSyncLogItem) }}
-                </template>
-              </el-table-column>
-              <el-table-column label="详情" width="64">
-                <template #default="{ row: r }">
-                  <el-button link type="primary" @click="openSyncLogDetail(r as ContactSyncLogItem)">查看</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-        </div>
-      </el-form>
-      <template #footer>
-        <div class="sync-dialog-footer">
-          <el-button @click="syncDialogVisible = false">取消</el-button>
-          <el-button :loading="checking" :disabled="syncBusy" @click="handleCheckSyncContacts">同步自检</el-button>
-          <el-button :loading="previewing" :disabled="syncBusy" @click="handlePreviewSyncContacts">预览影响</el-button>
-          <el-button type="primary" :loading="syncing" :disabled="syncBusy" @click="handleSyncContacts">开始同步</el-button>
-        </div>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="syncLogDetailVisible"
-      title="同步日志详情"
-      width="min(760px, 92vw)"
-      class="sync-log-detail-dialog"
-      append-to-body
-      destroy-on-close
-    >
-      <template v-if="currentSyncLog">
-        <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="同步时间">{{ formatDate(currentSyncLog.created_at) }}</el-descriptions-item>
-          <el-descriptions-item label="平台">{{ getSourceProviderLabel(currentSyncLog.provider) }}</el-descriptions-item>
-          <el-descriptions-item label="操作">{{ getSyncOperationLabel(currentSyncLog.operation) }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ getSyncStatusLabel(currentSyncLog.status) }}</el-descriptions-item>
-          <el-descriptions-item label="连接ID">{{ currentSyncLog.connection_id }}</el-descriptions-item>
-          <el-descriptions-item label="同步内容">{{ getSyncLogContentLabel(currentSyncLog) }}</el-descriptions-item>
-          <el-descriptions-item label="头像">{{ getSyncLogAvatarLabel(currentSyncLog) }}</el-descriptions-item>
-          <el-descriptions-item label="缺失用户">{{ getSyncLogMissingUserLabel(currentSyncLog) }}</el-descriptions-item>
-          <el-descriptions-item label="用户名策略">{{ getSyncLogUsernameStrategyLabel(currentSyncLog) }}</el-descriptions-item>
-          <el-descriptions-item label="昵称策略">{{ getSyncLogNicknameStrategyLabel(currentSyncLog) }}</el-descriptions-item>
-          <el-descriptions-item label="更新策略">{{ getSyncLogOverwriteStrategyLabel(currentSyncLog) }}</el-descriptions-item>
-        </el-descriptions>
-
-        <div class="sync-log-detail-title">统计结果</div>
-        <el-descriptions :column="3" border size="small">
-          <el-descriptions-item label="部门新增">{{ getSyncLogResult(currentSyncLog).departments_created || 0 }}</el-descriptions-item>
-          <el-descriptions-item label="部门更新">{{ getSyncLogResult(currentSyncLog).departments_updated || 0 }}</el-descriptions-item>
-          <el-descriptions-item label="用户新增">{{ getSyncLogResult(currentSyncLog).users_created || 0 }}</el-descriptions-item>
-          <el-descriptions-item label="用户更新">{{ getSyncLogResult(currentSyncLog).users_updated || 0 }}</el-descriptions-item>
-          <el-descriptions-item label="用户禁用">{{ getSyncLogResult(currentSyncLog).users_disabled || 0 }}</el-descriptions-item>
-          <el-descriptions-item label="用户跳过">{{ getSyncLogResult(currentSyncLog).skipped_users || 0 }}</el-descriptions-item>
-        </el-descriptions>
-
-        <el-alert
-          v-if="getSyncLogErrors(currentSyncLog).length"
-          type="warning"
-          show-icon
-          :closable="false"
-          class="sync-log-detail-alert"
-        >
-          <template #title>同步提示</template>
-          <div v-for="(error, index) in getSyncLogErrors(currentSyncLog)" :key="index">
-            {{ error }}
-          </div>
-        </el-alert>
-
-        <div class="sync-log-detail-title">变更明细</div>
-        <el-table
-          v-if="getSyncLogDetails(currentSyncLog).length"
-          :data="getSyncLogDetails(currentSyncLog)"
-          size="small"
-          max-height="260"
-        >
-          <el-table-column label="动作" width="80">
-            <template #default="{ row }">{{ getPreviewActionLabel(row.action) }}</template>
-          </el-table-column>
-          <el-table-column label="对象" width="80">
-            <template #default="{ row }">{{ getPreviewTargetLabel(row.target_type) }}</template>
-          </el-table-column>
-          <el-table-column label="名称" min-width="140">
-            <template #default="{ row }">{{ row.name || '-' }}</template>
-          </el-table-column>
-          <el-table-column label="外部ID" min-width="160">
-            <template #default="{ row }">{{ row.external_id || '-' }}</template>
-          </el-table-column>
-          <el-table-column label="说明" min-width="160">
-            <template #default="{ row }">{{ row.reason || '-' }}</template>
-          </el-table-column>
-        </el-table>
-        <el-empty v-else description="本条日志没有明细记录" :image-size="60" />
-      </template>
-      <template #footer>
-        <el-button type="primary" @click="syncLogDetailVisible = false">关闭</el-button>
-      </template>
-    </el-dialog>
+    <!-- 同步日志详情对话框 -->
+    <SyncLogDetailDialog
+      v-model:visible="syncLogDetailVisible"
+      :current-sync-log="currentSyncLog"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { userApi } from '@/api/user'
 import { integrationApi } from '@/api/integration'
@@ -543,7 +198,6 @@ import { formatDate } from '@/utils/format'
 import type {
   ContactSyncCheckResult,
   ContactSyncLogItem,
-  ContactSyncPreviewItem,
   ContactSyncPreviewResult,
   ContactSyncRequest,
   ContactSyncResult,
@@ -553,6 +207,10 @@ import type {
   RoleInfo,
   DeptInfo,
 } from '@/types'
+import FormDialog from './components/FormDialog.vue'
+import RoleDialog from './components/RoleDialog.vue'
+import SyncDialog from './components/SyncDialog.vue'
+import SyncLogDetailDialog from './components/SyncLogDetailDialog.vue'
 
 // ── 列表 ──────────────────────────────────────────────────────────────────────
 const loading = ref(false)
@@ -587,10 +245,6 @@ const SOURCE_PROVIDER_MAP: Record<string, SourceProviderMeta> = {
   custom: { label: '自定义', tagType: 'info' },
 }
 
-interface ContactSyncLogDetailData {
-  details?: unknown
-}
-
 function getSourceProviderMeta(provider?: string | null): SourceProviderMeta {
   const providerCode = provider?.trim()
   if (!providerCode) {
@@ -614,8 +268,6 @@ function getSourceProviderTooltip(row: UserListItem) {
     row.source_connection_name ? `连接：${row.source_connection_name}` : '',
     row.source_external_id ? `外部ID：${row.source_external_id}` : '',
   ].filter(Boolean)
-
-  // 后端暂未返回连接名或外部 ID 时，至少展示来源名称
   return details.join('；')
 }
 
@@ -691,65 +343,31 @@ async function fetchDeptOptions() {
 
 // ── 新增/编辑 ─────────────────────────────────────────────────────────────────
 const dialogVisible = ref(false)
-const editId = ref<number | null>(null)
-const submitting = ref(false)
-const formRef = ref<FormInstance>()
-
-const form = reactive({
-  username: '',
-  nickname: '',
-  email: '',
-  phone: '',
-  password: '',
-  dept_id: undefined as number | undefined,
-})
-
-const rules: FormRules = {
-  username: [{ required: true, message: '请输入用户名' }],
-  password: [{ required: true, message: '请输入密码' }, { min: 6, message: '至少6位' }],
-  email: [{ type: 'email', message: '邮箱格式不正确', trigger: 'blur' }],
-}
+const editRow = ref<UserListItem | null>(null)
 
 function openDialog(row?: UserListItem) {
-  editId.value = row?.id ?? null
-  Object.assign(form, {
-    username: row?.username ?? '',
-    nickname: row?.nickname ?? '',
-    email: row?.email ?? '',
-    phone: row?.phone ?? '',
-    password: '',
-    dept_id: (row as any)?.dept_id,
-  })
+  editRow.value = row ?? null
   dialogVisible.value = true
 }
 
-async function handleSubmit() {
-  await formRef.value?.validate()
-  submitting.value = true
-  try {
-    if (editId.value) {
-      await userApi.update(editId.value, { nickname: form.nickname, email: form.email, phone: form.phone, dept_id: form.dept_id })
-      ElMessage.success('更新成功')
-    } else {
-      await userApi.create(form as any)
-      ElMessage.success('创建成功')
-    }
-    dialogVisible.value = false
-    fetchList()
-  } finally {
-    submitting.value = false
+async function handleFormSubmit(form: Record<string, unknown>) {
+  if (editRow.value?.id) {
+    await userApi.update(editRow.value.id, { nickname: form.nickname, email: form.email, phone: form.phone, dept_id: form.dept_id })
+    ElMessage.success('更新成功')
+  } else {
+    await userApi.create(form as any)
+    ElMessage.success('创建成功')
   }
+  dialogVisible.value = false
+  fetchList()
 }
 
 // ── 分配角色 ──────────────────────────────────────────────────────────────────
 const roleDialogVisible = ref(false)
 const allRoles = ref<RoleInfo[]>([])
-const selectedRoleIds = ref<number[]>([])
-const currentUserId = ref<number>(0)
 
 async function openRoleDialog(row: UserListItem) {
-  currentUserId.value = row.id
-  selectedRoleIds.value = (row.roles || []).map((r: { id: number }) => r.id)
+  editRow.value = row
   if (!allRoles.value.length) {
     const res = await permissionApi.roleList({ page_size: 200 })
     allRoles.value = res.data.items
@@ -757,16 +375,11 @@ async function openRoleDialog(row: UserListItem) {
   roleDialogVisible.value = true
 }
 
-async function handleAssignRoles() {
-  submitting.value = true
-  try {
-    await userApi.assignRoles(currentUserId.value, selectedRoleIds.value)
-    ElMessage.success('角色分配成功')
-    roleDialogVisible.value = false
-    fetchList()
-  } finally {
-    submitting.value = false
-  }
+async function handleRoleSubmit(userId: number, roleIds: number[]) {
+  await userApi.assignRoles(userId, roleIds)
+  ElMessage.success('角色分配成功')
+  roleDialogVisible.value = false
+  fetchList()
 }
 
 // ── 外部通讯录同步 ────────────────────────────────────────────────────────────
@@ -1220,19 +833,6 @@ function pickDefaultSyncConnection() {
   return connectionOptions.value.find((item: IntegrationConnection) => item.is_default) || connectionOptions.value[0]
 }
 
-function syncConnectionLabel(item: IntegrationConnection) {
-  return `${item.name}${item.is_default ? '（默认）' : ''}${item.secret_configured ? '' : '（未保存密钥）'}`
-}
-
-function getSyncCredentialTip() {
-  const tips: Record<string, string> = {
-    feishu: '同步会使用选中的连接凭证。飞书通讯录同步需要该连接已保存 App ID 和 App Secret。',
-    wecom: '同步会使用选中的连接凭证。企业微信通讯录同步需要该连接已保存 Corp ID 和 Corp Secret。',
-    dingtalk: '同步会使用选中的连接凭证。钉钉通讯录同步需要该连接已保存 App Key 和 App Secret。',
-  }
-  return tips[syncForm.provider] || '同步会使用选中的连接凭证。'
-}
-
 function getSyncContentLabel() {
   const items = [
     syncForm.sync_departments ? '部门' : '',
@@ -1255,138 +855,9 @@ async function fetchSyncLogs() {
   }
 }
 
-function getPreviewActionLabel(action: string) {
-  return { create: '新增', update: '更新', disable: '禁用', skip: '跳过' }[action] || action
-}
-
-function getPreviewTargetLabel(targetType: string) {
-  return { department: '部门', user: '用户' }[targetType] || targetType
-}
-
-function getSyncOperationLabel(operation: string) {
-  return operation === 'preview' ? '预览' : operation === 'sync' ? '同步' : operation
-}
-
-function getSyncStatusLabel(status: string) {
-  return { success: '成功', warning: '警告', partial: '部分成功', failed: '失败' }[status] || status
-}
-
-function getSyncStatusTagType(status: string) {
-  return status === 'success' ? 'success' : status === 'failed' ? 'danger' : 'warning'
-}
-
-function getSyncCheckAlertType(status: string) {
-  return status === 'success' ? 'success' : status === 'failed' ? 'error' : 'warning'
-}
-
-function getSyncLogSummary(row: ContactSyncLogItem) {
-  const result = (row.result_data || {}) as Partial<ContactSyncPreviewResult>
-  const deptSummary = isNoDepartmentSyncChange(result)
-    ? '部门无变化'
-    : `部门 +${result.departments_created || 0}/改${result.departments_updated || 0}`
-  return `${deptSummary}，用户 +${result.users_created || 0}/改${result.users_updated || 0}/禁${result.users_disabled || 0}`
-}
-
 function openSyncLogDetail(row: ContactSyncLogItem) {
   currentSyncLog.value = row
   syncLogDetailVisible.value = true
-}
-
-function getSyncLogResult(row: ContactSyncLogItem | null) {
-  return (row?.result_data || {}) as Partial<ContactSyncPreviewResult>
-}
-
-function getSyncLogRequest(row: ContactSyncLogItem | null) {
-  return (row?.request_data || {}) as Partial<ContactSyncRequest>
-}
-
-function getSyncLogDetails(row: ContactSyncLogItem | null) {
-  const detailData = row?.detail_data as ContactSyncLogDetailData | null | undefined
-  if (!Array.isArray(detailData?.details)) {
-    return []
-  }
-  return detailData.details.filter(isSyncPreviewItem)
-}
-
-function getSyncLogErrors(row: ContactSyncLogItem | null) {
-  const errors = getSyncLogResult(row).errors
-  return Array.isArray(errors) ? errors : []
-}
-
-function getSyncLogContentLabel(row: ContactSyncLogItem | null) {
-  const request = getSyncLogRequest(row)
-  const items = [
-    request.sync_departments ? '部门' : '',
-    request.sync_users ? '用户' : '',
-  ].filter(Boolean)
-  return items.length ? items.join('、') : '-'
-}
-
-function getSyncLogAvatarLabel(row: ContactSyncLogItem | null) {
-  const value = getSyncLogRequest(row).sync_avatar
-  return typeof value === 'boolean' ? (value ? '同步头像' : '不同步头像') : '-'
-}
-
-function getSyncLogMissingUserLabel(row: ContactSyncLogItem | null) {
-  const value = getSyncLogRequest(row).disable_missing_users
-  return typeof value === 'boolean' ? (value ? '自动禁用' : '保持不变') : '-'
-}
-
-function getSyncLogUsernameStrategyLabel(row: ContactSyncLogItem | null) {
-  const strategy = getSyncLogRequest(row).username_strategy
-  return Array.isArray(strategy) && strategy.length
-    ? strategy.map(item => getUsernameStrategyLabel(item)).join(' > ')
-    : '-'
-}
-
-function getSyncLogNicknameStrategyLabel(row: ContactSyncLogItem | null) {
-  const strategy = getSyncLogRequest(row).nickname_strategy
-  return Array.isArray(strategy) && strategy.length
-    ? strategy.map(item => getNicknameStrategyLabel(item)).join(' > ')
-    : '-'
-}
-
-function getSyncLogOverwriteStrategyLabel(row: ContactSyncLogItem | null) {
-  const request = getSyncLogRequest(row)
-  const emailMode = normalizeFieldUpdateMode(request.email_update_mode, request.overwrite_email, 'never')
-  const phoneMode = normalizeFieldUpdateMode(request.phone_update_mode, request.overwrite_phone, 'never')
-  const departmentMode = normalizeFieldUpdateMode(request.department_update_mode, request.overwrite_department, 'never')
-  const hasNewStrategy = [request.email_update_mode, request.phone_update_mode, request.department_update_mode].some(isFieldUpdateMode)
-  const hasLegacyStrategy = ['overwrite_email', 'overwrite_phone', 'overwrite_department'].some(
-    key => typeof request[key as keyof ContactSyncRequest] === 'boolean'
-  )
-  if (!hasNewStrategy && !hasLegacyStrategy) {
-    return '-'
-  }
-  return [
-    `邮箱：${getFieldUpdateModeLabel(emailMode)}`,
-    `手机号：${getFieldUpdateModeLabel(phoneMode)}`,
-    `部门：${getFieldUpdateModeLabel(departmentMode)}`,
-  ].join('；')
-}
-
-function getUsernameStrategyLabel(value: string) {
-  return usernameStrategyOptions.find(item => item.value === value)?.label || value
-}
-
-function getNicknameStrategyLabel(value: string) {
-  return nicknameStrategyOptions.find(item => item.value === value)?.label || value
-}
-
-function getFieldUpdateModeLabel(value: string) {
-  return fieldUpdateModeOptions.find(item => item.value === value)?.label || value
-}
-
-function isSyncPreviewItem(item: unknown): item is ContactSyncPreviewItem {
-  if (!item || typeof item !== 'object') {
-    return false
-  }
-  const target = item as Record<string, unknown>
-  return typeof target.action === 'string' && typeof target.target_type === 'string'
-}
-
-function isNoDepartmentSyncChange(result: Partial<ContactSyncResult>) {
-  return !result.departments_created && !result.departments_updated
 }
 
 onMounted(() => {
@@ -1408,176 +879,6 @@ onMounted(() => {
   gap: 8px;
 }
 .mt-4 { margin-top: 16px; }
-.mb-4 { margin-bottom: 16px; }
 .mr-1 { margin-right: 4px; }
-.ml-2 { margin-left: 8px; }
 .text-muted { color: var(--el-text-color-secondary); }
-:deep(.sync-dialog .el-dialog__body) {
-  max-height: min(68vh, 620px);
-  overflow-y: auto;
-  padding-top: 12px;
-  padding-bottom: 8px;
-}
-.sync-dialog-tip {
-  margin-bottom: 10px;
-}
-.sync-form {
-  :deep(.el-form-item) {
-    margin-bottom: 10px;
-  }
-}
-.sync-section,
-.sync-result-section {
-  padding: 12px;
-  margin-bottom: 10px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  background: var(--el-fill-color-blank);
-}
-.sync-result-section {
-  margin-bottom: 0;
-}
-.sync-section-title {
-  margin-bottom: 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-.sync-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 14px;
-}
-.sync-basic-grid {
-  align-items: start;
-
-  :deep(.el-form-item) {
-    align-items: flex-start;
-    margin-bottom: 0;
-  }
-
-  :deep(.el-form-item__label) {
-    height: 32px;
-    line-height: 32px;
-  }
-
-  :deep(.el-form-item__content) {
-    align-items: flex-start;
-  }
-
-  .form-tip {
-    width: 100%;
-    flex-basis: 100%;
-  }
-}
-.sync-option-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  column-gap: 14px;
-}
-.sync-strategy-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-color: var(--el-color-primary-light-7);
-  background: var(--el-color-primary-light-9);
-}
-.sync-strategy-info {
-  min-width: 0;
-
-  .sync-section-title {
-    margin-bottom: 4px;
-  }
-}
-.sync-strategy-desc {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--el-text-color-secondary);
-}
-.sync-strategy-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-
-  :deep(.el-button + .el-button) {
-    margin-left: 0;
-  }
-}
-.sync-dialog-footer {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-
-  :deep(.el-button + .el-button) {
-    margin-left: 0;
-  }
-}
-:deep(.sync-log-detail-dialog .el-dialog__body) {
-  max-height: min(70vh, 640px);
-  overflow-y: auto;
-}
-.form-tip {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.4;
-}
-.sync-preview-alert {
-  margin-top: 8px;
-}
-.sync-check-alert {
-  margin-top: 8px;
-}
-.sync-check-table {
-  margin-top: 8px;
-}
-.sync-preview-details {
-  margin-top: 6px;
-  max-height: 96px;
-  overflow-y: auto;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.sync-log-box {
-  margin-top: 12px;
-}
-.sync-log-title {
-  margin-bottom: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--el-text-color-regular);
-}
-.sync-log-detail-title {
-  margin: 14px 0 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--el-text-color-regular);
-}
-.sync-log-detail-alert {
-  margin-top: 12px;
-}
-.role-item {
-  padding: 8px 0;
-  border-bottom: 1px solid #f0f0f0;
-  &:last-child { border-bottom: none; }
-}
-@media (max-width: 768px) {
-  .sync-form-grid,
-  .sync-option-row {
-    grid-template-columns: 1fr;
-  }
-
-  .sync-strategy-panel {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .sync-strategy-actions {
-    justify-content: flex-start;
-  }
-}
 </style>

@@ -37,17 +37,11 @@
       @size-change="fetchList"
     />
 
-    <el-dialog v-model="dialogVisible" :title="editId ? '编辑{{ page_title }}' : '新增{{ page_title }}'" width="640px">
-      <el-form :model="form" label-width="100px">
-{% for item in form_items %}        <el-form-item label="{{ item.label }}">
-          {{ item.control }}
-        </el-form-item>
-{% endfor %}      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submit">确定</el-button>
-      </template>
-    </el-dialog>
+    <FormDialog
+      v-model:visible="dialogVisible"
+      v-model:model-value="editRow"
+      @submit="handleSubmit"
+    />
   </div>
 </template>
 
@@ -55,17 +49,14 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { {{ module_name }}Api, type {{ entity_name }}Info } from '@/api/{{ module_name }}'
+import FormDialog from './components/FormDialog.vue'
 
 const loading = ref(false)
 const items = ref<{{ entity_name }}Info[]>([])
 const total = ref(0)
 const dialogVisible = ref(false)
-const editId = ref<number | null>(null)
+const editRow = ref<{{ entity_name }}Info | null>(null)
 const query = reactive({ page: 1, page_size: 10, keyword: '' })
-const form = reactive({
-{% for field in form_defaults %}  {{ field.name }}: {{ field.default }},
-{% endfor %}
-})
 
 async function fetchList() {
   loading.value = true
@@ -79,14 +70,13 @@ async function fetchList() {
 }
 
 function openDialog(row?: {{ entity_name }}Info) {
-  editId.value = row?.id ?? null
-  Object.assign(form, row || {})
+  editRow.value = row ?? null
   dialogVisible.value = true
 }
 
-async function submit() {
-  if (editId.value) {
-    await {{ module_name }}Api.update(editId.value, form)
+async function handleSubmit(form: Record<string, unknown>) {
+  if (editRow.value?.id) {
+    await {{ module_name }}Api.update(editRow.value.id, form)
   } else {
     await {{ module_name }}Api.create(form)
   }

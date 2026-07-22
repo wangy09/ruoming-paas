@@ -4,14 +4,13 @@
 支持：JWT Token 内嵌、X-Tenant-Code 请求头、子域名解析
 Author: ruoming
 """
-import asyncio
-
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 from app.core.security import decode_token_without_verify
+from app.core.utils import fire_and_forget
 
 logger = structlog.get_logger(__name__)
 
@@ -57,8 +56,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 structlog.contextvars.bind_contextvars(tenant_id=tenant_id)
 
             if impersonated and hasattr(request.state, "user_id"):
-                asyncio.create_task(
-                    self._record_impersonation_audit(request, tenant_id)
+                fire_and_forget(
+                    self._record_impersonation_audit(request, tenant_id),
+                    name=f"impersonation_audit_{request.state.user_id}",
+                    timeout=10.0,
                 )
 
         response = await call_next(request)

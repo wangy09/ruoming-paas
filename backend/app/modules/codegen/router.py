@@ -38,7 +38,8 @@ async def list_tables(
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:view"))],
     keyword: str | None = Query(None, description="表名或注释关键词"),
 ) -> ApiResponse[list[TableInfo]]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     return ok(await svc.list_tables(keyword))
 
 
@@ -48,7 +49,8 @@ async def list_columns(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:view"))],
 ) -> ApiResponse[list[ColumnInfo]]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     return ok(await svc.list_columns(table_name))
 
 
@@ -58,7 +60,8 @@ async def preview_code(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:preview"))],
 ) -> ApiResponse[GeneratePreviewResponse]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     return ok(await svc.preview(body))
 
 
@@ -68,7 +71,8 @@ async def write_code(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:write"))],
 ) -> ApiResponse[GenerateWriteResponse]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     return ok(await svc.write(body), message="生成完成")
 
 
@@ -80,7 +84,8 @@ async def list_configs(
     page_size: int = Query(20, ge=1, le=100),
     keyword: str | None = Query(None),
 ) -> ApiResponse[ListConfigResponse]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     return ok(await svc.list_configs(page, page_size, keyword))
 
 
@@ -90,7 +95,8 @@ async def get_config(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:view"))],
 ) -> ApiResponse[GenTableResponse]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     return ok(await svc.get_config(config_id))
 
 
@@ -100,14 +106,16 @@ async def save_config(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:write"))],
 ) -> ApiResponse[GenTableResponse]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     await svc.save_config(body, current_user.id if hasattr(current_user, 'id') else None)
-    config_id = (await svc.db.execute(
-        select(GenTable).where(
-            GenTable.table_name == body.table_name,
-            GenTable.is_deleted == False
-        )
-    )).scalar_one().id
+    query = select(GenTable).where(
+        GenTable.table_name == body.table_name,
+        GenTable.is_deleted == False
+    )
+    if tenant_id is not None:
+        query = query.where(GenTable.tenant_id == tenant_id)
+    config_id = (await db.execute(query)).scalar_one().id
     config = await svc.get_config(config_id)
     return ok(config, message="配置保存成功")
 
@@ -118,7 +126,8 @@ async def delete_config(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:delete"))],
 ) -> ApiResponse[None]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     await svc.delete_config(config_id)
     return ok(None, message="配置已删除")
 
@@ -130,7 +139,8 @@ async def generate_from_config(
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:write"))],
     overwrite: bool = False,
 ) -> ApiResponse[GenerateWriteResponse]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     return ok(await svc.generate_from_config(config_id, overwrite), message="生成完成")
 
 
@@ -140,7 +150,8 @@ async def batch_generate(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:write"))],
 ) -> ApiResponse[list]:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     return ok(await svc.batch_generate(body), message="批量生成完成")
 
 
@@ -150,7 +161,8 @@ async def download_code(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:write"))],
 ) -> StreamingResponse:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     config = await svc.get_config(config_id)
     zip_content = await svc.generate_zip(config_id)
     return StreamingResponse(
@@ -171,6 +183,7 @@ async def create_table(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:write"))],
 ) -> dict:
-    svc = CodegenService(db)
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
     result = await svc.create_table_from_config(request, current_user.id)
     return result

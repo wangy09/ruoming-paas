@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     # ── 登录安全 ──────────────────────────────────────────────────────
     LOGIN_FAIL_MAX_TIMES: int = 5           # 最多失败次数
     LOGIN_LOCK_MINUTES: int = 30            # 锁定时长（分钟）
+    BCRYPT_COST_FACTOR: int = 12            # bcrypt 成本因子（4-31），生产建议 12-14
 
     # ── 限流 ──────────────────────────────────────────────────────────
     RATE_LIMIT_DEFAULT: str = "100/minute"

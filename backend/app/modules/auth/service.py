@@ -3,7 +3,6 @@
 包含：登录、Refresh Token 轮换、登出、登录安全保护
 Author: ruoming
 """
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -27,6 +26,7 @@ from app.core.security import (
     hash_api_key,
     verify_password,
 )
+from app.core.utils import fire_and_forget
 from app.modules.audit.service import AuditService
 from app.modules.auth.schemas import (
     LoginRequest,
@@ -93,7 +93,7 @@ class AuthService:
         # 2. 账号不存在，也要检查锁定（防止枚举攻击时信息泄漏）
         if not user:
             # 仍然记录失败日志，但不泄漏"用户不存在"
-            asyncio.create_task(
+            fire_and_forget(
                 self._record_login_log(
                     user_id=None,
                     username=req.username,
@@ -101,7 +101,9 @@ class AuthService:
                     fail_reason="用户名或密码错误",
                     login_ip=client_ip,
                     user_agent=user_agent,
-                )
+                ),
+                name=f"login_log_none_{req.username}",
+                timeout=10.0,
             )
             raise BusinessException(
                 code=UserErrCode.WRONG_PASSWORD,
@@ -162,14 +164,16 @@ class AuthService:
         )
 
         # 9. 异步记录登录日志
-        asyncio.create_task(
+        fire_and_forget(
             self._record_login_log(
                 user_id=user.id,
                 username=user.username,
                 status=1,
                 login_ip=client_ip,
                 user_agent=user_agent,
-            )
+            ),
+            name=f"login_log_success_{user.id}",
+            timeout=10.0,
         )
 
         logger.info("user_login_success", user_id=user.id, username=user.username)
@@ -292,8 +296,10 @@ class AuthService:
             raise AuthException("API Key 已过期")
 
         # 更新最后使用时间（异步，不阻塞请求）
-        asyncio.create_task(
-            self._update_api_key_last_used(api_key_obj.id)
+        fire_and_forget(
+            self._update_api_key_last_used(api_key_obj.id),
+            name=f"api_key_update_{api_key_obj.id}",
+            timeout=10.0,
         )
 
         # 获取关联用户
@@ -353,7 +359,7 @@ class AuthService:
         )
 
         # 记录失败日志（异步）
-        asyncio.create_task(
+        fire_and_forget(
             self._record_login_log(
                 user_id=user.id,
                 username=user.username,
@@ -362,7 +368,9 @@ class AuthService:
                 else f"连续{new_fail_count}次失败，账号已锁定",
                 login_ip=client_ip,
                 user_agent=user_agent,
-            )
+            ),
+            name=f"login_log_failure_{user.id}",
+            timeout=10.0,
         )
 
     async def _revoke_all_user_tokens(self, user_id: int) -> None:
