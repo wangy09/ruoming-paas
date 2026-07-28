@@ -1,27 +1,42 @@
 <template>
   <div class="page-container">
     <div class="page-card">
-      <el-form inline class="search-form" @submit.prevent="fetchList">
-        <el-form-item label="用户名">
-          <el-input v-model="query.username" placeholder="用户名" clearable style="width: 160px" />
-        </el-form-item>
-        <el-form-item label="动作">
-          <el-input v-model="query.action" placeholder="create/update/delete" clearable style="width: 180px" />
-        </el-form-item>
-        <el-form-item label="资源类型">
-          <el-input v-model="query.resource_type" placeholder="资源类型" clearable style="width: 160px" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="query.status" placeholder="全部" clearable style="width: 120px">
-            <el-option label="成功" :value="1" />
-            <el-option label="失败" :value="0" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :icon="Search" @click="fetchList">查询</el-button>
-          <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
-        </el-form-item>
-      </el-form>
+      <div class="search-header">
+        <el-form inline class="search-form" @submit.prevent="fetchList">
+          <el-form-item label="用户名">
+            <el-input v-model="query.username" placeholder="用户名" clearable style="width: 160px" />
+          </el-form-item>
+          <el-form-item label="动作">
+            <el-input v-model="query.action" placeholder="create/update/delete" clearable style="width: 180px" />
+          </el-form-item>
+          <el-form-item label="资源类型">
+            <el-input v-model="query.resource_type" placeholder="资源类型" clearable style="width: 160px" />
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="query.status" placeholder="全部" clearable style="width: 120px">
+              <el-option label="成功" :value="1" />
+              <el-option label="失败" :value="0" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="日期范围">
+            <el-date-picker
+              v-model="dateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              style="width: 280px"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :icon="Search" @click="fetchList">查询</el-button>
+            <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
+          </el-form-item>
+        </el-form>
+        <el-button type="danger" :icon="Delete" @click="confirmClear" v-if="permStore.hasPermission('system:audit:clear')">清除日志</el-button>
+      </div>
 
       <el-divider />
 
@@ -83,16 +98,21 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { Refresh, Search } from '@element-plus/icons-vue'
+import { Refresh, Search, Delete } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { auditApi } from '@/api/audit'
 import { formatDate } from '@/utils/format'
+import { usePermissionStore } from '@/store/permission'
 import type { AuditLog } from '@/types'
+
+const permStore = usePermissionStore()
 
 const loading = ref(false)
 const tableData = ref<AuditLog[]>([])
 const total = ref(0)
 const responseDialogVisible = ref(false)
 const currentResponseBody = ref('')
+const dateRange = ref<[string, string] | null>(null)
 
 const query = reactive({
   page: 1,
@@ -113,6 +133,8 @@ async function fetchList() {
       action: query.action || undefined,
       resource_type: query.resource_type || undefined,
       status: query.status,
+      start_time: dateRange.value ? `${dateRange.value[0]} 00:00:00` : undefined,
+      end_time: dateRange.value ? `${dateRange.value[1]} 23:59:59` : undefined,
     })
     tableData.value = res.data.items
     total.value = res.data.total
@@ -126,8 +148,54 @@ function resetQuery() {
   query.action = ''
   query.resource_type = ''
   query.status = undefined
+  dateRange.value = null
   query.page = 1
   fetchList()
+}
+
+async function confirmClear() {
+  try {
+    const startLabel = dateRange.value ? dateRange.value[0] : '最早'
+    const endLabel = dateRange.value ? dateRange.value[1] : '最新'
+    await ElMessageBox.confirm(
+      `<div style="padding: 16px;">
+        <div style="font-size: 16px; margin-bottom: 12px;">确定要清除以下范围的操作日志吗？</div>
+        <div style="background: #f5f7fa; padding: 12px; border-radius: 6px;">
+          <div style="color: #606266;">日期范围：</div>
+          <div style="font-weight: 600;">${startLabel} 至 ${endLabel}</div>
+        </div>
+        <div style="margin-top: 12px; color: #f56c6c; font-size: 13px;">⚠️ 此操作不可恢复，请谨慎操作</div>
+      </div>`,
+      '清除日志确认',
+      {
+        dangerouslyUseHTMLString: true,
+        confirmButtonText: '确认清除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      }
+    )
+    await clearLogs()
+  } catch {
+    return
+  }
+}
+
+async function clearLogs() {
+  loading.value = true
+  try {
+    const params: { start_time?: string; end_time?: string } = {}
+    if (dateRange.value) {
+      params.start_time = `${dateRange.value[0]} 00:00:00`
+      params.end_time = `${dateRange.value[1]} 23:59:59`
+    }
+    const res = await auditApi.clearLogs(params)
+    ElMessage.success(`成功清除 ${res.data.deleted_count} 条日志`)
+    await fetchList()
+  } catch {
+    ElMessage.error('清除日志失败')
+  } finally {
+    loading.value = false
+  }
 }
 
 function hasResponseBody(value: AuditLog['response_body']) {
@@ -150,6 +218,13 @@ onMounted(fetchList)
 </script>
 
 <style lang="scss" scoped>
+.search-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
 .search-form {
   :deep(.el-form-item) {
     margin-bottom: 0;

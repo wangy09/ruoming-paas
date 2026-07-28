@@ -246,7 +246,7 @@ async def get_config_history(
         text(
             "SELECT h.*, COALESCE(u.nickname, u.username) AS changed_by_name "
             f"FROM sys_config_history h LEFT JOIN sys_user u ON u.id = h.changed_by {where_clause} "
-            "ORDER BY h.changed_at DESC OFFSET :offset LIMIT :limit"
+            "ORDER BY h.created_at DESC OFFSET :offset LIMIT :limit"
         ),
         params,
     )

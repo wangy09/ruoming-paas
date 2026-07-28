@@ -89,6 +89,17 @@ class TenantDisabledException(AppException):
         )
 
 
+class DemoModeException(AppException):
+    """演示模式下禁止修改操作"""
+
+    def __init__(self, message: str = "演示模式下禁止修改操作") -> None:
+        super().__init__(
+            code=SysErrCode.DEMO_MODE_RESTRICTED,
+            message=message,
+            http_status=403,
+        )
+
+
 class NotFoundException(AppException):
     """资源不存在"""
 

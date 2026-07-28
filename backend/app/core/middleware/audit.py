@@ -152,6 +152,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if path.startswith("/api/v1/auth/login"):
             return
 
+        if path.startswith("/api/v1/audit/"):
+            return
+
         fire_and_forget(
             self._write_log_async(
                 event_type=f"{method.lower()}.{path.replace('/', '.').strip('.')}",

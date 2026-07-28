@@ -94,7 +94,7 @@ bash scripts/start.sh dev
 # 4. 访问
 # 前端：http://localhost:3000
 # API 文档：http://localhost:8000/api/docs
-# 默认账号：admin / ruoming@2024
+# 默认账号：admin / ruoming@2026
 ```
 
 > 详细步骤见 [01_快速启动.md](./01_快速启动.md)
@@ -193,4 +193,4 @@ AI 模块       ── 按需启用（LLM网关/Agent/知识库RAG/工具链/Pro
 
 ---
 
-*文档版本 v3.2 · 更新于 2026-07-06*
+*文档版本 v1.0.0 · 更新于 2026-07-27*

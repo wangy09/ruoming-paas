@@ -7,6 +7,21 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.base_model import BaseModel
 
 
+# ============ 初始化版本模型 ============
+
+class SysInitVersion(BaseModel):
+    """初始化版本记录表（用于增量更新）"""
+
+    __tablename__ = "sys_init_version"
+    __table_args__ = (
+        UniqueConstraint("version", name="uq_init_version"),
+    )
+
+    version: Mapped[str] = mapped_column(String(32), nullable=False, comment="版本号（如 20260722.1）")
+    name: Mapped[str] = mapped_column(String(128), nullable=False, comment="版本名称/描述")
+    executed_at: Mapped[str] = mapped_column(String(32), nullable=False, comment="执行时间")
+
+
 # ============ 部门模型 ============
 
 class SysDept(BaseModel):

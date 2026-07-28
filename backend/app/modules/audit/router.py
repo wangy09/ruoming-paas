@@ -1,13 +1,14 @@
 """
 若茗 PaaS - 审计日志 API
 """
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_permissions
 from app.core.response import ok
 from app.database import get_db
 from app.modules.audit.models import SysAuditLog, SysLoginLog
@@ -29,6 +30,13 @@ async def list_audit_logs(
     start_time: str | None = Query(None),
     end_time: str | None = Query(None),
 ):
+    start_dt: datetime | None = None
+    end_dt: datetime | None = None
+    if start_time:
+        start_dt = datetime.fromisoformat(start_time)
+    if end_time:
+        end_dt = datetime.fromisoformat(end_time)
+
     stmt = select(SysAuditLog).order_by(desc(SysAuditLog.created_at))
     if username:
         stmt = stmt.filter(SysAuditLog.username.ilike(f"%{username}%"))
@@ -38,10 +46,10 @@ async def list_audit_logs(
         stmt = stmt.filter(SysAuditLog.resource_type == resource_type)
     if status is not None:
         stmt = stmt.filter(SysAuditLog.status == status)
-    if start_time:
-        stmt = stmt.filter(SysAuditLog.created_at >= start_time)
-    if end_time:
-        stmt = stmt.filter(SysAuditLog.created_at <= end_time)
+    if start_dt:
+        stmt = stmt.filter(SysAuditLog.created_at >= start_dt)
+    if end_dt:
+        stmt = stmt.filter(SysAuditLog.created_at <= end_dt)
     if not current_user.is_superplatform:
         stmt = stmt.filter(SysAuditLog.tenant_id == current_user.tenant_id)
     count_stmt = select(func.count(SysAuditLog.id))
@@ -77,6 +85,45 @@ async def list_audit_logs(
             "created_at": item.created_at.isoformat() if item.created_at else None,
         })
     return ok({"items": items, "total": total, "page": page_params.page, "page_size": page_params.page_size})
+
+
+@router.delete("/logs")
+async def delete_audit_logs(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[SysUser, Depends(require_permissions("system:audit:clear"))],
+    start_time: str | None = Query(None),
+    end_time: str | None = Query(None),
+):
+    start_dt: datetime | None = None
+    end_dt: datetime | None = None
+    if start_time:
+        start_dt = datetime.fromisoformat(start_time)
+    if end_time:
+        end_dt = datetime.fromisoformat(end_time)
+
+    stmt = select(func.count(SysAuditLog.id))
+    if start_dt:
+        stmt = stmt.filter(SysAuditLog.created_at >= start_dt)
+    if end_dt:
+        stmt = stmt.filter(SysAuditLog.created_at <= end_dt)
+    if not current_user.is_superplatform:
+        stmt = stmt.filter(SysAuditLog.tenant_id == current_user.tenant_id)
+    count_before = await db.scalar(stmt)
+
+    delete_stmt = delete(SysAuditLog)
+    if start_dt:
+        delete_stmt = delete_stmt.where(SysAuditLog.created_at >= start_dt)
+    if end_dt:
+        delete_stmt = delete_stmt.where(SysAuditLog.created_at <= end_dt)
+    if not current_user.is_superplatform:
+        delete_stmt = delete_stmt.where(SysAuditLog.tenant_id == current_user.tenant_id)
+
+    result = await db.execute(delete_stmt)
+    deleted_count = result.rowcount if result.rowcount is not None else 0
+
+    await db.commit()
+
+    return ok({"deleted_count": deleted_count})
 
 
 @router.get("/login-logs")

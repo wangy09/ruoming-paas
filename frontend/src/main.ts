@@ -10,6 +10,7 @@ import App from './App.vue'
 import router from './router'
 import { setupRouterGuard } from './router/guard'
 import permissionDirective from './directives/permission'
+import demoDirective from './directives/demo'
 import './styles/global.scss'
 
 const app = createApp(App)
@@ -29,5 +30,8 @@ setupRouterGuard(router)
 
 // 权限指令
 app.directive('permission', permissionDirective)
+
+// 演示模式指令
+app.directive('demo', demoDirective)
 
 app.mount('#app')

@@ -82,8 +82,27 @@ start_dev() {
         exit 1
     fi
 
-    # 检查是否需要初始化数据库
-    log_step "检查数据库初始化状态..."
+    # 检查是否需要初始化数据库表结构
+    log_step "检查数据库表结构..."
+    local table_exists
+    table_exists=$($(compose_cmd) exec -T backend python -c \
+        "import asyncio; from app.database import AsyncSessionLocal; from sqlalchemy import text; \
+        async def f(): \
+            async with AsyncSessionLocal() as s: \
+                try: \
+                    await s.execute(text('SELECT COUNT(*) FROM sys_user')); return '1' \
+                except: \
+                    return '0' \
+        print(asyncio.run(f()))" 2>/dev/null || echo "0")
+
+    if [[ "$table_exists" == "0" ]]; then
+        log_step "表结构不存在，初始化表结构..."
+        $(compose_cmd) exec backend python /app/scripts/recreate_tables.py
+        log_info "表结构初始化完成 ✓"
+    fi
+
+    # 检查是否需要初始化种子数据
+    log_step "检查种子数据状态..."
     local user_count
     user_count=$($(compose_cmd) exec -T backend python -c \
         "import asyncio; from app.database import AsyncSessionLocal; from sqlalchemy import text; \
@@ -137,11 +156,13 @@ EOF
     log_step "启动生产数据库与缓存..."
     $(compose_cmd) -f docker-compose.prod.yml up -d postgres redis
 
-    log_step "初始化生产数据库结构..."
-    $(compose_cmd) -f docker-compose.prod.yml run --rm backend python -c \
-        "import asyncio; from app.database import init_db; asyncio.run(init_db())"
+    log_step "等待数据库就绪..."
+    sleep 15
 
-    log_step "初始化生产种子数据..."
+    log_step "初始化生产数据库结构（幂等）..."
+    $(compose_cmd) -f docker-compose.prod.yml run --rm backend python /app/scripts/recreate_tables.py
+
+    log_step "初始化生产种子数据（幂等）..."
     $(compose_cmd) -f docker-compose.prod.yml run --rm backend python /app/scripts/init_data.py
 
     log_step "启动生产应用服务..."

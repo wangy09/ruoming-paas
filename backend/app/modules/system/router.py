@@ -1,11 +1,12 @@
 """
-若茗 PaaS - 部门路由
+若茗 PaaS - 系统路由
 Author: ruoming
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.deps import get_current_user, require_permissions
 from app.core.exceptions import BusinessException, NotFoundException
 from app.core.response import ApiResponse, created, ok
@@ -17,6 +18,12 @@ from app.modules.system.schemas import DeptCreate, DeptInfo, DeptUpdate, DictTyp
 from app.modules.system.service import DictService
 
 router = APIRouter()
+
+
+@router.get("/system/demo-mode", response_model=ApiResponse, summary="获取演示模式状态")
+async def get_demo_mode() -> ApiResponse:
+    """获取系统是否处于演示模式（无需认证，前端初始化时调用）"""
+    return ok({"demo_mode": settings.DEMO_MODE})
 
 
 def _build_ancestors(parent: SysDept | None) -> str:

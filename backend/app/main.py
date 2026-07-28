@@ -17,6 +17,7 @@ from app.core.logging import setup_logging
 from app.core.middleware.audit import AuditMiddleware
 from app.core.middleware.csrf import CSRFMiddleware
 from app.core.middleware.logging import RequestLoggingMiddleware
+from app.core.middleware.demo_mode import DemoModeMiddleware
 from app.core.middleware.rate_limit import TenantRateLimitMiddleware
 from app.core.middleware.request_id import RequestIDMiddleware
 from app.core.middleware.security_headers import SecurityHeadersMiddleware
@@ -128,10 +129,14 @@ app.add_middleware(RequestLoggingMiddleware)
 # 3. 租户解析（在认证之前解析租户）
 app.add_middleware(TenantMiddleware)
 
-# 4. 租户级限流（依赖 tenant_id）
+# 4. 演示模式拦截（仅 DEMO_MODE=True 时生效）
+if settings.DEMO_MODE:
+    app.add_middleware(DemoModeMiddleware)
+
+# 5. 租户级限流（依赖 tenant_id）
 app.add_middleware(TenantRateLimitMiddleware)
 
-# 5. 审计日志（记录所有 API 请求）
+# 6. 审计日志（记录所有 API 请求）
 app.add_middleware(AuditMiddleware)
 
 # 6. CSRF 防护（在认证之后）

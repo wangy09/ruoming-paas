@@ -1,13 +1,19 @@
 """
 若茗 PaaS - 初始化种子数据
 首次启动后执行，创建：超管账号、默认租户、基础权限数据
+支持版本化增量更新，每次数据变更新增一个版本
 Author: ruoming
 """
 import asyncio
 import os
 import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+INIT_VERSIONS = [
+    {"version": "1.0.0", "name": "v1.0.0 初始版本：超管、租户、基础权限、字典、配置", "func": None},
+]
 
 
 async def init_data(reset: bool = False) -> None:
@@ -24,6 +30,7 @@ async def init_data(reset: bool = False) -> None:
     from app.modules.monitor.models import SysScheduledTask, SysTaskExecutionLog
     from app.modules.tenant.models import SysTenant
     from app.modules.user.models import SysUser
+    from app.modules.system.models import SysInitVersion
     from sqlalchemy import select, delete
 
     setup_logging()
@@ -37,15 +44,7 @@ async def init_data(reset: bool = False) -> None:
             select(SysUser).where(SysUser.is_superplatform == True)  # noqa: E712
         )
         if existing.scalar_one_or_none() and not reset:
-            await ensure_dashboard_menu(db)
-            await ensure_integration_menu(db)
-            await ensure_navigation_menus(db)
-            await ensure_help_manual_menu(db)
-            await ensure_user_sync_permission(db)
-            await init_runtime_configs(db, settings)
-            await clear_permission_cache()
-            await db.commit()
-            logger.info("already_initialized", msg="种子数据已存在，已整理导航菜单、用户手册并补齐运行时配置")
+            logger.info("already_initialized", msg="种子数据已初始化，跳过执行")
             return
 
         if reset:
@@ -68,9 +67,9 @@ async def init_data(reset: bool = False) -> None:
         # ── 2. 创建平台超管 ───────────────────────────────────────────
         admin = SysUser(
             username="admin",
-            password=hash_password("ruoming@2024"),
+            password=hash_password("ruoming@2026"),
             nickname="平台超管",
-            email="admin@ruoming.io",
+            email="sbxwlf@163.com",
             is_superplatform=True,
             status=1,
             tenant_id=None,
@@ -166,18 +165,83 @@ async def init_data(reset: bool = False) -> None:
         await init_runtime_configs(db, settings)
         await db.flush()
 
-        # ── 8. 初始化测试计划任务 ─────────────────────────────────────
-        db.add(SysScheduledTask(
-            name="rmtask_test",
-            task_type="interval",
-            func_name="rmtask_test",
-            interval_seconds=60,
-            is_once=False,
-            status=1,
-            remark="计划任务测试用例",
-        ))
+        # ── 8. 初始化内置计划任务 ─────────────────────────────────────
+        _builtin_tasks = [
+            {
+                "name": "rmtask_test",
+                "task_type": "interval",
+                "func_name": "rmtask_test",
+                "interval_seconds": 60,
+                "is_once": False,
+                "status": 1,
+                "remark": "计划任务测试用例",
+            },
+            {
+                "name": "知识库文档向量化",
+                "task_type": "interval",
+                "func_name": "app.ai.knowledge.tasks.index_document",
+                "interval_seconds": 300,
+                "is_once": False,
+                "status": 0,
+                "remark": "对待索引文档进行向量化入库处理（自动限速 10次/分）",
+            },
+            {
+                "name": "知识库全量重建索引",
+                "task_type": "cron",
+                "func_name": "app.ai.knowledge.tasks.reindex_all_task",
+                "cron_expr": "0 3 * * 0",
+                "is_once": False,
+                "status": 0,
+                "remark": "全量重建所有知识库向量索引，建议低峰期执行",
+            },
+            {
+                "name": "知识库单文档重建索引",
+                "task_type": "interval",
+                "func_name": "app.ai.knowledge.tasks.reindex_single_task",
+                "interval_seconds": 600,
+                "is_once": False,
+                "status": 0,
+                "remark": "对标记为需要重建的单文档进行索引更新",
+            },
+            {
+                "name": "删除文档向量数据",
+                "task_type": "interval",
+                "func_name": "app.ai.knowledge.tasks.delete_document_vectors",
+                "interval_seconds": 3600,
+                "is_once": False,
+                "status": 0,
+                "remark": "清理已删除文档的向量数据（垃圾回收）",
+            },
+            {
+                "name": "抓取 URL 内容并索引",
+                "task_type": "interval",
+                "func_name": "app.ai.knowledge.tasks.fetch_url_task",
+                "interval_seconds": 86400,
+                "is_once": False,
+                "status": 0,
+                "remark": "定时抓取配置的 URL 页面内容并写入知识库",
+            },
+            {
+                "name": "调用 API 获取内容并索引",
+                "task_type": "interval",
+                "func_name": "app.ai.knowledge.tasks.fetch_api_task",
+                "interval_seconds": 86400,
+                "is_once": False,
+                "status": 0,
+                "remark": "定时调用外部 API 获取数据并写入知识库",
+            },
+        ]
+        for _task_data in _builtin_tasks:
+            db.add(SysScheduledTask(**_task_data))
         await db.flush()
         await clear_permission_cache()
+
+        for version_info in INIT_VERSIONS:
+            db.add(SysInitVersion(
+                version=version_info["version"],
+                name=version_info["name"],
+                executed_at=datetime.now().isoformat(timespec="seconds"),
+            ))
 
         await db.commit()
         logger.info(
@@ -185,12 +249,13 @@ async def init_data(reset: bool = False) -> None:
             admin_id=admin.id,
             tenant_id=default_tenant.id,
             permissions=len(perm_objects),
+            versions=len(INIT_VERSIONS),
         )
 
         print("\n" + "="*60)
         print("✅ 若茗 PaaS 初始化完成！")
         print(f"   超管账号: admin")
-        print(f"   超管密码: ruoming@2024")
+        print(f"   超管密码: ruoming@2026")
         print(f"   API 文档: http://localhost:8000/api/docs")
         print("="*60 + "\n")
 
@@ -319,6 +384,7 @@ def _get_default_permissions() -> list[dict]:
             "component": "audit/logs/index", "icon": "List", "sort": 310, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "audit:log:menu", "name": "查询操作日志", "code": "audit:log:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "audit:log:menu", "name": "清除日志", "code": "system:audit:clear", "perm_type": "button", "sort": 2},
         {
             "parent_id": 0, "parent_code": "audit", "name": "登录日志", "code": "audit:login:menu",
             "perm_type": "menu", "path": "/audit/login-logs",
@@ -361,6 +427,7 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "dev:codegen:menu", "name": "查看代码生成", "code": "dev:codegen:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "dev:codegen:menu", "name": "生成代码预览", "code": "dev:codegen:preview", "perm_type": "button", "sort": 2},
         {"parent_id": 0, "parent_code": "dev:codegen:menu", "name": "写入生成文件", "code": "dev:codegen:write", "perm_type": "button", "sort": 3},
+        {"parent_id": 0, "parent_code": "dev:codegen:menu", "name": "删除代码生成", "code": "dev:codegen:delete", "perm_type": "button", "sort": 4},
         # ── AI 管理（根菜单）─────────────────────────────────────────
         {
             "parent_id": 0, "name": "AI 管理", "code": "ai",
@@ -456,6 +523,7 @@ def _get_default_permissions() -> list[dict]:
         },
         {"parent_id": 0, "parent_code": "monitor:circuit:menu", "name": "查看熔断器", "code": "monitor:circuit:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "monitor:circuit:menu", "name": "重置熔断器", "code": "monitor:circuit:reset", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "monitor:circuit:menu", "name": "熔断", "code": "monitor:circuit:trip", "perm_type": "button", "sort": 3},
 
         # ── 帮助中心（根菜单）────────────────────────────────────────
         {
@@ -528,79 +596,6 @@ def _get_navigation_root_permissions() -> list[dict]:
     ]
 
 
-def _get_navigation_menu_parent_map() -> dict[str, tuple[str, int]]:
-    """子菜单 code -> (新父级 code, 分组内排序)。"""
-    return {
-        "system:user:menu": ("org", 10),
-        "system:dept:menu": ("org", 20),
-        "system:tenant:menu": ("org", 30),
-        "system:role_permission:menu": ("authz", 10),
-        "system:role:menu": ("authz", 20),
-        "system:permission:menu": ("authz", 30),
-        "system:config:menu": ("platform_config", 10),
-        "system:dict:menu": ("platform_config", 20),
-        "system:file:menu": ("resource_integration", 10),
-        "system:integration:menu": ("resource_integration", 20),
-    }
-
-
-async def ensure_navigation_menus(db) -> None:
-    """整理系统类菜单分组，并给现有角色补齐新根菜单权限。"""
-    from sqlalchemy import select
-    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
-
-    root_by_code: dict[str, SysPermission] = {}
-    for item in _get_navigation_root_permissions():
-        result = await db.execute(
-            select(SysPermission).where(SysPermission.code == item["code"])
-        )
-        perm = result.scalar_one_or_none()
-        if not perm:
-            perm = SysPermission(**item, is_system=True)
-            db.add(perm)
-            await db.flush()
-        else:
-            for key, value in item.items():
-                setattr(perm, key, value)
-            perm.is_system = True
-        root_by_code[perm.code] = perm
-
-    for menu_code, (parent_code, sort) in _get_navigation_menu_parent_map().items():
-        menu_result = await db.execute(
-            select(SysPermission).where(SysPermission.code == menu_code)
-        )
-        menu = menu_result.scalar_one_or_none()
-        parent = root_by_code.get(parent_code)
-        if menu and parent:
-            menu.parent_id = parent.id
-            menu.sort = sort
-            menu.is_visible = True
-
-    old_system_result = await db.execute(
-        select(SysPermission).where(SysPermission.code == "system")
-    )
-    old_system = old_system_result.scalar_one_or_none()
-    if old_system:
-        old_system.is_visible = False
-        old_system.sort = 999
-
-    roles_result = await db.execute(
-        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
-    )
-    roles = list(roles_result.scalars().all())
-    for role in roles:
-        for perm in root_by_code.values():
-            exists = await db.execute(
-                select(SysRolePermission).where(
-                    SysRolePermission.role_id == role.id,
-                    SysRolePermission.permission_id == perm.id,
-                )
-            )
-            if exists.scalar_one_or_none():
-                continue
-            db.add(SysRolePermission(role_id=role.id, permission_id=perm.id))
-
-
 async def clear_permission_cache() -> None:
     """清理用户权限缓存，确保菜单调整立即生效。"""
     try:
@@ -615,281 +610,10 @@ async def clear_permission_cache() -> None:
         return
 
 
-async def ensure_user_sync_permission(db) -> None:
-    """补齐用户管理的同步按钮权限，并授权给现有角色。"""
-    from sqlalchemy import select
-    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
-
-    menu_result = await db.execute(
-        select(SysPermission).where(SysPermission.code == "system:user:menu")
-    )
-    menu_perm = menu_result.scalar_one_or_none()
-    if not menu_perm:
-        return
-
-    result = await db.execute(
-        select(SysPermission).where(SysPermission.code == "system:user:sync")
-    )
-    perm = result.scalar_one_or_none()
-    if not perm:
-        perm = SysPermission(
-            parent_id=menu_perm.id,
-            name="同步用户",
-            code="system:user:sync",
-            perm_type="button",
-            sort=8,
-            is_system=True,
-        )
-        db.add(perm)
-        await db.flush()
-    else:
-        perm.parent_id = menu_perm.id
-        perm.name = "同步用户"
-        perm.perm_type = "button"
-        perm.sort = 8
-        perm.is_system = True
-
-    roles_result = await db.execute(
-        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
-    )
-    for role in roles_result.scalars().all():
-        exists = await db.execute(
-            select(SysRolePermission).where(
-                SysRolePermission.role_id == role.id,
-                SysRolePermission.permission_id == perm.id,
-            )
-        )
-        if not exists.scalar_one_or_none():
-            db.add(SysRolePermission(role_id=role.id, permission_id=perm.id))
 
 
-async def ensure_dashboard_menu(db) -> None:
-    """补齐工作台菜单，并给现有角色授权。"""
-    from sqlalchemy import select
-    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
-
-    result = await db.execute(
-        select(SysPermission).where(SysPermission.code == "dashboard:menu")
-    )
-    dashboard_perm = result.scalar_one_or_none()
-    if dashboard_perm:
-        dashboard_perm.name = "工作台"
-        dashboard_perm.perm_type = "menu"
-        dashboard_perm.path = "/dashboard"
-        dashboard_perm.component = "dashboard/index"
-        dashboard_perm.icon = "Odometer"
-        dashboard_perm.sort = 0
-        dashboard_perm.is_visible = True
-        dashboard_perm.is_cache = True
-        dashboard_perm.is_system = True
-    else:
-        dashboard_perm = SysPermission(
-            parent_id=0,
-            name="工作台",
-            code="dashboard:menu",
-            perm_type="menu",
-            path="/dashboard",
-            component="dashboard/index",
-            icon="Odometer",
-            sort=0,
-            is_visible=True,
-            is_cache=True,
-            is_system=True,
-        )
-        db.add(dashboard_perm)
-        await db.flush()
-
-    roles_result = await db.execute(
-        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
-    )
-    roles = list(roles_result.scalars().all())
-    for role in roles:
-        exists = await db.execute(
-            select(SysRolePermission).where(
-                SysRolePermission.role_id == role.id,
-                SysRolePermission.permission_id == dashboard_perm.id,
-            )
-        )
-        if exists.scalar_one_or_none():
-            continue
-        db.add(SysRolePermission(role_id=role.id, permission_id=dashboard_perm.id))
 
 
-async def ensure_integration_menu(db) -> None:
-    """补齐集成中心菜单和按钮权限，并给现有角色授权。"""
-    from sqlalchemy import select
-    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
-
-    resource_result = await db.execute(
-        select(SysPermission).where(SysPermission.code == "resource_integration")
-    )
-    resource_perm = resource_result.scalar_one_or_none()
-    if not resource_perm:
-        resource_perm = SysPermission(
-            parent_id=0,
-            name="资源与集成",
-            code="resource_integration",
-            perm_type="menu",
-            path="/resources",
-            component="",
-            icon="Connection",
-            sort=130,
-            is_visible=True,
-            is_system=True,
-        )
-        db.add(resource_perm)
-        await db.flush()
-
-    menu_items = [
-        {
-            "parent_id": resource_perm.id,
-            "name": "集成中心",
-            "code": "system:integration:menu",
-            "perm_type": "menu",
-            "path": "/system/integrations",
-            "component": "system/integration/index",
-            "icon": "Connection",
-            "sort": 20,
-            "is_visible": True,
-            "is_system": True,
-        },
-        {
-            "name": "查看集成",
-            "code": "integration:view",
-            "perm_type": "button",
-            "sort": 1,
-            "is_system": True,
-        },
-        {
-            "name": "管理集成",
-            "code": "integration:manage",
-            "perm_type": "button",
-            "sort": 2,
-            "is_system": True,
-        },
-    ]
-
-    ensured_perms = []
-    menu_perm = None
-    for item in menu_items:
-        result = await db.execute(
-            select(SysPermission).where(SysPermission.code == item["code"])
-        )
-        perm = result.scalar_one_or_none()
-        if not perm:
-            perm = SysPermission(**item)
-            db.add(perm)
-            await db.flush()
-        else:
-            for key, value in item.items():
-                setattr(perm, key, value)
-
-        if item["code"] == "system:integration:menu":
-            menu_perm = perm
-        elif menu_perm:
-            perm.parent_id = menu_perm.id
-        ensured_perms.append(perm)
-    await db.flush()
-
-    roles_result = await db.execute(
-        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
-    )
-    roles = list(roles_result.scalars().all())
-    for role in roles:
-        for perm in ensured_perms:
-            exists = await db.execute(
-                select(SysRolePermission).where(
-                    SysRolePermission.role_id == role.id,
-                    SysRolePermission.permission_id == perm.id,
-                )
-            )
-            if exists.scalar_one_or_none():
-                continue
-            db.add(SysRolePermission(role_id=role.id, permission_id=perm.id))
-
-
-async def ensure_help_manual_menu(db) -> None:
-    """补齐平台内用户手册菜单，并给现有角色授权。"""
-    from sqlalchemy import select
-    from app.modules.permission.models import SysPermission, SysRole, SysRolePermission
-
-    items = [
-        {
-            "parent_id": 0,
-            "name": "帮助中心",
-            "code": "help",
-            "perm_type": "menu",
-            "path": "/help",
-            "component": "",
-            "icon": "QuestionFilled",
-            "sort": 450,
-            "is_visible": True,
-            "is_system": True,
-        },
-        {
-            "name": "用户手册",
-            "code": "help:manual:menu",
-            "perm_type": "menu",
-            "path": "/help/manual",
-            "component": "help/manual/index",
-            "icon": "Reading",
-            "sort": 451,
-            "is_visible": True,
-            "is_system": True,
-        },
-        {
-            "name": "查看用户手册",
-            "code": "help:manual:view",
-            "perm_type": "button",
-            "sort": 1,
-            "is_system": True,
-        },
-    ]
-
-    ensured_perms = []
-    root_perm = None
-    manual_perm = None
-    for item in items:
-        result = await db.execute(
-            select(SysPermission).where(SysPermission.code == item["code"])
-        )
-        perm = result.scalar_one_or_none()
-        if not perm:
-            perm = SysPermission(**item)
-            db.add(perm)
-            await db.flush()
-        else:
-            for key, value in item.items():
-                setattr(perm, key, value)
-
-        if item["code"] == "help":
-            root_perm = perm
-        elif item["code"] == "help:manual:menu":
-            manual_perm = perm
-            if root_perm:
-                perm.parent_id = root_perm.id
-        elif manual_perm:
-            perm.parent_id = manual_perm.id
-
-        ensured_perms.append(perm)
-
-    await db.flush()
-
-    roles_result = await db.execute(
-        select(SysRole).where(SysRole.is_deleted == False)  # noqa: E712
-    )
-    roles = list(roles_result.scalars().all())
-    for role in roles:
-        for perm in ensured_perms:
-            exists = await db.execute(
-                select(SysRolePermission).where(
-                    SysRolePermission.role_id == role.id,
-                    SysRolePermission.permission_id == perm.id,
-                )
-            )
-            if exists.scalar_one_or_none():
-                continue
-            db.add(SysRolePermission(role_id=role.id, permission_id=perm.id))
 
 
 async def init_dicts(db) -> None:

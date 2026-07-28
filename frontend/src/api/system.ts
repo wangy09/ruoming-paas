@@ -28,7 +28,15 @@ export interface DeptCreate {
   remark?: string
 }
 
+export interface DemoModeInfo {
+  demo_mode: boolean
+}
+
 export const systemApi = {
+  // 演示模式
+  demoMode: () =>
+    get<ApiResponse<DemoModeInfo>>('/api/v1/system/demo-mode'),
+
   // 部门管理
   deptTree: () =>
     get<ApiResponse<DeptInfo[]>>('/api/v1/depts/tree'),

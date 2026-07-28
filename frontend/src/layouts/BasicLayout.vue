@@ -1,99 +1,91 @@
 <template>
-  <div class="basic-layout" :class="layoutClass">
-    <!-- 侧边栏 -->
-    <aside v-if="!appStore.contentMaximized" class="sidebar">
-      <div class="logo">
-        <img :src="appStore.logoUrl" alt="logo" class="logo-img" />
-        <span v-show="!appStore.sidebarCollapsed" class="logo-text">{{ appStore.appTitle }}</span>
+  <div>
+    <div class="basic-layout" :class="layoutClass">
+      <aside v-if="!appStore.contentMaximized" class="sidebar">
+        <div class="logo">
+          <img :src="appStore.logoUrl" alt="logo" class="logo-img" />
+          <span v-show="!appStore.sidebarCollapsed" class="logo-text">{{ appStore.appTitle }}</span>
+        </div>
+        <SidebarMenu />
+      </aside>
+
+      <div class="main-wrapper">
+        <header v-if="!appStore.contentMaximized" class="header">
+          <div class="header-left">
+            <el-icon class="collapse-btn" @click="appStore.toggleSidebar()">
+              <component :is="appStore.sidebarCollapsed ? 'Expand' : 'Fold'" />
+            </el-icon>
+            <el-breadcrumb v-if="appStore.layoutSettings.showBreadcrumb" separator="/">
+              <el-breadcrumb-item v-for="item in breadcrumbs" :key="item.path" :to="item.path">
+                {{ item.title }}
+              </el-breadcrumb-item>
+            </el-breadcrumb>
+          </div>
+          <div class="header-right">
+            <ErrorLogDrawer />
+            <MessageBell />
+            <el-tooltip :content="appStore.browserFullscreen ? '退出全屏' : '浏览器全屏'">
+              <el-icon class="header-icon" @click="handleBrowserFullscreen">
+                <FullScreen />
+              </el-icon>
+            </el-tooltip>
+            <el-tooltip :content="appStore.isDark ? '切换亮色' : '切换暗色'">
+              <el-icon class="header-icon" @click="appStore.toggleDark()">
+                <component :is="appStore.isDark ? 'Sunny' : 'Moon'" />
+              </el-icon>
+            </el-tooltip>
+            <el-tooltip content="布局设置">
+              <el-icon class="header-icon" @click="settingDrawerVisible = true">
+                <Setting />
+              </el-icon>
+            </el-tooltip>
+            <el-dropdown trigger="click" @command="handleUserCommand">
+              <div class="user-avatar">
+                <el-avatar :size="32" :src="authStore.userInfo?.avatar">
+                  {{ authStore.userInfo?.nickname?.charAt(0) || authStore.userInfo?.username?.charAt(0) }}
+                </el-avatar>
+                <span class="username">{{ authStore.userInfo?.nickname || authStore.userInfo?.username }}</span>
+                <el-icon><ArrowDown /></el-icon>
+              </div>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="profile">个人设置</el-dropdown-item>
+                  <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </header>
+
+        <TabsBar v-if="!appStore.contentMaximized && appStore.layoutSettings.showTabsBar" />
+
+        <main class="content">
+          <el-button
+            v-if="appStore.contentMaximized"
+            class="exit-maximize-btn"
+            type="primary"
+            :icon="FullScreen"
+            @click="appStore.setContentMaximized(false)"
+          >
+            退出最大化
+          </el-button>
+          <router-view v-slot="{ Component, route }">
+            <keep-alive :include="appStore.cachedViews">
+              <component :is="Component" :key="route.path" />
+            </keep-alive>
+          </router-view>
+        </main>
       </div>
-      <SidebarMenu />
-    </aside>
 
-    <!-- 主内容区 -->
-    <div class="main-wrapper">
-      <!-- 顶部 Header -->
-      <header v-if="!appStore.contentMaximized" class="header">
-        <div class="header-left">
-          <el-icon class="collapse-btn" @click="appStore.toggleSidebar()">
-            <component :is="appStore.sidebarCollapsed ? 'Expand' : 'Fold'" />
-          </el-icon>
-          <!-- 面包屑 -->
-          <el-breadcrumb v-if="appStore.layoutSettings.showBreadcrumb" separator="/">
-            <el-breadcrumb-item v-for="item in breadcrumbs" :key="item.path" :to="item.path">
-              {{ item.title }}
-            </el-breadcrumb-item>
-          </el-breadcrumb>
-        </div>
-        <div class="header-right">
-          <!-- 接口错误记录 -->
-          <ErrorLogDrawer />
-
-          <!-- 新消息提醒 -->
-          <MessageBell />
-
-          <!-- 浏览器全屏 -->
-          <el-tooltip :content="appStore.browserFullscreen ? '退出全屏' : '浏览器全屏'">
-            <el-icon class="header-icon" @click="handleBrowserFullscreen">
-              <FullScreen />
-            </el-icon>
-          </el-tooltip>
-
-          <!-- 暗色模式 -->
-          <el-tooltip :content="appStore.isDark ? '切换亮色' : '切换暗色'">
-            <el-icon class="header-icon" @click="appStore.toggleDark()">
-              <component :is="appStore.isDark ? 'Sunny' : 'Moon'" />
-            </el-icon>
-          </el-tooltip>
-
-          <!-- 布局设置 -->
-          <el-tooltip content="布局设置">
-            <el-icon class="header-icon" @click="settingDrawerVisible = true">
-              <Setting />
-            </el-icon>
-          </el-tooltip>
-
-          <!-- 用户头像 -->
-          <el-dropdown trigger="click" @command="handleUserCommand">
-            <div class="user-avatar">
-              <el-avatar :size="32" :src="authStore.userInfo?.avatar">
-                {{ authStore.userInfo?.nickname?.charAt(0) || authStore.userInfo?.username?.charAt(0) }}
-              </el-avatar>
-              <span class="username">{{ authStore.userInfo?.nickname || authStore.userInfo?.username }}</span>
-              <el-icon><ArrowDown /></el-icon>
-            </div>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="profile">个人设置</el-dropdown-item>
-                <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </header>
-
-      <!-- 标签页 -->
-      <TabsBar v-if="!appStore.contentMaximized && appStore.layoutSettings.showTabsBar" />
-
-      <!-- 路由视图 -->
-      <main class="content">
-        <el-button
-          v-if="appStore.contentMaximized"
-          class="exit-maximize-btn"
-          type="primary"
-          :icon="FullScreen"
-          @click="appStore.setContentMaximized(false)"
-        >
-          退出最大化
-        </el-button>
-        <router-view v-slot="{ Component, route }">
-          <keep-alive :include="appStore.cachedViews">
-            <component :is="Component" :key="route.path" />
-          </keep-alive>
-        </router-view>
-      </main>
+      <LayoutSettingsDrawer v-model="settingDrawerVisible" />
     </div>
 
-    <LayoutSettingsDrawer v-model="settingDrawerVisible" />
+    <div v-if="appStore.isDemoMode" class="demo-badge">
+      <span class="demo-icon">
+        <el-icon :size="10" :icon="Flag" />
+      </span>
+      演示模式
+    </div>
   </div>
 </template>
 
@@ -101,7 +93,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, FullScreen, Setting } from '@element-plus/icons-vue'
+import { ArrowDown, Flag, FullScreen, Setting } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/store/auth'
 import { useAppStore } from '@/store/app'
 import { usePermissionStore } from '@/store/permission'
@@ -135,7 +127,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
 })
 
-// 面包屑
 const breadcrumbs = computed(() => {
   return route.matched
     .filter(r => r.meta.title)
@@ -158,7 +149,6 @@ async function handleBrowserFullscreen() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  // 内容区最大化后隐藏 Header/TabsBar，按 Esc 可快速退出最大化
   if (event.key === 'Escape' && appStore.contentMaximized) {
     appStore.setContentMaximized(false)
   }
@@ -196,7 +186,6 @@ async function handleUserCommand(cmd: string) {
   }
 }
 
-// ── 侧边栏 ────────────────────────────────────────────────────────────────────
 .sidebar {
   width: $sidebar-width;
   flex-shrink: 0;
@@ -231,7 +220,6 @@ async function handleUserCommand(cmd: string) {
   width: $sidebar-collapsed-width;
 }
 
-// ── 主内容区 ──────────────────────────────────────────────────────────────────
 .main-wrapper {
   flex: 1;
   display: flex;

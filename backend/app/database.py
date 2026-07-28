@@ -116,6 +116,7 @@ def _import_models_for_metadata() -> None:
         AiKnowledgeBase, AiKnowledgeBaseShare, AiKnowledgeDoc,
         AiKnowledgeChunk, AiKnowledgeUploadPart, AiKnowledgeTask,
     )
+    from app.modules.codegen.models import GenTable, GenTableColumn  # noqa: F401
 
 
 # ── 依赖注入：写 Session（INSERT / UPDATE / DELETE） ────────────────────────

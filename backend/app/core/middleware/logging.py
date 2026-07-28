@@ -163,7 +163,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "http_request",
                 method=method,
                 path=path,
-                query=str(request.url.query) or None,
+                query=request.url.query or None,
                 status_code=status_code,
                 elapsed_ms=elapsed_ms,
                 client_ip=request_ip,

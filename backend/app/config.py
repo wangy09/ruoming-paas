@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "RuoMing PaaS"
     APP_VERSION: str = "2.0.0"
     DEBUG: bool = False
+    DEMO_MODE: bool = True
 
     # ── 数据库（必填，启动 Fail-Fast）────────────────────────────────
     DATABASE_URL: str  # postgresql+asyncpg://user:pwd@host:5432/dbname

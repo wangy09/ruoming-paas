@@ -1,4 +1,4 @@
-import { get } from '@/utils/request'
+import { del, get } from '@/utils/request'
 import type { ApiResponse, PageData, LoginLog, AuditLog } from '@/types'
 
 export const auditApi = {
@@ -27,4 +27,13 @@ export const auditApi = {
     start_time?: string
     end_time?: string
   }) => get<ApiResponse<PageData<AuditLog>>>('/api/v1/audit/logs', params),
+
+  /**
+   * 清除操作日志
+   * @param params 清除参数
+   */
+  clearLogs: (params: {
+    start_time?: string
+    end_time?: string
+  }) => del<ApiResponse<{ deleted_count: number }>>('/api/v1/audit/logs', { params }),
 }

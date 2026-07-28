@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useDark, useToggle } from '@vueuse/core'
 import { configApi } from '@/api/config'
+import { systemApi } from '@/api/system'
 import type { ConfigInfo } from '@/types'
 
 const DEFAULT_APP_TITLE = '若茗PaaS'
@@ -134,6 +135,17 @@ export const useAppStore = defineStore('app', () => {
   const visitedViews = ref<VisitedView[]>(loadVisitedViews())
 
   const locale = ref<'zh-CN' | 'en-US'>('zh-CN')
+
+  const isDemoMode = ref(false)
+
+  async function loadDemoMode() {
+    try {
+      const res = await systemApi.demoMode()
+      isDemoMode.value = res.data?.demo_mode || false
+    } catch {
+      isDemoMode.value = false
+    }
+  }
 
   function toggleSidebar() {
     sidebarCollapsed.value = !sidebarCollapsed.value
@@ -389,5 +401,7 @@ export const useAppStore = defineStore('app', () => {
     closeLeftViews,
     closeRightViews,
     locale,
+  isDemoMode,
+  loadDemoMode,
   }
 })

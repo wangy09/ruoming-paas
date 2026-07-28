@@ -51,11 +51,13 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # 复制应用代码
 COPY . .
 
-# 创建上传目录
+# 创建上传目录和日志目录
 RUN mkdir -p uploads logs
 
 # 非 root 用户运行（安全）
-RUN useradd -m -u 1000 ruoming && chown -R ruoming:ruoming /app
+RUN useradd -m -u 1000 ruoming \
+    && chown -R ruoming:ruoming /app \
+    && chmod -R 755 /app/logs
 USER ruoming
 
 # 健康检查

@@ -70,7 +70,7 @@
       </el-form>
 
       <div class="login-footer">
-        <span>默认账号：admin / ruoming@2024</span>
+        <span>默认账号：admin / ruoming@2026</span>
       </div>
     </div>
   </div>

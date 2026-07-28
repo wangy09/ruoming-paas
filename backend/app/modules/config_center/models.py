@@ -79,3 +79,29 @@ class SysConfig(BaseModel):
     is_public: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", comment="是否对前端可见（安全下发）"
     )
+
+
+class SysConfigHistory(BaseModel):
+    """
+    配置变更历史表
+
+    记录每次配置项变更的旧值、新值及操作人，用于审计和回滚。
+    """
+
+    __tablename__ = "sys_config_history"
+
+    config_key: Mapped[str] = mapped_column(
+        String(256), nullable=False, index=True, comment="配置键"
+    )
+    scope_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="层级：global/tenant/app/user"
+    )
+    scope_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, comment="层级 ID（tenant_id / user_id 等）"
+    )
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True, comment="变更前的值")
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True, comment="变更后的值")
+    changed_by: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, comment="操作人用户 ID"
+    )
+    remark: Mapped[str | None] = mapped_column(Text, nullable=True, comment="备注")

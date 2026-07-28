@@ -241,3 +241,49 @@ html.dark {
 .status-active   { --el-tag-bg-color: #f0faf0; --el-tag-border-color: #b7eb8f; --el-tag-text-color: #52c41a; }
 .status-inactive { --el-tag-bg-color: #fafafa; --el-tag-border-color: #d9d9d9; --el-tag-text-color: #909399; }
 .status-suspended{ --el-tag-bg-color: #fff2f0; --el-tag-border-color: #ffa39e; --el-tag-text-color: #ff4d4f; }
+
+// ── 演示模式样式 ──────────────────────────────────────────────────────────────
+.demo-badge {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 20px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(8px);
+  transition: opacity 0.3s ease;
+
+  .demo-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: 50%;
+    color: #ef4444;
+    font-size: 10px;
+  }
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.demo-disabled {
+  cursor: not-allowed !important;
+  opacity: 0.5 !important;
+
+  &:hover {
+    cursor: not-allowed !important;
+  }
+}

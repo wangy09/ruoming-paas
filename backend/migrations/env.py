@@ -48,27 +48,39 @@ from app.config import settings
 from app.database import Base
 
 # ── 导入所有模型（Alembic autogenerate 需要）────────────────────────────────
-# 按需添加新模块的模型，确保 autogenerate 能感知所有表变更
+# 新增模块时，在此处补充导入，确保 autogenerate 能感知所有表变更
+
+# 系统核心模块
 from app.modules.user.models import SysUser, SysApiKey  # noqa: F401
 from app.modules.tenant.models import SysTenant, SysTenantUsage  # noqa: F401
 from app.modules.permission.models import (  # noqa: F401
     SysRole, SysPermission, SysColumnPermission,
     SysUserRole, SysRolePermission, SysUserPermission, SysRoleDept,
 )
-from app.modules.organization.models import SysDept  # noqa: F401
+from app.modules.system.models import SysDept, SysDictType, SysDictItem, SysInitVersion  # noqa: F401
 from app.modules.audit.models import SysAuditLog, SysLoginLog, SysSecurityEvent  # noqa: F401
-from app.modules.config_center.models import SysConfig  # noqa: F401
-from app.modules.integration.models import SysIntegrationConnection  # noqa: F401
+from app.modules.config_center.models import SysConfig, SysConfigHistory  # noqa: F401
+from app.modules.codegen.models import GenTable, GenTableColumn  # noqa: F401
+from app.modules.customer_order3.models import CustomerOrder3  # noqa: F401
+from app.modules.monitor.models import SysScheduledTask, SysTaskExecutionLog  # noqa: F401
+from app.modules.message.models import SysNotice, SysUserMessage  # noqa: F401
+from app.modules.file_center.models import SysFile  # noqa: F401
+from app.modules.integration.models import (  # noqa: F401
+    SysIntegrationConnection, SysExternalIdentity, SysContactSyncLog,
+)
 
-# M4 AI 模型（Alembic autogenerate 需要导入所有 ORM 模型）
+# AI 模块
 from app.ai.llm.models import AiModelConfig  # noqa: F401
-from app.ai.conversation.models import AiConversation, AiMessage, AiCallLog  # noqa: F401
+from app.ai.conversation.models import (  # noqa: F401
+    AiConversation, AiMessage, AiEntityMemory, AiKeyValueMemory, AiCallLog,
+)
 from app.ai.agent.models import (  # noqa: F401
     AiAgent, AiSceneConfig,
     AiWorkflow, AiWorkflowVersion, AiWorkflowRun, AiWorkflowNodeRun,
 )
 from app.ai.knowledge.models import (  # noqa: F401
     AiKnowledgeBase, AiKnowledgeBaseShare, AiKnowledgeDoc, AiKnowledgeChunk,
+    AiKnowledgeUploadPart, AiKnowledgeTask,
 )
 from app.ai.prompt.models import AiPromptTemplate, AiPromptVersion  # noqa: F401
 from app.ai.tool.models import AiTool  # noqa: F401

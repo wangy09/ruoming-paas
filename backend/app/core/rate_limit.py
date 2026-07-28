@@ -54,6 +54,11 @@ def get_tenant_key(request: Request) -> str:
 
 def custom_rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     """自定义限流响应格式"""
+    retry_after = getattr(exc, "retry_after", None)
+    headers = {}
+    if retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+
     return JSONResponse(
         status_code=429,
         content={
@@ -61,7 +66,7 @@ def custom_rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONR
             "message": f"请求过于频繁，请稍后再试。限制：{exc.detail}",
             "data": None,
         },
-        headers={"Retry-After": str(exc.retry_after)},
+        headers=headers,
     )
 
 
