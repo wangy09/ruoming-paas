@@ -264,7 +264,7 @@ class AuthService:
                 jti = payload["jti"]
                 await self.redis.delete(RedisKeys.REFRESH_TOKEN.format(jti=jti))
             except Exception:
-                pass  # Token 已过期或无效，忽略
+                logger.debug("logout_refresh_token_invalid", message="Token 已过期或无效，忽略")
         else:
             await self._revoke_all_user_tokens(user_id)
 

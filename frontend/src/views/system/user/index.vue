@@ -185,32 +185,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { userApi } from '@/api/user'
-import { integrationApi } from '@/api/integration'
-import { taskApi } from '@/api/monitor'
 import { permissionApi } from '@/api/permission'
 import { systemApi } from '@/api/system'
 import { formatDate } from '@/utils/format'
 import type {
-  ContactSyncCheckResult,
-  ContactSyncLogItem,
-  ContactSyncPreviewResult,
-  ContactSyncRequest,
-  ContactSyncResult,
-  ContactSyncStrategy,
-  IntegrationConnection,
   UserListItem,
   RoleInfo,
   DeptInfo,
+  UserFormData,
+  UserUpdate,
+  UserCreate,
 } from '@/types'
 import FormDialog from './components/FormDialog.vue'
 import RoleDialog from './components/RoleDialog.vue'
 import SyncDialog from './components/SyncDialog.vue'
 import SyncLogDetailDialog from './components/SyncLogDetailDialog.vue'
+import { useContactSync } from './composables/useContactSync'
 
 // ── 列表 ──────────────────────────────────────────────────────────────────────
 const loading = ref(false)
@@ -219,19 +213,6 @@ const total = ref(0)
 const switchLoadingId = ref<number | null>(null)
 
 type SourceTagType = 'primary' | 'success' | 'info' | 'warning' | 'danger'
-type UsernameStrategy = 'email_prefix' | 'phone' | 'name' | 'external_id'
-type NicknameStrategy = 'name' | 'nickname' | 'username'
-type FieldUpdateMode = 'never' | 'if_empty' | 'always'
-
-interface ScheduledTaskItem {
-  id: number
-  name: string
-  func_name: string
-  kwargs?: Record<string, unknown> | null
-}
-
-const CONTACT_SYNC_TASK_FUNC = 'app.modules.integration.tasks.sync_contact_connection'
-const router = useRouter()
 
 interface SourceProviderMeta {
   label: string
@@ -322,11 +303,27 @@ async function handleDelete(row: UserListItem) {
   fetchList()
 }
 
+function generateRandomPassword(length = 16): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%^&*'
+  const array = new Uint32Array(length)
+  crypto.getRandomValues(array)
+  return Array.from(array, (n) => chars[n % chars.length]).join('')
+}
+
 async function handleResetPwd(row: UserListItem) {
-  const newPwd = 'ruoming@2024'
-  await ElMessageBox.confirm(`重置用户「${row.username}」密码为 ${newPwd}？`, '确认', { type: 'warning' })
+  const newPwd = generateRandomPassword(16)
+  await ElMessageBox.confirm(
+    `即将重置用户「${row.username}」的密码，新密码将在重置后展示，请妥善保管。`,
+    '确认重置密码',
+    { type: 'warning' },
+  )
   await userApi.resetPassword(row.id, newPwd)
-  ElMessage.success('密码已重置')
+  await ElMessageBox.alert(
+    `用户「${row.username}」密码已重置：\n\n${newPwd}\n\n请将此密码安全地告知用户，并要求其首次登录后立即修改。`,
+    '密码已重置',
+    { confirmButtonText: '我已保存', dangerouslyUseHTMLString: false },
+  )
+  fetchList()
 }
 
 // ── 部门选项 ──────────────────────────────────────────────────────────────────
@@ -350,12 +347,26 @@ function openDialog(row?: UserListItem) {
   dialogVisible.value = true
 }
 
-async function handleFormSubmit(form: Record<string, unknown>) {
+async function handleFormSubmit(form: UserFormData) {
   if (editRow.value?.id) {
-    await userApi.update(editRow.value.id, { nickname: form.nickname, email: form.email, phone: form.phone, dept_id: form.dept_id })
+    const payload: UserUpdate = {
+      nickname: form.nickname || undefined,
+      email: form.email || undefined,
+      phone: form.phone || undefined,
+      dept_id: form.dept_id,
+    }
+    await userApi.update(editRow.value.id, payload)
     ElMessage.success('更新成功')
   } else {
-    await userApi.create(form as any)
+    const payload: UserCreate = {
+      username: form.username,
+      password: form.password,
+      nickname: form.nickname || undefined,
+      email: form.email || undefined,
+      phone: form.phone || undefined,
+      dept_id: form.dept_id,
+    }
+    await userApi.create(payload)
     ElMessage.success('创建成功')
   }
   dialogVisible.value = false
@@ -383,482 +394,43 @@ async function handleRoleSubmit(userId: number, roleIds: number[]) {
 }
 
 // ── 外部通讯录同步 ────────────────────────────────────────────────────────────
-const syncDialogVisible = ref(false)
-const syncing = ref(false)
-const checking = ref(false)
-const previewing = ref(false)
-const connectionLoading = ref(false)
-const strategyLoading = ref(false)
-const strategySaving = ref(false)
-const syncTaskCreating = ref(false)
-const connectionOptions = ref<IntegrationConnection[]>([])
-const syncCheckResult = ref<ContactSyncCheckResult | null>(null)
-const syncPreviewResult = ref<ContactSyncPreviewResult | null>(null)
-const syncLogLoading = ref(false)
-const syncLogs = ref<ContactSyncLogItem[]>([])
-const syncLogDetailVisible = ref(false)
-const currentSyncLog = ref<ContactSyncLogItem | null>(null)
-const syncBusy = computed(() => checking.value || previewing.value || syncing.value)
+const {
+  syncDialogVisible,
+  syncing,
+  checking,
+  previewing,
+  connectionLoading,
+  strategyLoading,
+  strategySaving,
+  syncTaskCreating,
+  connectionOptions,
+  syncCheckResult,
+  syncPreviewResult,
+  syncLogLoading,
+  syncLogs,
+  syncLogDetailVisible,
+  currentSyncLog,
+  syncBusy,
+  syncForm,
+  usernameStrategyOptions,
+  nicknameStrategyOptions,
+  fieldUpdateModeOptions,
+  DEFAULT_SYNC_STRATEGY,
+  setCallbacks,
+  openSyncDialog,
+  handleSyncProviderChange,
+  handleSyncConnectionChange,
+  handleReloadSyncStrategy,
+  handleSaveSyncStrategy,
+  handleCreateContactSyncTask,
+  handleCheckSyncContacts,
+  handlePreviewSyncContacts,
+  handleSyncContacts,
+  openSyncLogDetail,
+  clearSyncResults,
+} = useContactSync()
 
-const usernameStrategyOptions: Array<{ label: string; value: UsernameStrategy }> = [
-  { label: '邮箱前缀', value: 'email_prefix' },
-  { label: '手机号', value: 'phone' },
-  { label: '姓名', value: 'name' },
-  { label: '外部ID', value: 'external_id' },
-]
-const nicknameStrategyOptions: Array<{ label: string; value: NicknameStrategy }> = [
-  { label: '姓名', value: 'name' },
-  { label: '昵称', value: 'nickname' },
-  { label: '用户名', value: 'username' },
-]
-const fieldUpdateModeOptions: Array<{ label: string; value: FieldUpdateMode }> = [
-  { label: '不更新', value: 'never' },
-  { label: '仅本地为空时填充', value: 'if_empty' },
-  { label: '外部有值时覆盖', value: 'always' },
-]
-
-const DEFAULT_SYNC_STRATEGY: ContactSyncStrategy = {
-  sync_departments: true,
-  sync_users: true,
-  sync_avatar: true,
-  disable_missing_users: false,
-  username_strategy: ['email_prefix', 'phone', 'name', 'external_id'],
-  nickname_strategy: ['name', 'nickname'],
-  overwrite_email: true,
-  overwrite_phone: false,
-  overwrite_department: true,
-  email_update_mode: 'always',
-  phone_update_mode: 'never',
-  department_update_mode: 'always',
-}
-
-const syncForm = reactive({
-  provider: 'wecom' as 'feishu' | 'wecom' | 'dingtalk',
-  connection_id: undefined as number | undefined,
-  ...DEFAULT_SYNC_STRATEGY,
-})
-
-async function openSyncDialog() {
-  clearSyncResults()
-  syncDialogVisible.value = true
-  await Promise.all([fetchConnectionOptions(), fetchSyncLogs()])
-}
-
-async function handleSyncProviderChange() {
-  syncForm.connection_id = undefined
-  applySyncStrategy(DEFAULT_SYNC_STRATEGY)
-  clearSyncResults()
-  await Promise.all([fetchConnectionOptions(), fetchSyncLogs()])
-}
-
-async function handleSyncConnectionChange() {
-  clearSyncResults()
-  await loadSelectedContactSyncStrategy()
-}
-
-function clearSyncResults() {
-  syncCheckResult.value = null
-  syncPreviewResult.value = null
-}
-
-async function fetchConnectionOptions() {
-  connectionLoading.value = true
-  try {
-    const res = await integrationApi.connections({
-      provider: syncForm.provider,
-      enabled: true,
-    })
-    connectionOptions.value = (res.data || []).filter(item => item.capabilities.includes('contact_sync'))
-    if (!connectionOptions.value.some(item => item.id === syncForm.connection_id)) {
-      syncForm.connection_id = pickDefaultSyncConnection()?.id
-    }
-    await loadSelectedContactSyncStrategy()
-  } finally {
-    connectionLoading.value = false
-  }
-}
-
-async function loadSelectedContactSyncStrategy(showMessage = false) {
-  if (!syncForm.connection_id) {
-    applySyncStrategy(DEFAULT_SYNC_STRATEGY)
-    return
-  }
-  strategyLoading.value = true
-  try {
-    const res = await integrationApi.contactSyncStrategy(syncForm.connection_id)
-    applySyncStrategy(normalizeSyncStrategy(res.data))
-    clearSyncResults()
-    if (showMessage) {
-      ElMessage.success('已恢复连接默认策略')
-    }
-  } finally {
-    strategyLoading.value = false
-  }
-}
-
-async function handleReloadSyncStrategy() {
-  await loadSelectedContactSyncStrategy(true)
-}
-
-async function handleSaveSyncStrategy() {
-  if (!syncForm.connection_id) {
-    ElMessage.warning('请先选择集成连接')
-    return
-  }
-  const strategy = buildSyncStrategy()
-  if (!strategy) {
-    return
-  }
-  strategySaving.value = true
-  try {
-    const res = await integrationApi.saveContactSyncStrategy(syncForm.connection_id, strategy)
-    applySyncStrategy(normalizeSyncStrategy(res.data))
-    clearSyncResults()
-    ElMessage.success('默认策略已保存')
-  } finally {
-    strategySaving.value = false
-  }
-}
-
-async function handleCreateContactSyncTask() {
-  if (!syncForm.connection_id) {
-    ElMessage.warning('请先选择集成连接')
-    return
-  }
-  const strategy = buildSyncStrategy()
-  if (!strategy) {
-    return
-  }
-  const connection = connectionOptions.value.find(item => item.id === syncForm.connection_id)
-  const taskName = `${connection?.name || getSourceProviderLabel(syncForm.provider)} 通讯录每日同步`
-
-  syncTaskCreating.value = true
-  try {
-    const existingTasks = await taskApi.list({
-      page: 1,
-      page_size: 200,
-      func_name: CONTACT_SYNC_TASK_FUNC,
-    })
-    const existingTask = (existingTasks.data.items as ScheduledTaskItem[] | undefined)?.find(
-      item => Number(item.kwargs?.connection_id) === syncForm.connection_id
-    )
-    if (existingTask) {
-      try {
-        await ElMessageBox.confirm(
-          `当前连接已存在通讯录同步计划任务「${existingTask.name}」，是否前往系统计划任务中管理？`,
-          '计划任务已存在',
-          {
-            confirmButtonText: '去计划任务',
-            cancelButtonText: '留在当前页',
-            type: 'warning',
-          }
-        )
-        await router.push('/monitor/task')
-      } catch {
-        // 用户选择留在当前页
-      }
-      return
-    }
-
-    await ElMessageBox.confirm(
-      `将在系统“计划任务”中新增一条停用记录「${taskName}」，任务会复用当前连接保存的默认策略。创建后可在计划任务中修改周期、启停和查看执行日志。`,
-      '创建通讯录同步计划任务',
-      {
-        confirmButtonText: '创建计划任务',
-        cancelButtonText: '取消',
-        type: 'warning',
-      }
-    )
-
-    await integrationApi.saveContactSyncStrategy(syncForm.connection_id, strategy)
-    await taskApi.create({
-      name: taskName,
-      task_type: 'interval',
-      func_name: CONTACT_SYNC_TASK_FUNC,
-      interval_seconds: 86400,
-      is_once: false,
-      status: 0,
-      args: [],
-      kwargs: {
-        connection_id: syncForm.connection_id,
-      },
-      remark: '外部通讯录每日自动同步任务。任务由用户同步弹框创建，可在系统计划任务中统一启停、调整周期和查看执行日志。',
-    })
-    try {
-      await ElMessageBox.confirm(
-        '已在系统计划任务中创建停用记录。是否现在前往计划任务页面确认周期并启用？',
-        '创建成功',
-        {
-          confirmButtonText: '去计划任务',
-          cancelButtonText: '稍后再说',
-          type: 'success',
-        }
-      )
-      await router.push('/monitor/task')
-    } catch {
-      ElMessage.success('已在系统计划任务中创建停用记录，请到计划任务确认后启用')
-    }
-  } catch (error) {
-    if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error('创建计划任务失败')
-    }
-  } finally {
-    syncTaskCreating.value = false
-  }
-}
-
-async function handleSyncContacts() {
-  if (syncBusy.value) {
-    return
-  }
-  const payload = buildSyncPayload()
-  if (!payload) {
-    return
-  }
-  syncing.value = true
-  try {
-    const checkResult = await runSyncCheck(payload, false)
-    if (checkResult.status === 'failed') {
-      ElMessage.error(checkResult.summary || '同步自检失败，请修复后再开始同步')
-      return
-    }
-    if (checkResult.status === 'warning') {
-      const confirmed = await confirmOrCancel(checkResult.summary || '同步自检存在警告，仍要继续同步？', '自检警告')
-      if (!confirmed) {
-        return
-      }
-    }
-    const confirmed = await confirmOrCancel(`同步会创建或更新${getSyncContentLabel()}，确认开始？`, '确认同步')
-    if (!confirmed) {
-      return
-    }
-    const res = await userApi.syncContacts(payload)
-    const data = res.data
-    ElMessage.success(
-      `同步完成：部门新增 ${data.departments_created}、更新 ${data.departments_updated}；用户新增 ${data.users_created}、更新 ${data.users_updated}`
-    )
-    if (data.errors?.length) {
-      ElMessage.warning(`同步完成但有 ${data.errors.length} 条提示，请查看接口返回详情`)
-    }
-    fetchSyncLogs()
-    syncDialogVisible.value = false
-    fetchDeptOptions()
-    fetchList()
-  } finally {
-    syncing.value = false
-  }
-}
-
-async function confirmOrCancel(message: string, title: string) {
-  try {
-    await ElMessageBox.confirm(message, title, {
-      type: 'warning',
-    })
-    return true
-  } catch (error) {
-    if (error === 'cancel' || error === 'close') {
-      return false
-    }
-    throw error
-  }
-}
-
-async function handleCheckSyncContacts() {
-  if (syncBusy.value) {
-    return
-  }
-  const payload = buildSyncPayload()
-  if (!payload) {
-    return
-  }
-  await runSyncCheck(payload)
-}
-
-async function runSyncCheck(payload: ContactSyncRequest, showMessage = true) {
-  checking.value = true
-  try {
-    const res = await userApi.checkSyncContacts(payload)
-    syncCheckResult.value = res.data
-    if (showMessage) {
-      ElMessage.success('自检完成')
-    }
-    return res.data
-  } finally {
-    checking.value = false
-  }
-}
-
-async function handlePreviewSyncContacts() {
-  const payload = buildSyncPayload()
-  if (!payload) {
-    return
-  }
-  previewing.value = true
-  try {
-    const res = await userApi.previewSyncContacts(payload)
-    syncPreviewResult.value = res.data
-    fetchSyncLogs()
-    ElMessage.success('预览完成')
-  } finally {
-    previewing.value = false
-  }
-}
-
-function buildSyncPayload(): ContactSyncRequest | null {
-  if (!syncForm.connection_id) {
-    ElMessage.warning('请选择已启用通讯录同步的集成连接')
-    return null
-  }
-  const strategy = buildSyncStrategy()
-  if (!strategy) {
-    return null
-  }
-  return {
-    provider: syncForm.provider,
-    connection_id: syncForm.connection_id,
-    ...strategy,
-  }
-}
-
-function buildSyncStrategy(): ContactSyncStrategy | null {
-  if (!syncForm.sync_departments && !syncForm.sync_users) {
-    ElMessage.warning('请至少选择一个同步内容')
-    return null
-  }
-  if (syncForm.sync_users && !syncForm.username_strategy.length) {
-    ElMessage.warning('请至少选择一个用户名优先级')
-    return null
-  }
-  if (syncForm.sync_users && !syncForm.nickname_strategy.length) {
-    ElMessage.warning('请至少选择一个昵称优先级')
-    return null
-  }
-  return {
-    sync_departments: syncForm.sync_departments,
-    sync_users: syncForm.sync_users,
-    sync_avatar: syncForm.sync_avatar,
-    disable_missing_users: syncForm.disable_missing_users,
-    username_strategy: [...syncForm.username_strategy],
-    nickname_strategy: [...syncForm.nickname_strategy],
-    overwrite_email: syncForm.email_update_mode === 'always',
-    overwrite_phone: syncForm.phone_update_mode === 'always',
-    overwrite_department: syncForm.department_update_mode === 'always',
-    email_update_mode: syncForm.email_update_mode,
-    phone_update_mode: syncForm.phone_update_mode,
-    department_update_mode: syncForm.department_update_mode,
-  }
-}
-
-function normalizeSyncStrategy(strategy: Partial<ContactSyncStrategy> | null | undefined): ContactSyncStrategy {
-  const usernameStrategy = Array.isArray(strategy?.username_strategy)
-    ? strategy.username_strategy.filter(isUsernameStrategy)
-    : []
-  const nicknameStrategy = Array.isArray(strategy?.nickname_strategy)
-    ? strategy.nickname_strategy.filter(isNicknameStrategy)
-    : []
-  const emailUpdateMode = normalizeFieldUpdateMode(
-    strategy?.email_update_mode,
-    strategy?.overwrite_email,
-    DEFAULT_SYNC_STRATEGY.email_update_mode
-  )
-  const phoneUpdateMode = normalizeFieldUpdateMode(
-    strategy?.phone_update_mode,
-    strategy?.overwrite_phone,
-    DEFAULT_SYNC_STRATEGY.phone_update_mode
-  )
-  const departmentUpdateMode = normalizeFieldUpdateMode(
-    strategy?.department_update_mode,
-    strategy?.overwrite_department,
-    DEFAULT_SYNC_STRATEGY.department_update_mode
-  )
-
-  return {
-    sync_departments: typeof strategy?.sync_departments === 'boolean' ? strategy.sync_departments : DEFAULT_SYNC_STRATEGY.sync_departments,
-    sync_users: typeof strategy?.sync_users === 'boolean' ? strategy.sync_users : DEFAULT_SYNC_STRATEGY.sync_users,
-    sync_avatar: typeof strategy?.sync_avatar === 'boolean' ? strategy.sync_avatar : DEFAULT_SYNC_STRATEGY.sync_avatar,
-    disable_missing_users: typeof strategy?.disable_missing_users === 'boolean' ? strategy.disable_missing_users : DEFAULT_SYNC_STRATEGY.disable_missing_users,
-    username_strategy: usernameStrategy.length ? usernameStrategy : [...DEFAULT_SYNC_STRATEGY.username_strategy],
-    nickname_strategy: nicknameStrategy.length ? nicknameStrategy : [...DEFAULT_SYNC_STRATEGY.nickname_strategy],
-    overwrite_email: emailUpdateMode === 'always',
-    overwrite_phone: phoneUpdateMode === 'always',
-    overwrite_department: departmentUpdateMode === 'always',
-    email_update_mode: emailUpdateMode,
-    phone_update_mode: phoneUpdateMode,
-    department_update_mode: departmentUpdateMode,
-  }
-}
-
-function applySyncStrategy(strategy: ContactSyncStrategy) {
-  syncForm.sync_departments = strategy.sync_departments
-  syncForm.sync_users = strategy.sync_users
-  syncForm.sync_avatar = strategy.sync_avatar
-  syncForm.disable_missing_users = strategy.disable_missing_users
-  syncForm.username_strategy = [...strategy.username_strategy] as UsernameStrategy[]
-  syncForm.nickname_strategy = [...strategy.nickname_strategy] as NicknameStrategy[]
-  syncForm.overwrite_email = strategy.overwrite_email
-  syncForm.overwrite_phone = strategy.overwrite_phone
-  syncForm.overwrite_department = strategy.overwrite_department
-  syncForm.email_update_mode = strategy.email_update_mode
-  syncForm.phone_update_mode = strategy.phone_update_mode
-  syncForm.department_update_mode = strategy.department_update_mode
-}
-
-function isUsernameStrategy(value: unknown): value is UsernameStrategy {
-  return usernameStrategyOptions.some(item => item.value === value)
-}
-
-function isNicknameStrategy(value: unknown): value is NicknameStrategy {
-  return nicknameStrategyOptions.some(item => item.value === value)
-}
-
-function isFieldUpdateMode(value: unknown): value is FieldUpdateMode {
-  return fieldUpdateModeOptions.some(item => item.value === value)
-}
-
-function normalizeFieldUpdateMode(
-  mode: unknown,
-  legacyOverwrite: unknown,
-  defaultMode: FieldUpdateMode
-): FieldUpdateMode {
-  if (isFieldUpdateMode(mode)) {
-    return mode
-  }
-  if (typeof legacyOverwrite === 'boolean') {
-    return legacyOverwrite ? 'always' : 'never'
-  }
-  return defaultMode
-}
-
-function pickDefaultSyncConnection() {
-  return connectionOptions.value.find((item: IntegrationConnection) => item.is_default) || connectionOptions.value[0]
-}
-
-function getSyncContentLabel() {
-  const items = [
-    syncForm.sync_departments ? '部门' : '',
-    syncForm.sync_users ? '用户资料' : '',
-    syncForm.sync_avatar ? '头像' : '',
-  ].filter(Boolean)
-  return items.length ? items.join('、') : '选中的内容'
-}
-
-async function fetchSyncLogs() {
-  syncLogLoading.value = true
-  try {
-    const res = await userApi.contactSyncLogs({
-      provider: syncForm.provider,
-      limit: 5,
-    })
-    syncLogs.value = res.data || []
-  } finally {
-    syncLogLoading.value = false
-  }
-}
-
-function openSyncLogDetail(row: ContactSyncLogItem) {
-  currentSyncLog.value = row
-  syncLogDetailVisible.value = true
-}
+setCallbacks(fetchList, fetchDeptOptions)
 
 onMounted(() => {
   fetchList()

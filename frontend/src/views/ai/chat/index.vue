@@ -155,6 +155,7 @@ import { List, Message, Plus, MoreFilled, MagicStick, Refresh, Setting, Box, Col
 import MarkdownIt from 'markdown-it'
 import { agentApi, conversationApi } from '@/api/ai'
 import { formatDate, fromNow } from '@/utils/format'
+import { tokenStorage } from '@/utils/token'
 import type { AgentInfo, Conversation, ChatMessage } from '@/types'
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -261,7 +262,7 @@ async function sendMessage() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+        'Authorization': `Bearer ${tokenStorage.getAccessToken()}`,
       },
       body: JSON.stringify({
         message: msg,

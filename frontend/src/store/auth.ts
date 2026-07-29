@@ -1,12 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
+import { tokenStorage } from '@/utils/token'
 import type { UserInfo, LoginRequest } from '@/types'
 
 export const useAuthStore = defineStore('auth', () => {
-  const accessToken = ref(localStorage.getItem('access_token') || '')
-  const refreshTokenVal = ref(localStorage.getItem('refresh_token') || '')
-  const tenantCode = ref(localStorage.getItem('tenant_code') || '')
+  const accessToken = ref(tokenStorage.getAccessToken())
+  const refreshTokenVal = ref(tokenStorage.getRefreshToken())
+  const tenantCode = ref(tokenStorage.getTenantCode())
   const userInfo = ref<UserInfo | null>(null)
 
   const isLoggedIn = computed(() => !!accessToken.value)
@@ -30,9 +31,9 @@ export const useAuthStore = defineStore('auth', () => {
     const tc = data.tenant_code || payload.tenant_code || ''
     tenantCode.value = tc
 
-    localStorage.setItem('access_token', payload.access_token)
-    localStorage.setItem('refresh_token', payload.refresh_token)
-    localStorage.setItem('tenant_code', tc)
+    tokenStorage.setAccessToken(payload.access_token)
+    tokenStorage.setRefreshToken(payload.refresh_token)
+    tokenStorage.setTenantCode(tc)
 
     return payload
   }
@@ -45,9 +46,9 @@ export const useAuthStore = defineStore('auth', () => {
     accessToken.value = access_token
     if (refresh_token) {
       refreshTokenVal.value = refresh_token
-      localStorage.setItem('refresh_token', refresh_token)
+      tokenStorage.setRefreshToken(refresh_token)
     }
-    localStorage.setItem('access_token', access_token)
+    tokenStorage.setAccessToken(access_token)
   }
 
   /** 获取当前用户信息 */
@@ -72,7 +73,7 @@ export const useAuthStore = defineStore('auth', () => {
     refreshTokenVal.value = ''
     tenantCode.value = ''
     userInfo.value = null
-    localStorage.clear()
+    tokenStorage.clearAll()
   }
 
   return {

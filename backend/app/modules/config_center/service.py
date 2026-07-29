@@ -606,7 +606,8 @@ class ConfigCenterService:
             try:
                 from app.core.security import decrypt_value
                 return decrypt_value(row.config_val)
-            except Exception:
+            except Exception as e:
+                logger.warning("config_decrypt_failed", key=row.config_key, error=str(e))
                 return row.config_val or ""
         return row.config_val or ""
 

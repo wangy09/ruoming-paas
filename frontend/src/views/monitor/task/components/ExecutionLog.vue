@@ -96,6 +96,7 @@ import { ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { taskApi } from '@/api/monitor'
+import type { TaskExecutionLogInfo } from '@/types'
 import dayjs from 'dayjs'
 
 const props = defineProps<{
@@ -112,13 +113,13 @@ watch(() => props.modelValue, (v) => { visible.value = v })
 watch(visible, (v) => emit('update:modelValue', v))
 
 const loading = ref(false)
-const logs = ref<any[]>([])
+const logs = ref<TaskExecutionLogInfo[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
 const filterStatus = ref('')
 const detailVisible = ref(false)
-const detailLog = ref<any>(null)
+const detailLog = ref<TaskExecutionLogInfo | null>(null)
 
 watch(() => props.taskId, (id) => {
   if (id != null && visible.value) reload()
@@ -144,7 +145,7 @@ async function reload() {
   }
 }
 
-function showDetail(row: any) {
+function showDetail(row: TaskExecutionLogInfo) {
   detailLog.value = row
   detailVisible.value = true
 }

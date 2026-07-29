@@ -26,6 +26,9 @@ logger = structlog.get_logger(__name__)
 PERM_CACHE_TTL = 30 * 60  # 30 分钟
 
 
+MAX_ROLE_INHERITANCE_DEPTH = 10  # 角色继承最大深度
+
+
 class PermissionService:
     """权限服务"""
 
@@ -129,10 +132,37 @@ class PermissionService:
             keys = [RedisKeys.USER_PERMISSIONS.format(user_id=uid) for uid in user_ids]
             await self.redis.delete(*keys)
 
+    async def invalidate_all_user_permission_caches(self) -> None:
+        """使所有用户的权限缓存失效（权限项变更时调用）"""
+        from app.modules.user.models import SysUser
+
+        result = await self.db.execute(select(SysUser.id).where(SysUser.is_deleted == False))  # noqa: E712
+        user_ids = [row[0] for row in result.all()]
+        if user_ids:
+            keys = [RedisKeys.USER_PERMISSIONS.format(user_id=uid) for uid in user_ids]
+            await self.redis.delete(*keys)
+
     # ── 角色权限计算（含继承）────────────────────────────────────────
 
-    async def get_role_permission_codes(self, role_id: int, tenant_id: int | None = None) -> set[str]:
-        """递归获取角色（含父角色继承链）的全部权限码"""
+    async def get_role_permission_codes(
+        self, role_id: int, tenant_id: int | None = None, _visited: set[int] | None = None
+    ) -> set[str]:
+        """递归获取角色（含父角色继承链）的全部权限码。
+
+        使用 `_visited` 集合做循环检测，`MAX_ROLE_INHERITANCE_DEPTH` 限制最大深度。
+        """
+        if _visited is None:
+            _visited = set()
+
+        if role_id in _visited or len(_visited) >= MAX_ROLE_INHERITANCE_DEPTH:
+            if role_id in _visited:
+                logger.warning("role_inheritance_cycle_detected", role_id=role_id)
+            else:
+                logger.warning("role_inheritance_depth_exceeded", role_id=role_id, depth=len(_visited))
+            return set()
+
+        _visited.add(role_id)
+
         role_result = await self.db.execute(
             select(SysRole).where(
                 SysRole.id == role_id,
@@ -145,16 +175,15 @@ class PermissionService:
 
         codes: set[str] = set()
 
-        # 检查角色租户权限（防止跨租户继承）
         if tenant_id is not None and role.tenant_id is not None and role.tenant_id != tenant_id:
             return set()
 
-        # 先获取父角色权限（递归，防止循环继承最多 10 层）
         if role.parent_id and role.parent_id != 0:
-            parent_codes = await self.get_role_permission_codes(role.parent_id, tenant_id)
+            parent_codes = await self.get_role_permission_codes(
+                role.parent_id, tenant_id, _visited
+            )
             codes.update(parent_codes)
 
-        # 再获取本角色权限（叠加，优先级高于父角色）
         own_codes = await self._get_role_own_permission_codes(role_id)
         codes.update(own_codes)
 

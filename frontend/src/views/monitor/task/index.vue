@@ -100,11 +100,12 @@ import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import { taskApi } from '@/api/monitor'
+import type { ScheduledTaskInfo } from '@/types'
 import TaskForm from './components/TaskForm.vue'
 import ExecutionLog from './components/ExecutionLog.vue'
 
 const loading = ref(false)
-const tasks = ref<any[]>([])
+const tasks = ref<ScheduledTaskInfo[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
@@ -113,7 +114,7 @@ const searchStatus = ref<number | ''>('')
 
 // 表单
 const formVisible = ref(false)
-const editData = ref<any>(null)
+const editData = ref<ScheduledTaskInfo | null>(null)
 
 // 日志
 const logVisible = ref(false)
@@ -142,18 +143,18 @@ function openCreate() {
   formVisible.value = true
 }
 
-function openEdit(row: any) {
+function openEdit(row: ScheduledTaskInfo) {
   editData.value = { ...row }
   formVisible.value = true
 }
 
-function openLog(row: any) {
+function openLog(row: ScheduledTaskInfo) {
   logTaskId.value = row.id
   logTaskName.value = row.name
   logVisible.value = true
 }
 
-async function toggleStatus(row: any, enabled: boolean) {
+async function toggleStatus(row: ScheduledTaskInfo, enabled: boolean) {
   try {
     if (enabled) {
       await taskApi.enable(row.id)
@@ -168,19 +169,20 @@ async function toggleStatus(row: any, enabled: boolean) {
   }
 }
 
-async function runNow(row: any) {
+async function runNow(row: ScheduledTaskInfo) {
   await ElMessageBox.confirm(`确定立即执行「${row.name}」？`, '提示', { type: 'warning' })
   try {
     const res = await taskApi.runNow(row.id)
     const taskId = res.data?.celery_task_id
     ElMessage.success(`已触发执行${taskId ? `，Celery ID: ${taskId}` : ''}`)
     reload()
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '触发失败')
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } }
+    ElMessage.error(err.response?.data?.message || '触发失败')
   }
 }
 
-async function handleDelete(row: any) {
+async function handleDelete(row: ScheduledTaskInfo) {
   await ElMessageBox.confirm(`确定删除任务「${row.name}」？`, '提示', { type: 'warning' })
   try {
     await taskApi.remove(row.id)

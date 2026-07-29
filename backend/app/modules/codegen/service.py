@@ -32,6 +32,9 @@ from app.modules.codegen.schemas import (
     SaveConfigRequest,
     TableInfo,
 )
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 COMMON_FIELDS = {"id", "created_at", "updated_at", "is_deleted", "tenant_id"}
@@ -434,8 +437,8 @@ class CodegenService:
                     try:
                         target.unlink()
                         self._remove_empty_parent(target.parent)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("codegen_file_cleanup_failed", error=str(e))
             elif result.status == "overwritten":
                 pass
 
@@ -444,8 +447,8 @@ class CodegenService:
             if directory.is_dir() and not any(directory.iterdir()):
                 directory.rmdir()
                 self._remove_empty_parent(directory.parent)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("codegen_dir_cleanup_failed", error=str(e))
 
     @staticmethod
     def _resolve_output_path(logical_path: str) -> Path | None:
@@ -818,7 +821,7 @@ class CodegenService:
         }
 
     async def list_configs(self, page: int = 1, page_size: int = 20, keyword: str | None = None) -> dict:
-        from sqlalchemy import func
+        from sqlalchemy import func, text
 
         query = select(GenTable).where(GenTable.is_deleted == False)
         if self.tenant_id is not None:
@@ -839,20 +842,33 @@ class CodegenService:
         tables = await self.db.execute(query)
         tables = tables.scalars().all()
 
-        from sqlalchemy import text
+        if not tables:
+            return {"total": total, "items": []}
+
+        # 批量查询：一次获取所有表格列信息（消除 N+1）
+        table_ids = [t.id for t in tables]
+        columns_query = select(GenTableColumn).where(
+            GenTableColumn.table_id.in_(table_ids),
+            GenTableColumn.is_deleted == False,  # noqa: E712
+        ).order_by(GenTableColumn.table_id, GenTableColumn.sort)
+        all_columns = await self.db.execute(columns_query)
+        all_columns_map: dict[int, list] = {}
+        for col in all_columns.scalars().all():
+            all_columns_map.setdefault(col.table_id, []).append(col)
+
+        # 批量查询：一次获取所有表名的存在性（消除 N+1）
+        table_names = [t.table_name.lower() for t in tables]
+        placeholders = ", ".join([f":t{i}" for i in range(len(table_names))])
+        exists_sql = text(
+            f"SELECT table_name FROM information_schema.tables WHERE table_name IN ({placeholders})"
+        )
+        params = {f"t{i}": name for i, name in enumerate(table_names)}
+        exists_result = await self.db.execute(exists_sql, params)
+        existing_names = {row[0] for row in exists_result.all()}
 
         items = []
         for table in tables:
-            check_table = await self.db.execute(
-                text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :name)"),
-                {"name": table.table_name.lower()}
-            )
-            table_exists = check_table.scalar_one()
-
-            columns = await self.db.execute(
-                select(GenTableColumn).where(GenTableColumn.table_id == table.id, GenTableColumn.is_deleted == False).order_by(GenTableColumn.sort)
-            )
-            columns = columns.scalars().all()
+            columns = all_columns_map.get(table.id, [])
             items.append({
                 "id": table.id,
                 "table_name": table.table_name,
@@ -865,7 +881,7 @@ class CodegenService:
                 "status": table.status,
                 "remark": table.remark,
                 "columns": [self._column_to_dict(col) for col in columns],
-                "table_exists": table_exists,
+                "table_exists": table.table_name.lower() in existing_names,
                 "created_at": table.created_at.isoformat() if table.created_at else None,
                 "updated_at": table.updated_at.isoformat() if table.updated_at else None,
             })

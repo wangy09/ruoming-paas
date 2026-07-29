@@ -12,6 +12,7 @@ export interface PageData<T = unknown> {
   page: number
   page_size: number
   pages: number
+  has_more: boolean
 }
 
 // ── 消息中心 ────────────────────────────────────────────────────────────────────
@@ -342,7 +343,11 @@ export interface LoginResponse {
   refresh_token: string
   token_type: string
   expires_in: number
-  user: UserInfo
+  user_id: number
+  username: string
+  nickname?: string | null
+  is_superplatform: boolean
+  tenant_id?: number | null
 }
 
 export interface UserListItem {
@@ -390,6 +395,15 @@ export interface UserUpdate {
   is_active?: boolean
 }
 
+export interface UserFormData {
+  username: string
+  nickname: string
+  email: string
+  phone: string
+  password: string
+  dept_id: number | undefined
+}
+
 // ── 角色权限 ────────────────────────────────────────────────────────────────────
 export interface RoleInfo {
   id: number
@@ -432,6 +446,66 @@ export interface DeptInfo {
   tenant_id: number | null
   children?: DeptInfo[]
   remark: string | null
+}
+
+export interface DictTypeInfo {
+  id: number
+  name: string
+  code: string
+  description: string | null
+  sort: number
+  status: number
+  is_system: boolean
+  tenant_id: number | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface DictItemInfo {
+  id: number
+  type_id: number
+  label: string
+  value: string
+  description: string | null
+  sort: number
+  status: number
+  is_default: boolean
+  css_class: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface ScheduledTaskInfo {
+  id: number
+  name: string
+  task_type: 'cron' | 'interval'
+  func_name: string
+  cron_expr?: string | null
+  interval_seconds?: number | null
+  is_once: boolean
+  args?: Record<string, unknown> | null
+  kwargs?: Record<string, unknown> | null
+  status: number
+  remark?: string | null
+  last_run_at?: string | null
+  next_run_at?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface TaskExecutionLogInfo {
+  id: number
+  task_id: number
+  task_name: string
+  celery_task_id?: string | null
+  status: 'pending' | 'running' | 'success' | 'failed'
+  started_at?: string | null
+  finished_at?: string | null
+  duration_ms?: number | null
+  result?: Record<string, unknown> | null
+  error_msg?: string | null
+  triggered_by: 'scheduler' | 'manual'
+  created_at?: string
 }
 
 export interface PermissionItem {
@@ -559,13 +633,19 @@ export interface AgentInfo {
 export interface KnowledgeBase {
   id: number
   name: string
-  description?: string
-  embed_model_id?: number
+  description?: string | null
+  embed_model_id?: number | null
+  rerank_model_id?: number | null
+  vector_store?: string
   chunk_size: number
   chunk_overlap: number
-  doc_count: number
-  chunk_count: number
-  status: 'ready' | 'processing' | 'error'
+  retrieval_type?: string
+  top_k?: number
+  score_threshold?: number
+  visibility?: string
+  doc_count?: number
+  chunk_count?: number
+  status: 'ready' | 'processing' | 'error' | number
   created_at: string
 }
 
@@ -573,11 +653,19 @@ export interface KnowledgeDoc {
   id: number
   kb_id: number
   name: string
-  file_type: string
-  file_size: number
-  status: 'pending' | 'processing' | 'indexed' | 'failed'
-  chunk_count: number
-  error_msg?: string
+  file_name?: string | null
+  file_type?: string | null
+  file_ext?: string | null
+  file_size?: number | null
+  source_type?: string | null
+  source_url?: string | null
+  storage_backend?: string | null
+  storage_url?: string | null
+  content_hash?: string | null
+  char_count?: number | null
+  status: 'pending' | 'processing' | 'indexed' | 'failed' | string
+  chunk_count?: number | null
+  error_msg?: string | null
   created_at: string
 }
 
@@ -585,9 +673,12 @@ export interface KnowledgeDoc {
 export interface Conversation {
   id: number
   title?: string
-  agent_id?: number
+  agent_id?: number | null
+  workflow_id?: number | null
+  user_id?: number
   message_count: number
-  last_message_at?: string
+  last_message_at?: string | null
+  last_msg_at?: string | null
   created_at: string
 }
 
@@ -597,6 +688,12 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   token_count?: number
+  tool_calls?: Record<string, unknown> | null
+  tool_results?: Record<string, unknown> | null
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
+  total_tokens?: number | null
+  latency_ms?: number | null
   created_at: string
 }
 
@@ -632,12 +729,14 @@ export interface AuditLog {
 
 export interface LoginLog {
   id: number
+  tenant_id?: number | null
   user_id: number
   username: string
-  ip_address?: string
-  user_agent?: string
-  status: 'success' | 'fail' | 'locked'
-  fail_reason?: string
+  ip_address?: string | null
+  login_ip?: string | null
+  user_agent?: string | null
+  status: 'success' | 'fail' | 'locked' | number
+  fail_reason?: string | null
   created_at: string
 }
 

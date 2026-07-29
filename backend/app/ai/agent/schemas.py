@@ -72,6 +72,14 @@ class AgentInfo(BaseModel):
     tenant_id: int | None
     created_at: datetime
 
+    # 前端需要的扩展字段
+    scene_label: str | None = None
+    model_name: str | None = None
+    tool_count: int | None = None
+    kb_count: int | None = None
+    memory_label: str | None = None
+    node_timeout_sec: int | None = None
+
 
 # ── Agent 执行 ────────────────────────────────────────────────────────────────
 

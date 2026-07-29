@@ -2,6 +2,8 @@
 若茗 PaaS - FastAPI 应用入口
 Author: ruoming
 """
+import asyncio
+import time as time_module
 from contextlib import asynccontextmanager
 
 import structlog
@@ -9,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app.config import settings
 from app.core.error_codes import SysErrCode
@@ -47,7 +50,7 @@ async def lifespan(app: FastAPI):
     # 验证数据库连接
     from app.database import engine, AsyncSessionFactory
     async with engine.connect() as conn:
-        await conn.execute(__import__("sqlalchemy", fromlist=["text"]).text("SELECT 1"))
+        await conn.execute(text("SELECT 1"))
     logger.info("database_connected")
 
     # 启动 LLM 配置变更监听器（多 Worker 缓存失效）
@@ -268,12 +271,131 @@ app.include_router(tool_router, prefix="/api/v1")
 
 
 # ── 健康检查 ──────────────────────────────────────────────────────────────────
-@app.get("/api/health", tags=["系统"], summary="健康检查")
+@app.get("/api/health", tags=["系统"], summary="简单健康检查（Liveness）")
 async def health_check() -> dict:
-    """健康检查接口（无需认证，供 Docker / K8s 探针使用）"""
+    """简单健康检查（无需认证，供 Docker / K8s 探针使用）"""
     return {
         "status": "ok",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "env": settings.APP_ENV,
+        "uptime": _get_uptime(),
     }
+
+
+@app.get("/api/health/detail", tags=["系统"], summary="详细健康检查（Readiness）")
+async def health_check_detail() -> dict:
+    """详细健康检查：数据库、Redis 等依赖组件状态"""
+    start = time_module.time()
+    checks: dict[str, dict] = {}
+    overall_status = "ok"
+
+    # 1. 数据库检查
+    db_status = await _check_database()
+    checks["database"] = db_status
+    if db_status["status"] != "ok":
+        overall_status = "degraded"
+
+    # 2. Redis 检查
+    redis_status = await _check_redis()
+    checks["redis"] = redis_status
+    if redis_status["status"] != "ok":
+        overall_status = "degraded"
+
+    # 3. 磁盘空间检查
+    disk_status = _check_disk_space()
+    checks["disk"] = disk_status
+    if disk_status["status"] == "critical":
+        overall_status = "degraded"
+
+    elapsed_ms = round((time_module.time() - start) * 1000, 2)
+
+    return {
+        "status": overall_status,
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "env": settings.APP_ENV,
+        "uptime": _get_uptime(),
+        "response_time_ms": elapsed_ms,
+        "checks": checks,
+    }
+
+
+async def _check_database() -> dict:
+    """检查数据库连接"""
+    try:
+        from sqlalchemy import text
+        from app.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            result = await session.execute(text("SELECT 1"))
+            result.scalar()
+            return {"status": "ok", "message": "数据库连接正常"}
+    except Exception as e:
+        logger.warning("health_check_db_failed", error=str(e))
+        return {"status": "down", "message": f"数据库连接失败: {str(e)}"}
+
+
+async def _check_redis() -> dict:
+    """检查 Redis 连接"""
+    try:
+        from app.core.redis import get_redis_client
+        redis = await get_redis_client()
+        await redis.ping()
+        info = await redis.info("server")
+        uptime_days = info.get("uptime_in_days", "unknown")
+        return {
+            "status": "ok",
+            "message": "Redis 连接正常",
+            "uptime_days": uptime_days,
+        }
+    except Exception as e:
+        logger.warning("health_check_redis_failed", error=str(e))
+        return {"status": "down", "message": f"Redis 连接失败: {str(e)}"}
+
+
+def _check_disk_space() -> dict:
+    """检查磁盘空间"""
+    import shutil
+
+    try:
+        total, used, free = shutil.disk_usage("/app")
+        free_gb = free / (1024**3)
+        usage_percent = (used / total) * 100
+
+        status = "ok"
+        if usage_percent > 95:
+            status = "critical"
+        elif usage_percent > 85:
+            status = "warning"
+
+        return {
+            "status": status,
+            "message": f"磁盘使用 {usage_percent:.1f}%，剩余 {free_gb:.1f}GB",
+            "usage_percent": round(usage_percent, 1),
+            "free_gb": round(free_gb, 1),
+        }
+    except Exception as e:
+        return {"status": "unknown", "message": f"磁盘检查失败: {str(e)}"}
+
+
+_APP_START_TIME = time_module.time()
+
+
+def _get_uptime() -> str:
+    """获取应用运行时长"""
+    uptime_seconds = int(time_module.time() - _APP_START_TIME)
+    days, remainder = divmod(uptime_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+
+    return " ".join(parts)

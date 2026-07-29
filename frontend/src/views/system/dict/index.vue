@@ -152,8 +152,9 @@ import { ref, computed, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox, ElForm } from 'element-plus'
 import { Plus, Search, Refresh } from '@element-plus/icons-vue'
 import { dictApi } from '@/api/dict'
+import type { DictTypeInfo, DictItemInfo } from '@/types'
 
-const dictTypes = ref<any[]>([])
+const dictTypes = ref<DictTypeInfo[]>([])
 const dialogVisible = ref(false)
 const itemsVisible = ref(false)
 const itemDialogVisible = ref(false)
@@ -161,7 +162,7 @@ const formRef = ref<InstanceType<typeof ElForm>>()
 const itemFormRef = ref<InstanceType<typeof ElForm>>()
 const editId = ref<number | null>(null)
 const currentTypeId = ref<number>(0)
-const dictItems = ref<any[]>([])
+const dictItems = ref<DictItemInfo[]>([])
 const itemFilter = ref('')
 const itemEditId = ref<number | null>(null)
 
@@ -233,7 +234,7 @@ async function loadDictItems(typeId: number) {
   dictItems.value = res.data
 }
 
-function openDictTypeDialog(row?: any) {
+function openDictTypeDialog(row?: DictTypeInfo) {
   formRef.value?.resetFields()
   if (row) {
     editId.value = row.id
@@ -258,20 +259,20 @@ async function submitDictType() {
   await loadDictTypes()
 }
 
-async function deleteDictType(row: any) {
+async function deleteDictType(row: DictTypeInfo) {
   await ElMessageBox.confirm(`确定删除字典类型「${row.name}」？`, '警告', { type: 'warning' })
   await dictApi.deleteDictType(row.id)
   ElMessage.success('删除成功')
   await loadDictTypes()
 }
 
-function viewDictItems(row: any) {
+function viewDictItems(row: DictTypeInfo) {
   currentTypeId.value = row.id
   loadDictItems(row.id)
   itemsVisible.value = true
 }
 
-function openDictItemDialog(row?: any) {
+function openDictItemDialog(row?: DictItemInfo) {
   itemFormRef.value?.resetFields()
   itemForm.value.type_id = currentTypeId.value
   if (row) {
@@ -297,7 +298,7 @@ async function submitDictItem() {
   await loadDictItems(currentTypeId.value)
 }
 
-async function deleteDictItem(row: any) {
+async function deleteDictItem(row: DictItemInfo) {
   await ElMessageBox.confirm(`确定删除字典项「${row.label}」？`, '警告', { type: 'warning' })
   await dictApi.deleteDictItem(row.id)
   ElMessage.success('删除成功')

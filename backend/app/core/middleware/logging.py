@@ -212,8 +212,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     user_id = int(payload.get("sub", 0)) if payload.get("sub") else None
                     username = payload.get("username")
                     tenant_id = payload.get("tid")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("log_token_parse_failed", error=str(e))
 
         event_type = f"{method.lower()}.{path.replace('/', '.').strip('.')}"
         if len(event_type) > 64:

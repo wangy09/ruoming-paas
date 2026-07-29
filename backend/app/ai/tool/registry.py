@@ -171,8 +171,8 @@ async def web_search(query: str, max_results: int = 5) -> str:
             f"[{r.get('title')}]({r.get('url')})\n{r.get('content', '')}"
             for r in results.get("results", [])
         ])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("tool_result_format_failed", error=str(e))
 
     # 降级：返回提示信息
     return f"网络搜索功能需要配置 TAVILY_API_KEY。查询词：{query}"

@@ -31,6 +31,9 @@ from app.core.response import ApiResponse, PageData, created, ok, paged
 from app.core.utils.pagination import PageParams
 from app.database import get_db
 from app.modules.user.models import SysUser
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["AI-Agent管理"])
 
@@ -222,8 +225,8 @@ async def run_agent(
                                 content=full_output or event.get("output", ""),
                             )
                             await save_db.commit()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("agent_sse_save_failed", error=str(e))
                     done_event = {"type": "done", "output": event.get("output", ""), "conversation_id": conv_id}
                     yield f"data: {json.dumps(done_event)}\n\n"
 

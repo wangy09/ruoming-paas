@@ -19,6 +19,9 @@ class ConversationInfo(BaseModel):
     last_msg_at: datetime | None
     created_at: datetime
 
+    # 前端兼容字段
+    last_message_at: datetime | None = None
+
 
 class MessageInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -34,3 +37,6 @@ class MessageInfo(BaseModel):
     total_tokens: int | None
     latency_ms: int | None
     created_at: datetime
+
+    # 前端兼容字段
+    token_count: int | None = None

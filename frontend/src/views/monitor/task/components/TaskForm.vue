@@ -182,6 +182,7 @@ import { ref, computed, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { taskApi } from '@/api/monitor'
+import type { ScheduledTaskInfo } from '@/types'
 
 interface FunctionOption { value: string; label: string }
 type IntervalUnit = 'day' | 'hour' | 'minute' | 'second'
@@ -205,7 +206,7 @@ const weekOptions = [
 
 const props = defineProps<{
   modelValue: boolean
-  editData?: Record<string, any> | null
+  editData?: ScheduledTaskInfo | null
 }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
@@ -359,8 +360,9 @@ async function handleSubmit() {
     }
     visible.value = false
     emit('success')
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '操作失败')
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } }
+    ElMessage.error(err.response?.data?.message || '操作失败')
   } finally {
     submitting.value = false
   }

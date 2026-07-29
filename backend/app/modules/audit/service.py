@@ -6,12 +6,14 @@ Author: ruoming
 import asyncio
 import functools
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.models import SysAuditLog, SysLoginLog, SysSecurityEvent
+from app.modules.audit.repository import AuditRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -19,8 +21,10 @@ logger = structlog.get_logger(__name__)
 class AuditService:
     """审计日志服务（非阻塞写入）"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int | None = None) -> None:
         self.db = db
+        self.tenant_id = tenant_id
+        self.repo = AuditRepository(db, tenant_id)
 
     async def record(
         self,
@@ -186,6 +190,118 @@ class AuditService:
             severity=severity,
             user_id=user_id,
         )
+
+    # ── 查询方法 ────────────────────────────────────────────────────────────────
+
+    async def list_audit_logs(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        username: str | None = None,
+        action: str | None = None,
+        resource_type: str | None = None,
+        status: int | None = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        tenant_id: int | None = None,
+        is_superplatform: bool = False,
+    ) -> tuple[list[dict], int]:
+        """查询审计日志列表"""
+        effective_tenant = None if is_superplatform else (tenant_id or self.tenant_id)
+        repo = AuditRepository(self.db, effective_tenant)
+        logs, total = await repo.list_audit_logs(
+            page=page,
+            page_size=page_size,
+            username=username,
+            action=action,
+            resource_type=resource_type,
+            status=status,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        return [self._format_audit_log(log) for log in logs], total
+
+    async def delete_audit_logs(
+        self,
+        *,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        tenant_id: int | None = None,
+        is_superplatform: bool = False,
+    ) -> int:
+        """删除审计日志"""
+        effective_tenant = None if is_superplatform else (tenant_id or self.tenant_id)
+        repo = AuditRepository(self.db, effective_tenant)
+        return await repo.delete_audit_logs(
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+    async def list_login_logs(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        user_id: int | None = None,
+        tenant_id: int | None = None,
+        is_superplatform: bool = False,
+    ) -> tuple[list[dict], int]:
+        """查询登录日志列表"""
+        effective_tenant = None if is_superplatform else (tenant_id or self.tenant_id)
+        repo = AuditRepository(self.db, effective_tenant)
+        logs, total = await repo.list_login_logs(
+            page=page,
+            page_size=page_size,
+            user_id=user_id,
+        )
+        return [self._format_login_log(log) for log in logs], total
+
+    def _format_audit_log(self, item: SysAuditLog) -> dict:
+        """格式化审计日志为字典"""
+        return {
+            "id": item.id,
+            "tenant_id": item.tenant_id,
+            "user_id": item.user_id,
+            "username": item.username,
+            "module": item.module,
+            "action": item.action,
+            "resource_type": item.resource_type,
+            "resource_id": item.resource_id,
+            "event_type": item.event_type,
+            "status": item.status,
+            "error_msg": item.error_msg,
+            "request_ip": item.request_ip,
+            "user_agent": item.user_agent,
+            "browser": item.browser,
+            "os": item.os,
+            "device": item.device,
+            "trace_id": item.trace_id,
+            "path": item.path,
+            "method": item.method,
+            "status_code": item.status_code,
+            "request_body": item.request_body,
+            "response_body": item.response_body,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        }
+
+    def _format_login_log(self, item: SysLoginLog) -> dict:
+        """格式化登录日志为字典"""
+        return {
+            "id": item.id,
+            "tenant_id": item.tenant_id,
+            "user_id": item.user_id,
+            "username": item.username,
+            "login_type": item.login_type,
+            "status": item.status,
+            "fail_reason": item.fail_reason,
+            "login_ip": item.login_ip,
+            "user_agent": item.user_agent,
+            "device": item.device,
+            "browser": item.browser,
+            "os": item.os,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        }
 
 
 def audit_log(

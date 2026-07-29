@@ -20,6 +20,10 @@ from app.database import get_db
 from app.modules.config_center.service import ConfigCenterService
 from app.modules.permission.models import SysPermission
 from app.modules.permission.service import PermissionService
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 router = APIRouter()
 
 DASHBOARD_PREFERENCES_KEY = "dashboard.preferences"
@@ -195,8 +199,8 @@ async def get_dashboard_stats(
         result = await db.execute(conv_query)
         today_calls = result.scalar() or 0
         today_tokens = today_calls * 500
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("dashboard_stats_calc_failed", error=str(e))
 
     return ok({
         "total_users": total_users,

@@ -214,8 +214,8 @@ class PromptService:
                     data = json.loads(cached)
                     # 构造一个轻量级对象返回
                     return type("PromptVersionCache", (), data)()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("prompt_cache_parse_failed", error=str(e))
 
         if version is None:
             result = await self.db.execute(

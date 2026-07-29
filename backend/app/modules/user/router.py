@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user, require_permissions
 from app.core.redis import get_redis
 from app.core.response import ApiResponse, ok, paged
-from app.database import get_db
+from app.database import get_db, get_read_db
 from app.modules.integration.contact_sync import ContactSyncService
 from app.modules.integration.models import SysContactSyncLog
 from app.modules.integration.schemas import (
@@ -46,7 +46,7 @@ async def list_users(
     status: int | None = Query(default=None),
     dept_id: int | None = Query(default=None),
     current_user=Depends(require_permissions("system:user:view")),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
     redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
     tenant_id = None if current_user.is_superplatform else current_user.tenant_id
@@ -97,7 +97,7 @@ async def list_contact_sync_logs(
     provider: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     current_user=Depends(require_permissions("system:user:sync")),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse[list[ContactSyncLogItem]]:
     conditions = [SysContactSyncLog.is_deleted == False]  # noqa: E712
     if not current_user.is_superplatform:
@@ -169,7 +169,7 @@ async def create_user(
 async def get_user(
     user_id: int,
     current_user=Depends(require_permissions("system:user:view")),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse[UserInfo]:
     from app.core.exceptions import NotFoundException
     tenant_id = None if current_user.is_superplatform else current_user.tenant_id
@@ -206,10 +206,13 @@ async def delete_user(
     user_id: int,
     current_user=Depends(require_permissions("system:user:delete")),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
     tenant_id = None if current_user.is_superplatform else current_user.tenant_id
     svc = UserService(db, tenant_id)
     await svc.delete_user(user_id)
+    perm_svc = PermissionService(db, redis)
+    await perm_svc.invalidate_user_permission_cache(user_id)
     return ok(message="删除成功")
 
 
@@ -245,8 +248,11 @@ async def assign_user_roles(
     data: UserRoleAssign,
     current_user=Depends(require_permissions("system:user:assign_role")),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
     tenant_id = None if current_user.is_superplatform else current_user.tenant_id
     svc = UserService(db, tenant_id)
     await svc.assign_roles(user_id, data.role_ids)
+    perm_svc = PermissionService(db, redis)
+    await perm_svc.invalidate_user_permission_cache(user_id)
     return ok(message="角色分配成功")

@@ -161,7 +161,7 @@ const tableData = ref<NoticeInfo[]>([])
 const total = ref(0)
 const deptOptions = ref<DeptInfo[]>([])
 const userOptions = ref<UserListItem[]>([])
-const deptTreeProps = { label: 'name', value: 'id', children: 'children' } as any
+const deptTreeProps: { label: string; value: string; children: string } = { label: 'name', value: 'id', children: 'children' }
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 const query = reactive({
@@ -222,7 +222,7 @@ function resetForm() {
   form.remark = ''
 }
 
-function fillForm(row: any) {
+function fillForm(row: NoticeInfo) {
   editId.value = row.id
   form.title = row.title
   form.content = row.content
@@ -237,13 +237,13 @@ function openCreate() {
   dialogVisible.value = true
 }
 
-function openEdit(row: any) {
+function openEdit(row: NoticeInfo) {
   resetForm()
   fillForm(row)
   dialogVisible.value = true
 }
 
-function openDetail(row: any) {
+function openDetail(row: NoticeInfo) {
   resetForm()
   fillForm(row)
   detailMode.value = true
@@ -297,14 +297,14 @@ async function submit(publishNow: boolean) {
   }
 }
 
-async function handlePublish(row: any) {
+async function handlePublish(row: NoticeInfo) {
   await ElMessageBox.confirm(`确定发布公告「${row.title}」？发布后将推送给目标用户。`, '发布确认', { type: 'warning' })
   await messageApi.noticePublish(row.id)
   ElMessage.success('发布成功')
   fetchList()
 }
 
-async function handleDelete(row: any) {
+async function handleDelete(row: NoticeInfo) {
   await ElMessageBox.confirm(`确定删除公告「${row.title}」？`, '提示', { type: 'warning' })
   await messageApi.noticeDelete(row.id)
   ElMessage.success('删除成功')

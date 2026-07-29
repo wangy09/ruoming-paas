@@ -1,9 +1,25 @@
 import secrets
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-CSRF_EXEMPT_PATHS = ["/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/health"]
+from app.config import settings
+
+CSRF_EXEMPT_PATHS = [
+    "/api/v1/auth/login",
+    "/api/v1/auth/refresh",
+    "/api/v1/health",
+    "/api/v1/auth/captcha",
+]
+
+CSRF_COOKIE_SECURE = not settings.is_development
+
+# Bearer Token 认证的请求豁免 CSRF 检查
+# 原因：Bearer Token 不会被浏览器自动附加（不同于 Cookie），
+# 纯 API 客户端（移动端、第三方集成、CLI 工具）无法获取 csrf_token，
+# 强制检查会导致 403。这是业界标准做法（DRF、OWASP 均推荐）。
+_BEARER_SCHEME = "Bearer"
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -15,28 +31,20 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         if request.method in ("GET", "HEAD", "OPTIONS"):
             response = await call_next(request)
-            response.set_cookie(
-                key="csrf_token",
-                value=csrf_cookie,
-                httponly=False,
-                secure=True,
-                samesite="strict",
-            )
+            self._set_csrf_cookie(response, csrf_cookie)
             return response
 
         if any(request.url.path.startswith(p) for p in CSRF_EXEMPT_PATHS):
             response = await call_next(request)
-            response.set_cookie(
-                key="csrf_token",
-                value=csrf_cookie,
-                httponly=False,
-                secure=True,
-                samesite="strict",
-            )
+            self._set_csrf_cookie(response, csrf_cookie)
             return response
 
-        if request.headers.get("Authorization", "").startswith("Bearer "):
+        # Bearer Token 请求豁免：Authorization: Bearer xxx
+        # Bearer Token 不会被浏览器自动附加，不存在 CSRF 攻击面
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith(_BEARER_SCHEME):
             response = await call_next(request)
+            self._set_csrf_cookie(response, csrf_cookie)
             return response
 
         csrf_header = request.headers.get("X-CSRF-Token")
@@ -48,4 +56,15 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             )
 
         response = await call_next(request)
+        self._set_csrf_cookie(response, csrf_cookie)
         return response
+
+    @staticmethod
+    def _set_csrf_cookie(response: Response, value: str) -> None:
+        response.set_cookie(
+            key="csrf_token",
+            value=value,
+            httponly=False,
+            secure=CSRF_COOKIE_SECURE,
+            samesite="lax",
+        )

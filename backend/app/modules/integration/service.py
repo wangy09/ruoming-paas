@@ -4,6 +4,7 @@
 import json
 from collections.abc import Sequence
 
+import structlog
 from sqlalchemy import and_, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +23,8 @@ from app.modules.integration.schemas import (
     IntegrationTestResult,
 )
 from app.modules.user.models import SysUser
+
+logger = structlog.get_logger(__name__)
 
 
 class IntegrationService:
@@ -148,7 +151,8 @@ class IntegrationService:
             return ContactSyncStrategy()
         try:
             return ContactSyncStrategy.model_validate(strategy)
-        except Exception:
+        except Exception as e:
+            logger.warning("contact_sync_strategy_parse_failed", connection_id=connection_id, error=str(e))
             return ContactSyncStrategy()
 
     async def save_contact_sync_strategy(
@@ -316,5 +320,6 @@ class IntegrationService:
         try:
             data = json.loads(decrypt_value(encrypted_config))
         except Exception as exc:
+            logger.warning("secret_config_decrypt_failed", error=str(exc))
             raise ValidationException("敏感配置解密失败，请重新保存连接配置") from exc
         return data if isinstance(data, dict) else {}

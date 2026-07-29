@@ -12,7 +12,7 @@ from app.core.error_codes import PermErrCode
 from app.core.exceptions import BusinessException, NotFoundException
 from app.core.redis import get_redis
 from app.core.response import ApiResponse, created, ok, paged
-from app.database import get_db
+from app.database import get_db, get_read_db
 from app.modules.permission.models import (
     SysPermission,
     SysRole,
@@ -39,7 +39,7 @@ router = APIRouter()
 )
 async def get_my_permissions(
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
     redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
     svc = PermissionService(db, redis)
@@ -63,7 +63,7 @@ async def get_my_permissions(
 )
 async def get_permission_tree(
     current_user=Depends(require_permissions("system:permission:view")),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
     redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
     from sqlalchemy import select
@@ -121,7 +121,7 @@ async def list_roles(
     page_size: int = Query(default=50, ge=1, le=1000),
     keyword: str | None = Query(default=None),
     current_user=Depends(require_permissions("system:role:view")),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse:
     from sqlalchemy import func, or_
 
@@ -195,6 +195,7 @@ async def update_role(
     data: RoleUpdate,
     current_user=Depends(require_permissions("system:role:update")),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> ApiResponse[RoleInfo]:
     from sqlalchemy import or_
 
@@ -215,6 +216,10 @@ async def update_role(
         setattr(role, k, v)
     await db.flush()
     await db.refresh(role)
+
+    perm_svc = PermissionService(db, redis)
+    await perm_svc.invalidate_role_users_cache(role_id)
+
     return ok(RoleInfo.model_validate(role))
 
 
@@ -223,6 +228,7 @@ async def delete_role(
     role_id: int,
     current_user=Depends(require_permissions("system:role:delete")),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
     conditions = [SysRole.id == role_id, SysRole.is_deleted == False]
     if not current_user.is_superplatform:
@@ -244,6 +250,10 @@ async def delete_role(
 
     role.is_deleted = True
     await db.flush()
+
+    perm_svc = PermissionService(db, redis)
+    await perm_svc.invalidate_role_users_cache(role_id)
+
     return ok(message="删除成功")
 
 
@@ -251,7 +261,7 @@ async def delete_role(
 async def get_role_permissions(
     role_id: int,
     current_user=Depends(require_permissions("system:role:view")),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse:
     result = await db.execute(
         select(SysRolePermission.permission_id)
@@ -319,6 +329,7 @@ async def update_permission(
     data: PermissionUpdate,
     current_user=Depends(require_permissions("system:permission:update")),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
     result = await db.execute(
         select(SysPermission).where(
@@ -347,6 +358,10 @@ async def update_permission(
         setattr(perm, k, v)
     await db.flush()
     await db.refresh(perm)
+
+    perm_svc = PermissionService(db, redis)
+    await perm_svc.invalidate_all_user_permission_caches()
+
     return ok(message="更新成功", data={"id": perm.id, "code": perm.code})
 
 
@@ -355,6 +370,7 @@ async def delete_permission(
     perm_id: int,
     current_user=Depends(require_permissions("system:permission:delete")),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> ApiResponse:
     result = await db.execute(
         select(SysPermission).where(
@@ -367,4 +383,8 @@ async def delete_permission(
 
     perm.is_deleted = True
     await db.flush()
+
+    perm_svc = PermissionService(db, redis)
+    await perm_svc.invalidate_all_user_permission_caches()
+
     return ok(message="删除成功")

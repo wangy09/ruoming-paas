@@ -10,7 +10,7 @@ from app.config import settings
 from app.core.deps import get_current_user, require_permissions
 from app.core.exceptions import BusinessException, NotFoundException
 from app.core.response import ApiResponse, created, ok
-from app.database import get_db
+from app.database import get_db, get_read_db
 from app.modules.permission.models import SysRoleDept
 from app.modules.system.models import SysDept, SysDictType, SysDictItem
 from app.modules.user.models import SysUser
@@ -62,7 +62,7 @@ def _build_tree(depts: list[SysDept], parent_id: int = 0) -> list[dict]:
 @router.get("/depts/tree", response_model=ApiResponse, summary="获取部门树")
 async def get_dept_tree(
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse:
     """获取当前租户/平台的部门树"""
     query = select(SysDept).where(SysDept.is_deleted == False)  # noqa: E712
@@ -80,7 +80,7 @@ async def get_dept_tree(
 @router.get("/depts/options", response_model=ApiResponse, summary="获取部门下拉选项（树形）")
 async def get_dept_options(
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse:
     """获取部门下拉选项（用于角色自定义数据权限选择）"""
     query = select(SysDept).where(SysDept.is_deleted == False, SysDept.status == 1)  # noqa: E712
@@ -98,7 +98,7 @@ async def get_dept_options(
 async def get_dept(
     dept_id: int,
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse:
     conditions = [SysDept.id == dept_id, SysDept.is_deleted == False]
     if not current_user.is_superplatform:
@@ -271,7 +271,7 @@ async def get_dict_types(
     keyword: str | None = Query(default=None, description="关键字搜索（名称/编码）"),
     status: int | None = Query(default=None, description="状态筛选"),
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse:
     tenant_id = None if current_user.is_superplatform else current_user.tenant_id
     service = DictService(db)
@@ -283,7 +283,7 @@ async def get_dict_types(
 async def get_dict_type(
     type_id: int,
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse:
     service = DictService(db)
     dict_type, items = await service.get_dict_type_with_items(type_id)
@@ -351,7 +351,7 @@ async def delete_dict_type(
 async def get_dict_items(
     type_id: int = Query(..., description="字典类型 ID"),
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse:
     service = DictService(db)
     items = await service.get_dict_items(type_id)
@@ -413,7 +413,7 @@ async def delete_dict_item(
 async def get_dict_by_code(
     code: str,
     current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> ApiResponse:
     tenant_id = None if current_user.is_superplatform else current_user.tenant_id
     service = DictService(db)

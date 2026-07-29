@@ -58,6 +58,10 @@ class KnowledgeBaseInfo(BaseModel):
     tenant_id: int | None
     created_at: datetime
 
+    # 前端兼容字段
+    doc_count: int | None = None
+    chunk_count: int | None = None
+
 
 class KnowledgeDocInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -77,6 +81,10 @@ class KnowledgeDocInfo(BaseModel):
     status: str
     error_msg: str | None
     created_at: datetime
+
+    # 前端兼容字段
+    file_name: str | None = None
+    file_ext: str | None = None
 
 
 class KnowledgeSearchRequest(BaseModel):

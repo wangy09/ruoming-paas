@@ -8,6 +8,9 @@ import time
 from datetime import datetime, timezone
 
 import psutil
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 class ServerMonitorService:
@@ -133,6 +136,6 @@ def _get_cpu_brand() -> str:
                 for line in f:
                     if "model name" in line:
                         return line.split(":")[1].strip()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("platform_detect_failed", error=str(e))
     return platform.processor() or "Unknown"

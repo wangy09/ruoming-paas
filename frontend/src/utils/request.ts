@@ -8,6 +8,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import NProgress from 'nprogress'
 import 'nprogress/nprogress.css'
 import { useErrorLogStore } from '@/store/errorLog'
+import { tokenStorage } from './token'
 
 /** 将错误信息推入错误日志 store（懒加载避免 pinia 初始化顺序问题） */
 function pushErrorLog(params: {
@@ -42,15 +43,22 @@ request.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     NProgress.start()
 
-    // 延迟 import，避免循环依赖（store 依赖 request，request 不能静态导入 store）
-    const token = localStorage.getItem('access_token')
-    const tenantCode = localStorage.getItem('tenant_code')
+    const token = tokenStorage.getAccessToken()
+    const tenantCode = tokenStorage.getTenantCode()
 
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`
     }
     if (tenantCode) {
       config.headers['X-Tenant-Code'] = tenantCode
+    }
+
+    const method = (config.method || 'get').toLowerCase()
+    if (method !== 'get' && method !== 'head' && method !== 'options') {
+      const csrfToken = getCsrfTokenFromCookie()
+      if (csrfToken) {
+        config.headers['X-CSRF-Token'] = csrfToken
+      }
     }
 
     return config
@@ -60,6 +68,11 @@ request.interceptors.request.use(
     return Promise.reject(error)
   },
 )
+
+function getCsrfTokenFromCookie(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/)
+  return match ? decodeURIComponent(match[1]) : null
+}
 
 // ── Token 刷新队列 ───────────────────────────────────────────────────────────
 let isRefreshing = false
@@ -134,7 +147,7 @@ request.interceptors.response.use(
         return Promise.reject(error)
       }
 
-      const refreshToken = localStorage.getItem('refresh_token')
+      const refreshToken = tokenStorage.getRefreshToken()
       if (!refreshToken) {
         redirectToLogin()
         return Promise.reject(error)
@@ -148,13 +161,13 @@ request.interceptors.response.use(
             { refresh_token: refreshToken },
           )
           const { access_token, refresh_token: newRefreshToken } = res.data.data
-          localStorage.setItem('access_token', access_token)
-          if (newRefreshToken) localStorage.setItem('refresh_token', newRefreshToken)
+          tokenStorage.setAccessToken(access_token)
+          if (newRefreshToken) tokenStorage.setRefreshToken(newRefreshToken)
           onRefreshed(access_token)
           // 重试原请求
           return request(config)
         } catch {
-          localStorage.clear()
+          tokenStorage.clearAll()
           redirectToLogin()
           return Promise.reject(error)
         } finally {
@@ -214,7 +227,7 @@ function redirectToLogin() {
     type: 'warning',
     showClose: false,
   }).then(() => {
-    localStorage.clear()
+    tokenStorage.clearAll()
     window.location.href = '/login'
   })
 }

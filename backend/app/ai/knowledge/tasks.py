@@ -820,8 +820,8 @@ def fetch_url_task(self, doc_id: int, kb_id: int, url: str, css_selector: str | 
                 doc.status = "error"
                 doc.error_msg = str(e)[:500]
                 session.commit()
-        except Exception:
-            pass
+        except Exception as db_err:
+            logger.warning("fetch_url_task_db_update_failed", doc_id=doc_id, error=str(db_err))
         return {"status": "error", "message": str(e)}
     finally:
         session.close()
@@ -885,8 +885,8 @@ def fetch_api_task(
                 doc.status = "error"
                 doc.error_msg = str(e)[:500]
                 session.commit()
-        except Exception:
-            pass
+        except Exception as db_err:
+            logger.warning("fetch_api_task_db_update_failed", doc_id=doc_id, error=str(db_err))
         return {"status": "error", "message": str(e)}
     finally:
         session.close()

@@ -53,6 +53,8 @@
 | [系统架构图](./docs/architecture.html) | 可视化架构图，适合评审、演示和截图 |
 | [架构总览](./docs/01_架构总览.md) | Mermaid 架构图、技术选型、模块分层和设计原则 |
 | [快速启动](./docs/01_快速启动.md) | 开发环境启动、服务地址、常见问题 |
+| [部署运维](./docs/09_部署运维.md) | Docker Compose、备份恢复、日志轮转、版本发布、灰度、健康检查 |
+| [生产环境部署指南](./docs/19_生产环境部署指南.md) | 生产环境部署、运维脚本使用、安全加固 |
 
 平台内也已集成用户手册入口：`帮助中心 / 用户手册`，路由为 `/help/manual`。
 
@@ -99,6 +101,8 @@ bash scripts/start.sh dev
 
 ### 脚本命令
 
+**日常启停（start.sh）**
+
 ```bash
 bash scripts/start.sh dev       # 启动开发环境
 bash scripts/start.sh stop      # 停止开发环境
@@ -106,6 +110,29 @@ bash scripts/start.sh status    # 查看服务状态
 bash scripts/start.sh logs      # 查看所有日志
 bash scripts/start.sh logs backend   # 查看后端日志
 bash scripts/start.sh logs frontend  # 查看前端日志
+```
+
+**版本发布（deploy.sh）**
+
+```bash
+bash scripts/deploy.sh deploy v2.1.0   # 部署新版本（自动回滚）
+bash scripts/deploy.sh rollback         # 一键回滚
+bash scripts/deploy.sh canary 30       # 灰度发布（30% 流量）
+```
+
+**数据库备份与恢复（db_backup.sh）**
+
+```bash
+DB_PASSWORD=<密码> bash scripts/db_backup.sh     # 立即备份
+bash scripts/db_backup.sh --list                  # 列出可用备份
+DB_PASSWORD=<密码> bash scripts/db_backup.sh --restore /path/to/backup.sql.gz  # 恢复
+```
+
+**日志轮转（log_rotate.sh）**
+
+```bash
+bash scripts/log_rotate.sh                       # 立即执行日志轮转
+bash scripts/log_rotate.sh --check               # 仅检查不执行
 ```
 
 ---
@@ -345,7 +372,11 @@ RuoMingPaas/
 │   │   └── nginx.prod.conf     # Nginx 生产配置（SSE/SSL/缓存/限流）
 │   └── init-db.sql             # 数据库初始化 SQL
 ├── scripts/
-│   └── start.sh                # 一键启动脚本
+│   ├── start.sh                 # 日常启停、首次部署
+│   ├── deploy.sh                # 版本发布、回滚、灰度
+│   ├── db_backup.sh             # 数据库备份与恢复
+│   ├── log_rotate.sh            # 日志轮转与清理
+│   └── docker-restart.sh        # 强制重置环境
 └── docs/                       # 文档、用户手册、当前功能清单
 ```
 
@@ -385,6 +416,10 @@ RuoMingPaas/
 | **配置中心** | 全局 → 租户 → 应用 → 用户，下层覆盖上层，支持加密脱敏、历史和缓存清理 |
 | **集成与同步** | 飞书、钉钉、企业微信连接管理，支持外部联系人同步、自检、预览和计划任务 |
 | **计划任务** | 独立调度服务，支持 interval 和 Cron，执行日志可追踪 |
+| **演示模式** | `DEMO_MODE` 环境变量一键开启，禁止所有写操作，保护公开演示环境 |
+| **敏感数据脱敏** | 手机号、邮箱、身份证号、银行卡号等自动脱敏，保护用户隐私 |
+| **健康检查** | 基础检查 + 详细检查（数据库、Redis、磁盘），支持 Prometheus 集成 |
+| **日志轮转** | 按大小自动轮转、压缩、过期清理，防止磁盘爆满 |
 
 ### 前端
 

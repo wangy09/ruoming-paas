@@ -22,6 +22,9 @@ from app.core.response import ApiResponse, PageData, ok, paged
 from app.core.utils.pagination import PageParams
 from app.database import get_db
 from app.modules.user.models import SysUser
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/ai/conversations", tags=["AI-对话历史"])
 
@@ -132,8 +135,8 @@ async def chat(
                         latency_ms=latency_ms,
                     )
                     await db.commit()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("conversation_save_failed", error=str(e))
 
         return StreamingResponse(_generate(), media_type="text/event-stream")
     else:

@@ -269,577 +269,67 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, ref, onBeforeUnmount, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { useAuthStore } from '@/store/auth'
-import { usePermissionStore } from '@/store/permission'
 import { formatDate } from '@/utils/format'
-import { dashboardApi } from '@/api/dashboard'
-import type { DashboardPreferences, DashboardQuickEntry, DashboardTemplateType } from '@/api/dashboard'
-import { messageApi } from '@/api/message'
-import { agentApi, kbApi, modelApi } from '@/api/ai'
-import { fileApi } from '@/api/file'
-import { taskApi } from '@/api/monitor'
-import type { AgentInfo, FileInfo, MenuPermission, MessageInfo, NoticeInfo } from '@/types'
+import { useDashboardPreference } from './composables/useDashboardPreference'
+import { useDashboardData } from './composables/useDashboardData'
 
-const authStore = useAuthStore()
-const permissionStore = usePermissionStore()
 const router = useRouter()
-
-const statsLoading = ref(true)
-const unreadCount = ref(0)
-const messages = ref<MessageInfo[]>([])
-const notices = ref<NoticeInfo[]>([])
-const agentTotal = ref(0)
-const modelTotal = ref(0)
-const kbTotal = ref(0)
-const fileTotal = ref(0)
-const taskTotal = ref(0)
-const recentAgents = ref<AgentInfo[]>([])
-const recentFiles = ref<FileInfo[]>([])
-const preferenceDialogVisible = ref(false)
-const preferenceSaving = ref(false)
-const preferenceSource = ref<'user' | 'default'>('default')
-
 const currentTime = ref(formatDate(new Date()))
 let timer: number | undefined
 
-type DashboardType = 'platform' | 'tenant' | 'developer' | 'personal'
-type DashboardWidgetKey = 'stats' | 'quick_entries' | 'todos' | 'messages' | 'notices' | 'workbench'
-
-interface DashboardProfile {
-  type: DashboardType
-  label: string
-  title: string
-  description: string
-  color: string
-}
-
-interface QuickEntry {
-  title: string
-  desc: string
-  path: string
-  icon: string
-  color: string
-  menu?: string
-  profiles?: DashboardType[]
-}
-
-interface MenuOption {
-  title: string
-  path: string
-  icon: string
-}
-
-type TagType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
-
-interface TodoItem {
-  title: string
-  desc: string
-  value: string
-  type: TagType
-  color: string
-  path: string
-}
-
-const defaultWidgets: Record<DashboardWidgetKey, boolean> = {
-  stats: true,
-  quick_entries: true,
-  todos: true,
-  messages: true,
-  notices: true,
-  workbench: true,
-}
-
-const preferenceForm = reactive<DashboardPreferences>({
-  template_type: 'auto',
-  widgets: { ...defaultWidgets },
-  quick_entries: [],
-})
-
-const templateOptions: Array<{ label: string; value: DashboardTemplateType }> = [
-  { label: '自动', value: 'auto' },
-  { label: '平台', value: 'platform' },
-  { label: '租户', value: 'tenant' },
-  { label: '开发者', value: 'developer' },
-  { label: '个人', value: 'personal' },
-]
-
-const widgetOptions: Array<{ key: DashboardWidgetKey; label: string; desc: string }> = [
-  { key: 'stats', label: '统计指标', desc: '用户、租户、AI 调用等核心指标' },
-  { key: 'quick_entries', label: '常用入口', desc: '按权限展示快捷入口' },
-  { key: 'todos', label: '今日关注', desc: '未读消息、配置和文件归档提醒' },
-  { key: 'messages', label: '我的消息', desc: '最近收到的站内消息' },
-  { key: 'notices', label: '平台公告', desc: '最新公告列表' },
-  { key: 'workbench', label: '资源概览', desc: '开发、运维或个人资源统计' },
-]
-
-const greeting = computed(() => {
-  const h = new Date().getHours()
-  if (h < 6) return '凌晨好'
-  if (h < 12) return '上午好'
-  if (h < 18) return '下午好'
-  return '晚上好'
-})
-
-const displayName = computed(() => authStore.userInfo?.nickname || authStore.userInfo?.username || '用户')
-
-const avatarText = computed(() => displayName.value.charAt(0).toUpperCase())
-
-const roleLabels = computed(() => (authStore.userInfo?.roles || []).map(role => role.name).slice(0, 3))
-
-const roleCodes = computed(() => (authStore.userInfo?.roles || []).map(role => role.code.toLowerCase()))
-
-const roleDashboardType = computed<DashboardType | null>(() => {
-  const matched = (authStore.userInfo?.roles || [])
-    .map(role => role.dashboard_template)
-    .find((template): template is DashboardType =>
-      template === 'platform' || template === 'tenant' || template === 'developer' || template === 'personal',
-    )
-  return matched || null
-})
-
-const tenantLabel = computed(() => {
-  if (authStore.userInfo?.is_superplatform) return '平台级'
-  return authStore.userInfo?.tenant_code ? `租户：${authStore.userInfo.tenant_code}` : '当前租户'
-})
-
-const inferredDashboardType = computed<DashboardType>(() => {
-  if (roleDashboardType.value) {
-    return roleDashboardType.value
-  }
-  if (authStore.userInfo?.is_superplatform) {
-    return 'platform'
-  }
-  if (roleCodes.value.some(code => /developer|dev|code|ai|agent/.test(code))) {
-    return 'developer'
-  }
-  if (roleCodes.value.some(code => /admin|manager|tenant/.test(code))) {
-    return 'tenant'
-  }
-  return 'personal'
-})
-
-const resolvedDashboardType = computed<DashboardType>(() => {
-  return preferenceForm.template_type === 'auto' ? inferredDashboardType.value : preferenceForm.template_type
-})
-
-const dashboardProfile = computed<DashboardProfile>(() => {
-  if (resolvedDashboardType.value === 'platform') {
-    return {
-      type: 'platform',
-      label: '平台管理员首页',
-      title: '平台运营总览',
-      description: '聚合用户服务、消息公告、AI 能力和常用入口，帮助快速了解平台使用情况与待处理事项。',
-      color: '#1677ff',
-    }
-  }
-  if (resolvedDashboardType.value === 'developer') {
-    return {
-      type: 'developer',
-      label: '开发者首页',
-      title: '开发工作台',
-      description: '聚合 Agent、知识库、代码生成、文件和配置入口，服务日常开发与调试。',
-      color: '#722ed1',
-    }
-  }
-  if (resolvedDashboardType.value === 'tenant') {
-    return {
-      type: 'tenant',
-      label: '租户管理员首页',
-      title: '租户管理工作台',
-      description: '关注本租户用户、权限、消息、文件和 AI 资源使用情况。',
-      color: '#13c2c2',
-    }
-  }
-  return {
-    type: 'personal',
-    label: '个人首页',
-    title: '个人效率工作台',
-    description: '集中查看消息、公告、常用功能和个人可访问的业务入口。',
-    color: '#2f7d70',
-  }
-})
-
-const baseStats = ref([
-  { key: 'users', label: '总用户数', value: '-', icon: 'User', color: '#1677ff', profiles: ['platform', 'tenant'] },
-  { key: 'tenants', label: '活跃租户', value: '-', icon: 'OfficeBuilding', color: '#52c41a', profiles: ['platform'] },
-  { key: 'calls', label: '今日 AI 调用', value: '-', icon: 'MagicStick', color: '#faad14', profiles: ['platform', 'tenant', 'developer'] },
-  { key: 'tokens', label: '今日 Token 消耗', value: '-', icon: 'Coin', color: '#ff4d4f', profiles: ['platform', 'tenant', 'developer'] },
-  { key: 'messages', label: '未读消息', value: '0', icon: 'Message', color: '#13c2c2', profiles: ['personal', 'tenant', 'developer'] },
-  { key: 'agents', label: 'Agent 数量', value: '0', icon: 'Cpu', color: '#722ed1', profiles: ['developer'] },
-])
-
-const visibleStats = computed(() => {
-  const profile = dashboardProfile.value.type
-  return baseStats.value.filter(item => item.profiles.includes(profile)).slice(0, 4)
-})
-
-const quickEntries: QuickEntry[] = [
-  { title: '用户管理', desc: '维护账号、角色和状态', path: '/system/users', icon: 'User', color: '#1677ff', menu: '/system/users', profiles: ['platform', 'tenant'] },
-  { title: '角色授权', desc: '配置菜单、按钮和数据范围', path: '/system/role-permission', icon: 'Lock', color: '#722ed1', menu: '/system/role-permission', profiles: ['platform', 'tenant'] },
-  { title: '配置中心', desc: '管理运行时业务配置', path: '/system/config', icon: 'Setting', color: '#13c2c2', menu: '/system/config', profiles: ['platform', 'tenant', 'developer'] },
-  { title: '消息中心', desc: '公告与站内消息', path: '/message/inbox', icon: 'Message', color: '#faad14', menu: '/message/inbox' },
-  { title: 'Agent 管理', desc: '创建和维护智能体', path: '/ai/agents', icon: 'Cpu', color: '#ff4d4f', menu: '/ai/agents', profiles: ['platform', 'tenant', 'developer'] },
-  { title: '知识库', desc: '管理文档和向量索引', path: '/ai/knowledge', icon: 'Collection', color: '#52c41a', menu: '/ai/knowledge', profiles: ['developer'] },
-  { title: '代码生成器', desc: '生成基础业务模块', path: '/dev/codegen', icon: 'DocumentAdd', color: '#1677ff', menu: '/dev/codegen', profiles: ['developer'] },
-  { title: '文件中心', desc: '上传、预览、归档附件', path: '/system/files', icon: 'Folder', color: '#13c2c2', menu: '/system/files' },
-  { title: '计划任务', desc: '查看任务和执行日志', path: '/monitor/task', icon: 'Timer', color: '#722ed1', menu: '/monitor/task', profiles: ['platform', 'developer'] },
-  { title: '服务监控', desc: '查看服务资源状态', path: '/monitor/server', icon: 'Monitor', color: '#52c41a', menu: '/monitor/server', profiles: ['platform'] },
-]
-
-const quickEntryColors = ['#1677ff', '#722ed1', '#13c2c2', '#faad14', '#ff4d4f', '#52c41a']
-
-const availableMenuOptions = computed<MenuOption[]>(() => flattenMenuOptions(permissionStore.menuTree))
-
-const selectedQuickEntryPaths = computed<string[]>({
-  get: () => preferenceForm.quick_entries.map(item => item.path),
-  set: paths => {
-    const oldMap = new Map(preferenceForm.quick_entries.map(item => [item.path, item]))
-    preferenceForm.quick_entries = paths
-      .map((path, index) => oldMap.get(path) || createQuickEntryFromMenu(path, index))
-      .filter((item): item is DashboardQuickEntry => Boolean(item))
-      .slice(0, 12)
-  },
-})
-
-const customQuickEntries = computed<QuickEntry[]>(() => {
-  return preferenceForm.quick_entries
-    .map((entry, index) => normalizeQuickEntry(entry, index))
-    .filter(entry => canVisit(entry.path))
-})
-
-const availableQuickEntries = computed(() => {
-  const profile = dashboardProfile.value.type
-  const recommended = quickEntries
-    .filter(item => !item.profiles || item.profiles.includes(profile))
-    .filter(item => canVisit(item.menu || item.path))
-  const merged = [...customQuickEntries.value, ...recommended]
-  const seen = new Set<string>()
-  return merged
-    .filter(item => {
-      if (seen.has(item.path)) return false
-      seen.add(item.path)
-      return true
-    })
-    .slice(0, 8)
-})
-
-const todos = computed<TodoItem[]>(() => [
-  {
-    title: '未读消息',
-    desc: unreadCount.value ? '有新消息需要查看' : '暂无新的站内消息',
-    value: String(unreadCount.value),
-    type: unreadCount.value ? 'danger' : 'info',
-    color: '#ff4d4f',
-    path: '/message/inbox',
-  },
-  {
-    title: dashboardProfile.value.type === 'developer' ? 'Agent 配置' : '基础配置',
-    desc: dashboardProfile.value.type === 'developer' ? '检查模型和 Agent 是否可用' : '维护系统运行时配置',
-    value: dashboardProfile.value.type === 'developer' ? String(agentTotal.value) : '配置',
-    type: 'primary',
-    color: '#1677ff',
-    path: dashboardProfile.value.type === 'developer' ? '/ai/agents' : '/system/config',
-  },
-  {
-    title: '文件归档',
-    desc: '查看最近上传和归档状态',
-    value: String(fileTotal.value),
-    type: 'success',
-    color: '#52c41a',
-    path: '/system/files',
-  },
-])
-
-const workbenchTitle = computed(() => {
-  if (dashboardProfile.value.type === 'developer') return '开发资源'
-  if (dashboardProfile.value.type === 'platform') return '平台运维'
-  if (dashboardProfile.value.type === 'tenant') return '租户资源'
-  return '个人概览'
-})
-
-const workbenchSubtitle = computed(() => {
-  if (dashboardProfile.value.type === 'developer') return 'Agent、模型、知识库状态'
-  if (dashboardProfile.value.type === 'platform') return '任务、文件、消息概况'
-  return '当前账号可用资源'
-})
-
-const workbenchItems = computed(() => {
-  if (dashboardProfile.value.type === 'developer') {
-    return [
-      { label: 'Agent', value: formatNumber(agentTotal.value) },
-      { label: '模型配置', value: formatNumber(modelTotal.value) },
-      { label: '知识库', value: formatNumber(kbTotal.value) },
-      { label: '最近 Agent', value: recentAgents.value[0]?.name || '暂无' },
-    ]
-  }
-  return [
-    { label: '文件数量', value: formatNumber(fileTotal.value) },
-    { label: '计划任务', value: formatNumber(taskTotal.value) },
-    { label: '未读消息', value: formatNumber(unreadCount.value) },
-    { label: '最近文件', value: recentFiles.value[0]?.original_name || '暂无' },
-  ]
-})
-
-const workbenchActions = computed(() => {
-  if (dashboardProfile.value.type === 'developer') {
-    return [
-      { label: 'Agent 管理', path: '/ai/agents' },
-      { label: '模型管理', path: '/ai/models' },
-      { label: '知识库', path: '/ai/knowledge' },
-    ].filter(item => canVisit(item.path))
-  }
-  return [
-    { label: '消息中心', path: '/message/inbox' },
-    { label: '文件中心', path: '/system/files' },
-    { label: '配置中心', path: '/system/config' },
-  ].filter(item => canVisit(item.path))
-})
-
-function canVisit(path: string) {
-  return authStore.userInfo?.is_superplatform || permissionStore.hasMenu(path)
-}
-
-function isWidgetVisible(key: DashboardWidgetKey) {
-  return preferenceForm.widgets[key] !== false
-}
-
-function normalizePreferences(preferences?: Partial<DashboardPreferences>): DashboardPreferences {
-  return {
-    template_type: preferences?.template_type || 'auto',
-    widgets: {
-      ...defaultWidgets,
-      ...(preferences?.widgets || {}),
-    },
-    quick_entries: normalizeQuickEntries(preferences?.quick_entries || []),
-  }
-}
-
-function applyPreferences(preferences: DashboardPreferences, source: 'user' | 'default') {
-  const normalized = normalizePreferences(preferences)
-  preferenceForm.template_type = normalized.template_type
-  preferenceForm.widgets = normalized.widgets
-  preferenceForm.quick_entries = normalized.quick_entries
-  preferenceSource.value = source
-}
-
-function flattenMenuOptions(menus: MenuPermission[] = []): MenuOption[] {
-  const result: MenuOption[] = []
-  const seen = new Set<string>()
-
-  const walk = (items: MenuPermission[]) => {
-    for (const menu of items) {
-      if (menu.path && menu.path !== '/' && !menu.isExternal && !seen.has(menu.path) && canVisit(menu.path)) {
-        seen.add(menu.path)
-        result.push({
-          title: menu.title,
-          path: menu.path,
-          icon: menu.icon || 'Menu',
-        })
-      }
-      if (menu.children?.length) {
-        walk(menu.children)
-      }
-    }
-  }
-
-  walk(menus)
-  return result
-}
-
-function createQuickEntryFromMenu(path: string, index: number): DashboardQuickEntry | null {
-  const option = availableMenuOptions.value.find(item => item.path === path)
-  if (!option) return null
-  return {
-    title: option.title,
-    path: option.path,
-    icon: option.icon,
-    color: quickEntryColors[index % quickEntryColors.length],
-    desc: '我的常用入口',
-  }
-}
-
-function normalizeQuickEntries(entries: DashboardQuickEntry[]): DashboardQuickEntry[] {
-  const seen = new Set<string>()
-  const result: DashboardQuickEntry[] = []
-  for (const entry of entries) {
-    if (!entry?.path || seen.has(entry.path)) continue
-    seen.add(entry.path)
-    const index = result.length
-    const option = availableMenuOptions.value.find(item => item.path === entry.path)
-    result.push({
-      title: entry.title || option?.title || entry.path,
-      path: entry.path,
-      icon: entry.icon || option?.icon || 'Menu',
-      color: entry.color || quickEntryColors[index % quickEntryColors.length],
-      desc: entry.desc || '我的常用入口',
-    })
-    if (result.length >= 12) break
-  }
-  return result
-}
-
-function normalizeQuickEntry(entry: DashboardQuickEntry, index: number): QuickEntry {
-  return {
-    title: entry.title,
-    desc: entry.desc || '我的常用入口',
-    path: entry.path,
-    icon: entry.icon || 'Menu',
-    color: entry.color || quickEntryColors[index % quickEntryColors.length],
-  }
-}
-
-function moveQuickEntry(index: number, delta: number) {
-  const targetIndex = index + delta
-  if (targetIndex < 0 || targetIndex >= preferenceForm.quick_entries.length) return
-  const next = [...preferenceForm.quick_entries]
-  const [item] = next.splice(index, 1)
-  next.splice(targetIndex, 0, item)
-  preferenceForm.quick_entries = next
-}
-
-function removeQuickEntry(index: number) {
-  preferenceForm.quick_entries = preferenceForm.quick_entries.filter((_, i) => i !== index)
-}
-
-async function loadPreferences() {
-  try {
-    const { data } = await dashboardApi.preferences()
-    applyPreferences(data.preferences, data.source)
-  } catch {
-    applyPreferences(normalizePreferences(), 'default')
-  }
-}
-
-function openPreferenceDialog() {
-  preferenceDialogVisible.value = true
-}
-
-async function savePreferences() {
-  preferenceSaving.value = true
-  try {
-    const { data } = await dashboardApi.updatePreferences(normalizePreferences(preferenceForm))
-    applyPreferences(data.preferences, data.source)
-    preferenceDialogVisible.value = false
-    ElMessage.success('首页偏好已保存')
-  } finally {
-    preferenceSaving.value = false
-  }
-}
-
-async function resetPreferences() {
-  preferenceSaving.value = true
-  try {
-    const { data } = await dashboardApi.resetPreferences()
-    applyPreferences(data.preferences, data.source)
-    ElMessage.success('已恢复默认首页')
-  } finally {
-    preferenceSaving.value = false
-  }
-}
-
-// 格式化 Token 数量
-function formatToken(count: number): string {
-  if (count >= 1000000) {
-    return (count / 1000000).toFixed(1) + 'M'
-  }
-  if (count >= 1000) {
-    return (count / 1000).toFixed(1) + 'K'
-  }
-  return String(count)
-}
-
-function formatNumber(count: number): string {
-  return String(count || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-}
-
-function formatDateTime(value?: string | null): string {
-  if (!value) return '-'
-  return formatDate(new Date(value))
-}
-
-function noticeTargetLabel(type: NoticeInfo['target_type']) {
-  const map: Record<NoticeInfo['target_type'], string> = {
-    all: '全平台',
-    dept: '部门',
-    user: '用户',
-  }
-  return map[type] || '公告'
-}
-
-async function loadStats() {
-  statsLoading.value = true
-  try {
-    const { data } = await dashboardApi.stats()
-    updateStat('users', formatNumber(data.total_users || 0))
-    updateStat('tenants', formatNumber(data.active_tenants || 0))
-    updateStat('calls', formatNumber(data.today_calls || 0))
-    updateStat('tokens', formatToken(data.today_tokens || 0))
-  } catch {
-    updateStat('users', '0')
-    updateStat('tenants', '0')
-    updateStat('calls', '0')
-    updateStat('tokens', '0')
-  } finally {
-    statsLoading.value = false
-  }
-}
-
-function updateStat(key: string, value: string) {
-  const target = baseStats.value.find(item => item.key === key)
-  if (target) target.value = value
-}
-
-async function loadWorkbenchData() {
-  const results = await Promise.allSettled([
-    messageApi.unreadSummary(),
-    messageApi.inboxList({ page: 1, page_size: 4 }),
-    messageApi.noticeList({ page: 1, page_size: 4, status: 1 }),
-    canVisit('/ai/agents') ? agentApi.list({ page: 1, page_size: 4 }) : Promise.resolve(null),
-    canVisit('/ai/models') ? modelApi.list({ page: 1, page_size: 1 }) : Promise.resolve(null),
-    canVisit('/ai/knowledge') ? kbApi.list({ page: 1, page_size: 1 }) : Promise.resolve(null),
-    canVisit('/system/files') ? fileApi.list({ page: 1, page_size: 4 }) : Promise.resolve(null),
-    canVisit('/monitor/task') ? taskApi.list({ page: 1, page_size: 1 }) : Promise.resolve(null),
-  ])
-
-  const unreadRes = getFulfilled(results[0])
-  unreadCount.value = unreadRes?.data?.unread_count || 0
-  updateStat('messages', formatNumber(unreadCount.value))
-
-  const inboxRes = getFulfilled(results[1])
-  messages.value = inboxRes?.data?.items || []
-
-  const noticeRes = getFulfilled(results[2])
-  notices.value = noticeRes?.data?.items || []
-
-  const agentRes = getFulfilled(results[3])
-  agentTotal.value = agentRes?.data?.total || 0
-  recentAgents.value = agentRes?.data?.items || []
-  updateStat('agents', formatNumber(agentTotal.value))
-
-  const modelRes = getFulfilled(results[4])
-  modelTotal.value = modelRes?.data?.total || 0
-
-  const kbRes = getFulfilled(results[5])
-  kbTotal.value = kbRes?.data?.total || 0
-
-  const fileRes = getFulfilled(results[6])
-  fileTotal.value = fileRes?.data?.total || 0
-  recentFiles.value = fileRes?.data?.items || []
-
-  const taskRes = getFulfilled(results[7])
-  taskTotal.value = taskRes?.data?.total || 0
-}
-
-function getFulfilled<T>(result: PromiseSettledResult<T>): T | null {
-  return result.status === 'fulfilled' ? result.value : null
-}
-
-async function refreshDashboard() {
-  await Promise.all([loadStats(), loadWorkbenchData()])
-}
+// 使用偏好设置 composable
+const {
+  preferenceDialogVisible,
+  preferenceSaving,
+  preferenceSource,
+  preferenceForm,
+  templateOptions,
+  widgetOptions,
+  greeting,
+  displayName,
+  avatarText,
+  roleLabels,
+  tenantLabel,
+  dashboardProfile,
+  availableMenuOptions,
+  selectedQuickEntryPaths,
+  availableQuickEntries,
+  isWidgetVisible,
+  moveQuickEntry,
+  removeQuickEntry,
+  loadPreferences,
+  openPreferenceDialog,
+  savePreferences,
+  resetPreferences,
+  formatDateTime,
+  noticeTargetLabel,
+} = useDashboardPreference()
+
+// 使用数据 composable
+const {
+  statsLoading,
+  messages,
+  notices,
+  baseStats,
+  visibleStats,
+  loadStats,
+  loadWorkbenchData,
+  refreshDashboard,
+  getTodos,
+  getWorkbenchTitle,
+  getWorkbenchSubtitle,
+  getWorkbenchItems,
+  getWorkbenchActions,
+} = useDashboardData()
+
+// 计算属性 - 依赖 dashboardProfile 的动态内容
+const todos = computed(() => getTodos(dashboardProfile.value.type))
+const workbenchTitle = computed(() => getWorkbenchTitle(dashboardProfile.value.type))
+const workbenchSubtitle = computed(() => getWorkbenchSubtitle(dashboardProfile.value.type))
+const workbenchItems = computed(() => getWorkbenchItems(dashboardProfile.value.type))
+const workbenchActions = computed(() => getWorkbenchActions(dashboardProfile.value.type))
 
 onMounted(() => {
   void loadPreferences()

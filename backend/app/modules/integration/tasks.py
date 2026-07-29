@@ -1,5 +1,6 @@
 """第三方集成后台任务。"""
 import asyncio
+import logging
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Literal, cast
@@ -13,6 +14,8 @@ from app.modules.integration.models import SysIntegrationConnection
 from app.modules.integration.schemas import ContactSyncRequest, ContactSyncStrategy
 from app.modules.monitor.models import SysTaskExecutionLog
 from app.modules.user.models import SysUser
+
+logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="app.modules.integration.tasks.sync_contact_connection")
@@ -122,7 +125,8 @@ def _load_contact_sync_strategy(config: dict | None) -> ContactSyncStrategy:
         return ContactSyncStrategy()
     try:
         return ContactSyncStrategy.model_validate(strategy)
-    except Exception:
+    except Exception as e:
+        logger.warning("contact_sync_strategy_parse_failed: %s", str(e))
         return ContactSyncStrategy()
 
 
