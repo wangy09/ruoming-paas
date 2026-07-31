@@ -168,7 +168,7 @@ export interface ConfigHistoryInfo {
   new_value?: string | null
   changed_by?: number | null
   changed_by_name?: string | null
-  changed_at: string
+  created_at: string
   remark?: string | null
 }
 
@@ -778,7 +778,6 @@ export interface PromptVersion {
 
 // ── Prompt 模板 ────────────────────────────────────────────────────────────────
 export interface PromptTemplate {
-  id: number
   name: string
   description?: string
   category?: string
@@ -787,4 +786,49 @@ export interface PromptTemplate {
   status: 'draft' | 'published' | 'archived'
   current_version: number
   created_at: string
+}
+
+// ── 消息反馈 ────────────────────────────────────────────────────────────────────
+export interface FeedbackInfo {
+  id: number
+  /** 反馈标题 */
+  title: string
+  /** 反馈分类：bug/feature/usage/other */
+  category: string
+  /** 详细反馈内容 */
+  content: string
+  /** 严重程度：low/medium/high/critical */
+  severity: string | null
+  /** 关联的 AI 消息 ID（可选） */
+  message_id: number | null
+  conversation_id: number | null
+  agent_id: number | null
+  user_id: number
+  rating: number | null
+  tags: string[] | null
+  /** 截图 URL */
+  screenshot_url: string | null
+  /** 处理状态：pending / resolved / ignored */
+  status: string
+  /** 管理员回复内容 */
+  reply: string | null
+  replied_by: number | null
+  replied_at: string | null
+  created_at: string
+  /** 提交反馈的用户名（联表查询） */
+  username?: string | null
+  /** 关联 Agent 名称（联表查询） */
+  agent_name?: string | null
+}
+
+export interface FeedbackStats {
+  total: number
+  bug_count: number
+  feature_count: number
+  usage_count: number
+  other_count: number
+  pending_count: number
+  resolved_count: number
+  daily: Array<{ date: string; total: number }>
+  category_distribution: Array<{ category: string; count: number }>
 }

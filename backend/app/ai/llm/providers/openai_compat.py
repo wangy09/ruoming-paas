@@ -28,6 +28,7 @@ class OpenAICompatProvider(BaseLLMProvider):
         timeout: float = 120.0,
         provider_name: str = "openai",
     ) -> None:
+        super().__init__()
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.provider_name = provider_name
@@ -95,7 +96,10 @@ class OpenAICompatProvider(BaseLLMProvider):
         max_tokens: int | None = None,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
+        self.last_stream_usage = {}  # 重置上次 usage
         payload = self._build_payload(messages, model, temperature, max_tokens, stream=True, **kwargs)
+        # 请求 OpenAI 兼容 API 在流式结束时返回 token usage
+        payload.setdefault("stream_options", {"include_usage": True})
         async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -108,10 +112,13 @@ class OpenAICompatProvider(BaseLLMProvider):
                         break
                     try:
                         chunk = json.loads(raw)
+                        # 解析 token usage（开启 stream_options 后最后一个 chunk 包含）
+                        if "usage" in chunk and chunk["usage"]:
+                            self.last_stream_usage = chunk["usage"]
                         # 阿里云 MaaS 非标准格式：{"text": "...", "finish_reason": "..."}
                         if "choices" not in chunk and "text" in chunk:
                             yield chunk["text"]
-                        else:
+                        elif "choices" in chunk:
                             delta = chunk["choices"][0].get("delta", {})
                             if content := delta.get("content"):
                                 yield content
@@ -121,6 +128,8 @@ class OpenAICompatProvider(BaseLLMProvider):
                     # 非 SSE 格式：直接裸 JSON（阿里云 MaaS 兼容模式）
                     try:
                         chunk = json.loads(line)
+                        if "usage" in chunk and chunk["usage"]:
+                            self.last_stream_usage = chunk["usage"]
                         if "text" in chunk:
                             yield chunk["text"]
                         elif "choices" in chunk:
@@ -141,6 +150,69 @@ class OpenAICompatProvider(BaseLLMProvider):
         data = resp.json()
         items = sorted(data["data"], key=lambda x: x["index"])
         return [item["embedding"] for item in items]
+
+    # ── 重排序 ────────────────────────────────────────────────────────────────
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        model: str,
+        top_n: int | None = None,
+    ) -> list[tuple[int, float]]:
+        """
+        调用 Rerank API 对文档重排序（Cross-Encoder）。
+        自动适配不同厂商的端点路径和响应格式：
+          - Cohere / Jina / SiliconFlow：POST /rerank，响应 {"results": [...]}
+          - 阿里云 qwen3-rerank：POST /reranks，响应 {"results": [...]} 或 {"output": {"results": [...]}}
+        """
+        if not documents:
+            return []
+
+        payload: dict = {
+            "model": model,
+            "query": query,
+            "documents": documents,
+        }
+        if top_n is not None:
+            payload["top_n"] = top_n
+
+        # 不同厂商端点路径不同，依次尝试
+        last_error: Exception | None = None
+        for endpoint in ["/rerank", "/reranks"]:
+            try:
+                resp = await self._client.post(endpoint, json=payload)
+                if resp.status_code == 404:
+                    continue  # 端点不存在，尝试下一个
+                resp.raise_for_status()
+                data = resp.json()
+
+                # 兼容两种响应格式：
+                #   扁平：{"results": [{"index": 0, "relevance_score": 0.98}]}
+                #   嵌套：{"output": {"results": [...]}}（DashScope 原生）
+                results = data.get("results")
+                if results is None and isinstance(data.get("output"), dict):
+                    results = data["output"].get("results", [])
+
+                if not results:
+                    return []
+
+                return [
+                    (int(item["index"]), float(item["relevance_score"]))
+                    for item in results
+                ]
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    continue  # 端点不存在，尝试下一个
+                raise  # 非 404 错误（如 400 参数错误），直接抛出
+            except Exception as e:
+                last_error = e
+                continue
+
+        raise NotImplementedError(
+            f"Rerank API 不可用（已尝试 /rerank 和 /reranks 端点）。"
+            f"请检查 base_url 配置是否正确。最后错误: {last_error}"
+        )
 
     # ── 模型列表 ──────────────────────────────────────────────────────────────
 

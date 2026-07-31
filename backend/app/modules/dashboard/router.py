@@ -183,22 +183,38 @@ async def get_dashboard_stats(
         result = await db.execute(tenant_query)
         active_tenants = result.scalar() or 0
 
-    # 3. AI 调用次数（从对话记录统计）
+    # 3. 今日 AI 调用次数和 Token 消耗（从 ai_message 真实数据统计）
     today_calls = 0
     today_tokens = 0
     try:
-        from app.ai.conversation.models import Conversation
-        from datetime import datetime
+        from app.ai.conversation.models import AiConversation, AiMessage
+        from datetime import datetime, timezone, timedelta
 
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        conv_query = select(func.count(Conversation.id)).where(
-            Conversation.created_at >= today,
+        tz = timezone(timedelta(hours=8))
+        now = datetime.now(tz)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_utc = today_start.astimezone(timezone.utc)
+
+        # 统计今日 AI 调用次数（assistant 角色消息数）和 Token 消耗
+        msg_query = select(
+            func.count(AiMessage.id).label("calls"),
+            func.coalesce(func.sum(AiMessage.total_tokens), 0).label("tokens"),
+        ).select_from(AiMessage)
+        msg_query = msg_query.join(
+            AiConversation, AiConversation.id == AiMessage.conversation_id
+        ).where(
+            AiMessage.role == "assistant",
+            AiMessage.created_at >= today_utc,
         )
         if tenant_id:
-            conv_query = conv_query.where(Conversation.tenant_id == tenant_id)
-        result = await db.execute(conv_query)
-        today_calls = result.scalar() or 0
-        today_tokens = today_calls * 500
+            msg_query = msg_query.where(AiConversation.tenant_id == tenant_id)
+        elif not current_user.is_superplatform:
+            msg_query = msg_query.where(AiConversation.user_id == current_user.id)
+
+        result = await db.execute(msg_query)
+        row = result.one()
+        today_calls = row.calls or 0
+        today_tokens = row.tokens or 0
     except Exception as e:
         logger.warning("dashboard_stats_calc_failed", error=str(e))
 

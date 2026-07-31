@@ -39,15 +39,31 @@ def _to_info(config: AiModelConfig) -> ModelConfigInfo:
 @router.get("", response_model=ApiResponse[PageData[ModelConfigInfo]], summary="模型配置列表")
 async def list_model_configs(
     page_params: PageParams = Depends(),
+    model_type: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: SysUser = Depends(require_permissions("ai:model:list")),
 ):
+    """
+    模型配置列表。
+    model_type 可选过滤：embed（向量嵌入模型）/ rerank（重排序模型）/ default（默认对话模型）
+    """
     stmt = (
         select(AiModelConfig)
         .where(AiModelConfig.is_deleted == False)
         .order_by(AiModelConfig.created_at.desc())
     )
     total_stmt = select(AiModelConfig).where(AiModelConfig.is_deleted == False)
+
+    # 按模型用途过滤
+    if model_type == "embed":
+        stmt = stmt.where(AiModelConfig.is_embed == True)
+        total_stmt = total_stmt.where(AiModelConfig.is_embed == True)
+    elif model_type == "rerank":
+        stmt = stmt.where(AiModelConfig.is_rerank == True)
+        total_stmt = total_stmt.where(AiModelConfig.is_rerank == True)
+    elif model_type == "default":
+        stmt = stmt.where(AiModelConfig.is_default == True)
+        total_stmt = total_stmt.where(AiModelConfig.is_default == True)
 
     from sqlalchemy import func
     count_result = await db.execute(select(func.count()).select_from(total_stmt.subquery()))

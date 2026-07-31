@@ -7,6 +7,7 @@ import type {
   Conversation, ChatMessage,
   PromptTemplate, PromptVersion,
   ToolInfo, CustomToolDetail,
+  FeedbackInfo, FeedbackStats,
 } from '@/types'
 
 // ── LLM 模型 ──────────────────────────────────────────────────────────────────
@@ -157,6 +158,9 @@ export const conversationApi = {
 
   delete: (convId: number) =>
     del<ApiResponse>(`/api/v1/ai/conversations/${convId}`),
+
+  batchDelete: (ids: number[]) =>
+    post<ApiResponse>('/api/v1/ai/conversations/batch/delete', { conversation_ids: ids }),
 }
 
 // ── Prompt 模板 ────────────────────────────────────────────────────────────────
@@ -206,4 +210,47 @@ export const auditApi = {
 
   loginLogs: (params?: { page?: number; page_size?: number; user_id?: number }) =>
     get<ApiResponse<PageData<import('@/types').LoginLog>>>('/api/v1/audit/login-logs', params),
+}
+
+// ── 系统反馈 ────────────────────────────────────────────────────────────────────
+export const feedbackApi = {
+  /** 提交系统反馈 */
+  create: (data: {
+    title: string
+    category: string
+    content: string
+    severity?: string
+    message_id?: number
+    agent_id?: number
+    screenshot_url?: string
+    tags?: string[]
+  }) => post<ApiResponse<FeedbackInfo>>('/api/v1/ai/feedback', data),
+
+  /** 当前用户的反馈列表 */
+  myList: (params?: { page?: number; page_size?: number }) =>
+    get<ApiResponse<PageData<FeedbackInfo>>>('/api/v1/ai/feedback/me', params),
+
+  /** 管理端反馈列表（支持多维筛选） */
+  adminList: (params?: {
+    category?: string
+    severity?: string
+    status?: string
+    agent_id?: number
+    start_date?: string
+    end_date?: string
+    page?: number
+    page_size?: number
+  }) => get<ApiResponse<PageData<FeedbackInfo>>>('/api/v1/ai/feedback', params),
+
+  /** 反馈统计 */
+  stats: (params?: { start_date?: string; end_date?: string }) =>
+    get<ApiResponse<FeedbackStats>>('/api/v1/ai/feedback/stats', params),
+
+  /** 更新反馈（处理状态 / 回复） */
+  update: (id: number, data: { status?: string; reply?: string }) =>
+    put<ApiResponse<FeedbackInfo>>(`/api/v1/ai/feedback/${id}`, data),
+
+  /** 删除反馈 */
+  remove: (id: number) =>
+    del<ApiResponse>(`/api/v1/ai/feedback/${id}`),
 }

@@ -179,20 +179,96 @@ _RUNTIME_CONFIGS = [
         "is_public": False,
         "sort": 10,
     },
+    {
+        "config_key": "ai.assistant.enabled",
+        "config_val": "true",
+        "val_type": "bool",
+        "category": "ai",
+        "config_type": "switch",
+        "label": "AI 助手",
+        "description": "开启后显示右下角 AI 智能助手，用户可通过自然语言进行导航、问答等操作",
+        "is_public": True,
+        "sort": 100,
+    },
+    {
+        "config_key": "ai.assistant.welcome",
+        "config_val": "你好！我是 AI 助手，可以帮您导航页面、回答问题。",
+        "val_type": "string",
+        "category": "ai",
+        "config_type": "input",
+        "label": "AI 助手欢迎语",
+        "description": "AI 助手首次打开时显示的欢迎语",
+        "is_public": True,
+        "sort": 101,
+    },
+    {
+        "config_key": "ai.assistant.agent_id",
+        "config_val": "",
+        "val_type": "int",
+        "category": "ai",
+        "config_type": "input",
+        "label": "AI 助手 Agent ID",
+        "description": "AI 助手使用的 Agent ID，留空则使用默认助手",
+        "is_public": True,
+        "sort": 102,
+    },
 ]
 
 
 async def ensure_runtime_configs(db: AsyncSession) -> None:
-    """确保配置中心运行时配置已初始化（系统启动时调用）"""
+    """
+    确保配置中心运行时配置已初始化。
+    
+    策略：只创建不存在的配置项，不覆盖已存在的用户修改。
+    用户修改的 is_public 等字段会被保留。
+    """
     svc = ConfigCenterService(db)
-    updated_count = 0
+    created_count = 0
+    skipped_count = 0
 
     for item in _RUNTIME_CONFIGS:
-        await svc.set(scope="global", status=1, **item)
-        updated_count += 1
+        config_key = str(item.get("config_key", ""))
+        if not config_key:
+            continue
+        
+        # 检查配置是否已存在
+        existing_val = await svc.get(
+            config_key=config_key,
+            scope="global",
+        )
+        
+        if existing_val is not None:
+            # 配置已存在，跳过（保留用户的修改）
+            skipped_count += 1
+            logger.debug("runtime_config_skipped", key=config_key, reason="already_exists")
+        else:
+            # 配置不存在，创建默认值
+            category = item.get("category")
+            label = item.get("label")
+            description = item.get("description")
+            
+            await svc.set(
+                config_key=config_key,
+                config_val=str(item.get("config_val", "")),
+                scope="global",
+                val_type=str(item.get("val_type", "string")),
+                category=str(category) if category is not None else None,
+                config_type=str(item.get("config_type", "input")),
+                label=str(label) if label is not None else None,
+                description=str(description) if description is not None else None,
+                is_public=bool(item.get("is_public", False)),
+                sort=int(item.get("sort", 0)),
+                status=1,
+            )
+            created_count += 1
+            logger.debug("runtime_config_created", key=config_key)
 
     await db.commit()
-    logger.info("runtime_configs_initialized", count=updated_count)
+    logger.info(
+        "runtime_configs_initialized",
+        created=created_count,
+        skipped=skipped_count,
+    )
 
 
 async def get_runtime_config(

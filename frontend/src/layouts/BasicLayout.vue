@@ -80,6 +80,8 @@
       <LayoutSettingsDrawer v-model="settingDrawerVisible" />
     </div>
 
+    <AiAssistant />
+
     <div v-if="appStore.isDemoMode" class="demo-badge">
       <span class="demo-icon">
         <el-icon :size="10" :icon="Flag" />
@@ -102,6 +104,7 @@ import TabsBar from './components/TabsBar.vue'
 import ErrorLogDrawer from './components/ErrorLogDrawer.vue'
 import MessageBell from './components/MessageBell.vue'
 import LayoutSettingsDrawer from './components/LayoutSettingsDrawer.vue'
+import AiAssistant from '@/components/AiAssistant/index.vue'
 import { resetRouter } from '@/router/guard'
 
 const route = useRoute()

@@ -4,7 +4,7 @@ Author: ruoming
 """
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Integer, Numeric, Text
+from sqlalchemy import BigInteger, DateTime, Integer, Numeric, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -135,3 +135,59 @@ class AiCallLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="NOW()", comment="记录时间"
     )
+
+
+class AiMessageFeedback(BaseModel):
+    """系统问题反馈表（ai_message_feedback）。用于用户提交 Bug 报告、功能建议、使用问题等。"""
+
+    __tablename__ = "ai_message_feedback"
+
+    # 系统反馈核心字段
+    title: Mapped[str] = mapped_column(
+        String(200), nullable=False, comment="反馈标题"
+    )
+    category: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True,
+        comment="反馈分类：bug/feature/usage/other"
+    )
+    content: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="详细反馈内容"
+    )
+    severity: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, comment="严重程度：low/medium/high/critical"
+    )
+
+    # 可选关联字段
+    message_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, index=True, comment="关联的 AI 消息 ID（AI 相关问题时）"
+    )
+    conversation_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, index=True, comment="所属对话 ID（可选）"
+    )
+    agent_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, index=True, comment="关联的 Agent ID"
+    )
+
+    # 用户信息
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, index=True, comment="反馈用户 ID"
+    )
+
+    # 其他可选字段
+    rating: Mapped[int | None] = mapped_column(
+        SmallInteger, nullable=True, comment="评价：1=点赞，-1=点踩（可选）"
+    )
+    tags: Mapped[list | None] = mapped_column(JSONB, nullable=True, comment="反馈标签数组")
+    screenshot_url: Mapped[str | None] = mapped_column(
+        String(500), nullable=True, comment="截图 URL"
+    )
+
+    # 处理状态
+    status: Mapped[str] = mapped_column(
+        default="pending",
+        server_default="pending",
+        comment="处理状态：pending/resolved/ignored",
+    )
+    reply: Mapped[str | None] = mapped_column(Text, nullable=True, comment="管理员回复")
+    replied_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="回复人 ID")
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

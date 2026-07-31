@@ -139,30 +139,39 @@ class AgentRunner:
         user_id: int | None,
     ) -> AsyncGenerator[dict, None]:
         """内部流式执行逻辑"""
-        # 1. 场景路由
+        # 1. 场景路由（纯内存操作，不涉及 DB 查询）
         scene = await self._resolve_scene(
             user_message, explicit_scene, has_attachment, tenant_id, user_id
         )
         yield {"type": "meta", "scene": scene.scene_type, "scene_source": scene.source}
 
-        # 2. 加载场景配置（合并参数）
-        effective = await self._merge_effective_config(scene.scene_type, tenant_id, user_id)
+        # 2. 加载场景配置（合并参数）- 使用独立事务
+        effective = await self._safe_get_effective_config(scene.scene_type, tenant_id, user_id)
 
-        # 3. RAG 检索（如果有）
+        # 3. RAG 检索（如果有知识库绑定则自动启用）- 使用独立事务
         rag_context = ""
-        if effective.get("enable_rag") and self.agent.kb_ids:
-            rag_context = await self._retrieve_rag(
+        enable_rag = effective.get("enable_rag")
+        logger.info("agent_rag_check", enable_rag=enable_rag, kb_ids=self.agent.kb_ids)
+        if (enable_rag is None or enable_rag is True) and self.agent.kb_ids:
+            logger.info("agent_rag_enabled", kb_ids=self.agent.kb_ids, query=user_message)
+            rag_context = await self._safe_retrieve_rag(
                 user_message,
                 kb_ids=self.agent.kb_ids,
                 top_k=effective.get("rag_top_k", 5),
                 score_threshold=effective.get("rag_score_threshold", 0.5),
             )
             if rag_context:
+                logger.info("agent_rag_context_loaded", length=len(rag_context))
                 yield {"type": "meta", "rag_context_loaded": True}
+            else:
+                logger.warning("agent_rag_context_empty", query=user_message)
 
         system_prompt = effective.get("system_prompt") or self.agent.system_prompt or ""
         if rag_context:
             system_prompt = f"{system_prompt}\n\n{rag_context}"
+            logger.info("agent_system_prompt_with_rag", total_length=len(system_prompt), rag_length=len(rag_context))
+        else:
+            logger.info("agent_system_prompt_without_rag", length=len(system_prompt))
 
         # 4. 流式 LLM 调用
         model_config_id = effective.get("model_config_id") or self.agent.model_config_id
@@ -196,7 +205,16 @@ class AgentRunner:
             full_output += chunk
             yield {"type": "content", "text": chunk}
 
-        yield {"type": "done", "output": full_output}
+        # 流式结束后获取 token usage
+        usage = llm_svc.get_last_stream_usage()
+        yield {
+            "type": "done",
+            "output": full_output,
+            "total_tokens": usage.get("total_tokens", 0) or 0,
+            "prompt_tokens": usage.get("prompt_tokens", 0) or 0,
+            "completion_tokens": usage.get("completion_tokens", 0) or 0,
+            "model_config_id": model_config_id,
+        }
 
     async def _do_run(
         self,
@@ -216,13 +234,14 @@ class AgentRunner:
             user_message, explicit_scene, has_attachment, tenant_id, user_id
         )
 
-        # 2. 加载场景配置（合并参数）
-        effective = await self._merge_effective_config(scene.scene_type, tenant_id, user_id)
+        # 2. 加载场景配置（合并参数）- 使用独立事务
+        effective = await self._safe_get_effective_config(scene.scene_type, tenant_id, user_id)
 
-        # 3. 若场景开启 RAG，先检索上下文
+        # 3. RAG 检索（如果有知识库绑定则自动启用）- 使用独立事务
         rag_context = ""
-        if effective.get("enable_rag") and self.agent.kb_ids:
-            rag_context = await self._retrieve_rag(
+        enable_rag = effective.get("enable_rag")
+        if (enable_rag is None or enable_rag is True) and self.agent.kb_ids:
+            rag_context = await self._safe_retrieve_rag(
                 user_message,
                 kb_ids=self.agent.kb_ids,
                 top_k=effective.get("rag_top_k", 5),
@@ -298,6 +317,138 @@ class AgentRunner:
             use_model_classifier=use_model_classifier,
         )
 
+    # ── 安全数据库操作（使用独立 Session 隔离事务） ──────────────────────────
+
+    async def _safe_get_effective_config(
+        self,
+        scene_type: str,
+        tenant_id: int | None,
+        user_id: int | None,
+    ) -> dict:
+        """使用独立 session 获取配置，防止事务失败影响主流程"""
+        from sqlalchemy import select
+        from app.database import AsyncSessionFactory
+        try:
+            async with AsyncSessionFactory() as safe_db:
+                result = await safe_db.execute(
+                    select(AiSceneConfig)
+                    .where(AiSceneConfig.agent_id == self.agent.id)
+                    .where(AiSceneConfig.scene_type == scene_type)
+                    .where(AiSceneConfig.is_active == True)
+                )
+                scene_cfg = result.scalar_one_or_none()
+                await safe_db.commit()  # 显式提交
+
+                # 构建返回值
+                prompt_template_id = (
+                    scene_cfg.prompt_template_id if scene_cfg and scene_cfg.prompt_template_id else None
+                ) or self.agent.prompt_template_id
+                prompt_version = (
+                    scene_cfg.prompt_version if scene_cfg and scene_cfg.prompt_version else None
+                ) or getattr(self.agent, 'prompt_version', None)
+
+                system_prompt_from_template: str | None = None
+                if prompt_template_id:
+                    try:
+                        from app.ai.prompt.service import PromptService
+                        prompt_svc = PromptService(safe_db)
+                        system_prompt_from_template = await prompt_svc.get_version_content(
+                            prompt_template_id, prompt_version
+                        )
+                    except Exception:
+                        pass
+
+                return {
+                    "model_config_id": (
+                        scene_cfg.model_config_id if scene_cfg else None
+                    ) or self.agent.model_config_id,
+                    "system_prompt": (
+                        system_prompt_from_template
+                        or (scene_cfg.system_prompt if scene_cfg else None)
+                        or self.agent.system_prompt
+                    ),
+                    "temperature": (
+                        scene_cfg.temperature
+                        if scene_cfg and scene_cfg.temperature is not None
+                        else self.agent.temperature
+                    ),
+                    "max_tokens": (
+                        scene_cfg.max_tokens if scene_cfg else None
+                    ) or self.agent.max_tokens,
+                    "enable_rag": scene_cfg.enable_rag if scene_cfg else None,
+                    "rag_top_k": scene_cfg.rag_top_k if scene_cfg else 5,
+                    "rag_score_threshold": scene_cfg.rag_score_threshold if scene_cfg else 0.5,
+                }
+        except Exception as e:
+            logger.warning("agent_safe_config_failed", error=str(e))
+            # 使用 Agent 默认配置
+            return {
+                "model_config_id": self.agent.model_config_id,
+                "system_prompt": self.agent.system_prompt or "",
+                "temperature": self.agent.temperature,
+                "max_tokens": self.agent.max_tokens,
+                "enable_rag": None,
+                "rag_top_k": 5,
+                "rag_score_threshold": 0.5,
+            }
+
+    async def _safe_retrieve_rag(
+        self,
+        query: str,
+        kb_ids: list[int],
+        top_k: int = 5,
+        score_threshold: float = 0.5,
+    ) -> str:
+        """使用独立 session 进行 RAG 检索，防止事务失败影响主流程"""
+        from app.database import AsyncSessionFactory
+        logger.info("agent_rag_start", query=query, kb_ids=kb_ids, top_k=top_k, score_threshold=score_threshold)
+        try:
+            async with AsyncSessionFactory() as safe_db:
+                from app.ai.knowledge.service import KnowledgeService
+                kb_svc = KnowledgeService(safe_db)
+
+                all_chunks = []
+                for kb_id in kb_ids:
+                    try:
+                        # 先检查知识库状态
+                        kb = await kb_svc.get_by_id(kb_id)
+                        logger.info("agent_rag_kb_status", kb_id=kb_id, name=kb.name, status=kb.status, embed_model_id=kb.embed_model_id, retrieval_type=kb.retrieval_type)
+                        
+                        chunks = await kb_svc.search(kb_id, query, top_k=top_k, score_threshold=score_threshold)
+                        logger.info("agent_rag_search_result", kb_id=kb_id, chunks_count=len(chunks), 
+                                    scores=[c.get("score", 0) for c in chunks[:3]],
+                                    contents_preview=[c.get("content", "")[:100] for c in chunks[:2]])
+                        all_chunks.extend(chunks)
+                    except Exception as kb_err:
+                        logger.warning("agent_rag_kb_search_failed", kb_id=kb_id, error=str(kb_err))
+                        continue
+
+                await safe_db.commit()
+
+                logger.info("agent_rag_total_chunks", total=len(all_chunks))
+
+                if not all_chunks:
+                    logger.warning("agent_rag_no_results", query=query)
+                    return ""
+
+                # 按分数排序，去重，取前 top_k 条
+                seen: set[str] = set()
+                unique_chunks = []
+                for chunk in sorted(all_chunks, key=lambda x: x.get("score", 0), reverse=True):
+                    content = chunk.get("content", "")
+                    if content and content not in seen:
+                        seen.add(content)
+                        unique_chunks.append(content)
+                        if len(unique_chunks) >= top_k:
+                            break
+
+                context = "\n\n---\n\n".join(unique_chunks)
+                logger.info("agent_rag_context_built", chunks_count=len(unique_chunks), context_length=len(context))
+                return f"以下是相关参考资料：\n\n{context}"
+        except Exception as e:
+            logger.warning("agent_safe_rag_failed", error=str(e))
+            return ""
+
     # ── 配置合并 ──────────────────────────────────────────────────────────────
 
     async def _merge_effective_config(
@@ -306,16 +457,21 @@ class AgentRunner:
         tenant_id: int | None,
         user_id: int | None,
     ) -> dict:
-        """场景配置 > Agent 配置 > Prompt 模板，返回最终生效参数"""
+        """场景配置 > Agent 配置 > Prompt 模板，返回最终生效参数（保留原方法用于其他场景）"""
         from sqlalchemy import select
 
-        result = await self.db.execute(
-            select(AiSceneConfig)
-            .where(AiSceneConfig.agent_id == self.agent.id)
-            .where(AiSceneConfig.scene_type == scene_type)
-            .where(AiSceneConfig.is_active == True)
-        )
-        scene_cfg: AiSceneConfig | None = result.scalar_one_or_none()
+        scene_cfg: AiSceneConfig | None = None
+        try:
+            result = await self.db.execute(
+                select(AiSceneConfig)
+                .where(AiSceneConfig.agent_id == self.agent.id)
+                .where(AiSceneConfig.scene_type == scene_type)
+                .where(AiSceneConfig.is_active == True)
+            )
+            scene_cfg = result.scalar_one_or_none()
+        except Exception as e:
+            logger.warning("agent_scene_config_query_failed", error=str(e))
+            scene_cfg = None
 
         # Prompt 模板优先级：场景配置 > Agent 配置
         prompt_template_id = (
@@ -354,7 +510,7 @@ class AgentRunner:
             "max_tokens": (
                 scene_cfg.max_tokens if scene_cfg else None
             ) or self.agent.max_tokens,
-            "enable_rag": scene_cfg.enable_rag if scene_cfg else False,
+            "enable_rag": scene_cfg.enable_rag if scene_cfg else None,
             "rag_top_k": scene_cfg.rag_top_k if scene_cfg else 5,
             "rag_score_threshold": scene_cfg.rag_score_threshold if scene_cfg else 0.5,
         }
@@ -375,8 +531,15 @@ class AgentRunner:
 
             all_chunks = []
             for kb_id in kb_ids:
-                chunks = await kb_svc.search(kb_id, query, top_k=top_k, score_threshold=score_threshold)
-                all_chunks.extend(chunks)
+                try:
+                    # 为每个知识库检索使用独立的 savepoint
+                    async with self.db.begin_nested() as sp:
+                        chunks = await kb_svc.search(kb_id, query, top_k=top_k, score_threshold=score_threshold)
+                        all_chunks.extend(chunks)
+                        await sp.commit()
+                except Exception as kb_err:
+                    logger.warning("agent_rag_kb_search_failed", kb_id=kb_id, error=str(kb_err))
+                    # 单个知识库检索失败不影响其他知识库
 
             if not all_chunks:
                 return ""

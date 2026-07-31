@@ -155,9 +155,13 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if path.startswith("/api/v1/audit/"):
             return
 
+        # GET 请求不记录审计日志（页面加载产生大量 GET，写日志会拖慢响应）
+        if method == "GET":
+            return
+
         fire_and_forget(
             self._write_log_async(
-                event_type=f"{method.lower()}.{path.replace('/', '.').strip('.')}",
+                event_type=self._build_event_type(method, path),
                 path=path,
                 method=method,
                 status_code=status_code,
@@ -219,7 +223,27 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 )
                 await db.commit()
         except Exception as e:
-            structlog.get_logger(__name__).error("audit_log_write_failed", error=str(e))
+            structlog.get_logger(__name__).error(
+                "audit_log_write_failed",
+                event_type=event_type,
+                path=path,
+                method=method,
+                error=str(e),
+            )
+
+    @staticmethod
+    def _build_event_type(method: str, path: str) -> str:
+        """
+        构建事件类型字符串。
+
+        event_type 字段在数据库中为 VARCHAR(64)，对于包含 UUID 的长路径
+        （如 /api/v1/ai/knowledge/1/tasks/<uuid>）会超长，因此做截断保护，
+        与 RequestLoggingMiddleware 保持一致。
+        """
+        event_type = f"{method.lower()}.{path.replace('/', '.').strip('.')}"
+        if len(event_type) > 64:
+            event_type = event_type[:61] + "..."
+        return event_type
 
     @staticmethod
     def _parse_json(text: str | None) -> dict | None:

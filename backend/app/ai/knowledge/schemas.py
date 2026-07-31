@@ -31,12 +31,21 @@ class KnowledgeBaseCreate(BaseModel):
 class KnowledgeBaseUpdate(BaseModel):
     name: str | None = Field(None, max_length=64)
     description: str | None = None
+    embed_model_id: int | None = None
+    rerank_model_id: int | None = None
     chunk_size: int | None = Field(None, ge=64, le=4096)
     chunk_overlap: int | None = Field(None, ge=0, le=512)
     retrieval_type: str | None = None
     top_k: int | None = Field(None, ge=1, le=20)
     score_threshold: float | None = Field(None, ge=0.0, le=1.0)
     status: int | None = Field(None, ge=0, le=1)
+
+    @field_validator("retrieval_type")
+    @classmethod
+    def validate_retrieval_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"vector", "bm25", "hybrid"}:
+            raise ValueError("retrieval_type 必须是 vector / bm25 / hybrid 之一")
+        return v
 
 
 class KnowledgeBaseInfo(BaseModel):

@@ -5,19 +5,57 @@
       <el-col :span="7" style="height:100%">
         <div class="page-card h-full flex flex-col">
           <div class="card-header">
-            <span class="card-title">对话历史</span>
+            <div class="header-left">
+              <template v-if="batchMode">
+                <el-checkbox
+                  v-model="selectAll"
+                  :indeterminate="isIndeterminate"
+                  @change="toggleSelectAll"
+                />
+                <span class="card-title">已选 {{ selectedIds.length }} 项</span>
+              </template>
+              <template v-else>
+                <span class="card-title">对话历史</span>
+              </template>
+            </div>
+            <div class="header-right">
+              <template v-if="batchMode">
+                <el-button size="small" @click="exitBatchMode">取消</el-button>
+                <el-button
+                  type="danger"
+                  size="small"
+                  :icon="Delete"
+                  :disabled="!selectedIds.length"
+                  @click="batchDelete"
+                >
+                  删除 ({{ selectedIds.length }})
+                </el-button>
+              </template>
+              <template v-else>
+                <el-button size="small" :icon="Delete" @click="enterBatchMode">批量删除</el-button>
+              </template>
+            </div>
           </div>
           <el-scrollbar flex-1>
             <div
               v-for="conv in convList"
               :key="conv.id"
               class="conv-item"
-              :class="{ active: currentConv?.id === conv.id }"
-              @click="selectConv(conv)"
+              :class="{ active: !batchMode && currentConv?.id === conv.id, selected: batchMode && selectedIds.includes(conv.id) }"
+              @click="batchMode ? toggleSelect(conv.id) : selectConv(conv)"
             >
-              <div class="conv-title">{{ conv.title || `对话 #${conv.id}` }}</div>
-              <div class="conv-meta">
-                {{ conv.message_count }} 条消息 · {{ fromNow(conv.last_message_at || conv.created_at) }}
+              <el-checkbox
+                v-if="batchMode"
+                :model-value="selectedIds.includes(conv.id)"
+                class="conv-checkbox"
+                @click.stop
+                @change="() => toggleSelect(conv.id)"
+              />
+              <div class="conv-body">
+                <div class="conv-title">{{ conv.title || `对话 #${conv.id}` }}</div>
+                <div class="conv-meta">
+                  {{ conv.message_count }} 条消息 · {{ fromNow(conv.last_message_at || conv.created_at) }}
+                </div>
               </div>
             </div>
             <el-empty v-if="!convList.length" description="暂无对话记录" />
@@ -63,7 +101,7 @@
                   </div>
                   <div class="message-bubble" :class="`bubble-${msg.role}`">
                     <div class="msg-content" v-html="renderMarkdown(msg.content)" />
-                    <div v-if="msg.token_count" class="msg-tokens">{{ msg.token_count }} tokens</div>
+                    <div v-if="msg.total_tokens" class="msg-tokens">{{ msg.total_tokens }} tokens</div>
                   </div>
                 </div>
               </div>
@@ -76,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, nextTick, onMounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
@@ -95,16 +133,54 @@ const currentConv = ref<Conversation | null>(null)
 const messages = ref<ChatMessage[]>([])
 const msgScrollbar = ref()
 
+// 批量选择模式
+const batchMode = ref(false)
+const selectedIds = ref<number[]>([])
+const selectAll = ref(false)
+const isIndeterminate = computed(() => {
+  const len = selectedIds.value.length
+  return len > 0 && len < convList.value.length
+})
+
+function enterBatchMode() {
+  batchMode.value = true
+  selectedIds.value = []
+  selectAll.value = false
+}
+
+function exitBatchMode() {
+  batchMode.value = false
+  selectedIds.value = []
+  selectAll.value = false
+}
+
+function toggleSelect(id: number) {
+  const idx = selectedIds.value.indexOf(id)
+  if (idx >= 0) {
+    selectedIds.value.splice(idx, 1)
+  } else {
+    selectedIds.value.push(id)
+  }
+  selectAll.value = selectedIds.value.length === convList.value.length
+}
+
+function toggleSelectAll(val: boolean) {
+  selectedIds.value = val ? convList.value.map(c => c.id) : []
+}
+
 async function fetchConvList() {
   const res = await conversationApi.list(convQuery)
   convList.value = res.data.items
   convTotal.value = res.data.total
+  // 翻页后重置选择状态
+  selectedIds.value = []
+  selectAll.value = false
 }
 
 async function selectConv(conv: Conversation) {
   currentConv.value = conv
   const res = await conversationApi.messages(conv.id)
-  messages.value = res.data
+  messages.value = res.data.items || []
   nextTick(() => {
     const el = msgScrollbar.value?.$el?.querySelector('.el-scrollbar__wrap')
     if (el) el.scrollTop = el.scrollHeight
@@ -118,6 +194,25 @@ async function deleteConv() {
   ElMessage.success('已删除')
   currentConv.value = null
   messages.value = []
+  fetchConvList()
+}
+
+async function batchDelete() {
+  if (!selectedIds.value.length) return
+  await ElMessageBox.confirm(
+    `确定批量删除选中的 ${selectedIds.value.length} 条对话？此操作不可恢复。`,
+    '批量删除',
+    { type: 'warning' },
+  )
+  const res = await conversationApi.batchDelete(selectedIds.value)
+  const deleted = res.data?.data?.deleted ?? 0
+  ElMessage.success(`成功删除 ${deleted} 条对话`)
+  exitBatchMode()
+  // 如果当前查看的对话被删除，清空详情
+  if (currentConv.value && !convList.value.find(c => c.id === currentConv.value!.id)) {
+    currentConv.value = null
+    messages.value = []
+  }
   fetchConvList()
 }
 
@@ -137,10 +232,15 @@ onMounted(fetchConvList)
 .flex-1 { flex: 1; overflow: hidden; }
 .mt-2 { margin-top: 8px; }
 .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-shrink: 0; }
+.header-left { display: flex; align-items: center; gap: 8px; }
+.header-right { display: flex; align-items: center; gap: 8px; }
 .card-title { font-size: 15px; font-weight: 600; }
 .empty-state { display: flex; align-items: center; justify-content: center; flex: 1; }
 
 .conv-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   padding: 10px 12px;
   border-radius: 8px;
   cursor: pointer;
@@ -149,7 +249,10 @@ onMounted(fetchConvList)
 
   &:hover { background: #f5f5f5; }
   &.active { background: #e6f4ff; }
+  &.selected { background: #fff0f0; }
 
+  .conv-checkbox { flex-shrink: 0; margin-top: 2px; }
+  .conv-body { flex: 1; min-width: 0; }
   .conv-title { font-size: 13px; font-weight: 500; color: $text-primary; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .conv-meta { font-size: 11px; color: $text-secondary; margin-top: 3px; }
 }

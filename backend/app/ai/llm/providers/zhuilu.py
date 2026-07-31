@@ -32,6 +32,7 @@ class ZhuiluProvider(BaseLLMProvider):
         base_url: str = "https://api.zhuilu.ai/v1",
         timeout: float = 120.0,
     ) -> None:
+        super().__init__()
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(
@@ -81,7 +82,9 @@ class ZhuiluProvider(BaseLLMProvider):
         max_tokens: int | None = None,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
+        self.last_stream_usage = {}  # 重置上次 usage
         payload = self._build_payload(messages, model, temperature, max_tokens, stream=True, **kwargs)
+        payload.setdefault("stream_options", {"include_usage": True})
         async with self._client.stream("POST", "/chat/completions", json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -92,6 +95,8 @@ class ZhuiluProvider(BaseLLMProvider):
                     break
                 try:
                     chunk = json.loads(raw)
+                    if "usage" in chunk and chunk["usage"]:
+                        self.last_stream_usage = chunk["usage"]
                     delta = chunk["choices"][0].get("delta", {})
                     if content := delta.get("content"):
                         yield content
@@ -110,6 +115,63 @@ class ZhuiluProvider(BaseLLMProvider):
         # 保持顺序
         items = sorted(data["data"], key=lambda x: x["index"])
         return [item["embedding"] for item in items]
+
+    # ── 重排序 ────────────────────────────────────────────────────────────────
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        model: str,
+        top_n: int | None = None,
+    ) -> list[tuple[int, float]]:
+        """
+        调用 Rerank API 对文档重排序（Cross-Encoder）。
+        自动适配不同厂商的端点路径和响应格式。
+        """
+        if not documents:
+            return []
+
+        payload: dict = {
+            "model": model,
+            "query": query,
+            "documents": documents,
+        }
+        if top_n is not None:
+            payload["top_n"] = top_n
+
+        last_error: Exception | None = None
+        for endpoint in ["/rerank", "/reranks"]:
+            try:
+                resp = await self._client.post(endpoint, json=payload)
+                if resp.status_code == 404:
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+
+                results = data.get("results")
+                if results is None and isinstance(data.get("output"), dict):
+                    results = data["output"].get("results", [])
+
+                if not results:
+                    return []
+
+                return [
+                    (int(item["index"]), float(item["relevance_score"]))
+                    for item in results
+                ]
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    continue
+                raise
+            except Exception as e:
+                last_error = e
+                continue
+
+        raise NotImplementedError(
+            f"Rerank API 不可用（已尝试 /rerank 和 /reranks 端点）。"
+            f"请检查 base_url 配置是否正确。最后错误: {last_error}"
+        )
 
     # ── 模型列表 ──────────────────────────────────────────────────────────────
 

@@ -31,7 +31,7 @@ _write_engine = create_async_engine(
     max_overflow=settings.DATABASE_MAX_OVERFLOW,
     pool_recycle=settings.DATABASE_POOL_RECYCLE,
     pool_pre_ping=True,      # 每次取连接前 ping，自动剔除失效连接
-    echo=settings.DEBUG,     # 开发环境打印 SQL
+    echo=settings.DATABASE_ECHO,  # SQL Echo 独立控制（默认关闭，避免 I/O 瓶颈）
 )
 
 # ── 只读副本引擎（生产环境可配置 DATABASE_REPLICA_URL 切换到只读副本）──────────
@@ -44,7 +44,7 @@ _read_engine = (
         max_overflow=settings.DATABASE_MAX_OVERFLOW,
         pool_recycle=settings.DATABASE_POOL_RECYCLE,
         pool_pre_ping=True,
-        echo=settings.DEBUG,
+        echo=settings.DATABASE_ECHO,
     )
     if _replica_url
     else _write_engine  # 未配置副本时回退到主库，保持向后兼容
@@ -167,6 +167,52 @@ async def get_read_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+# ── 辅助函数：确保列存在（兼容旧版本表结构）────────────────────────────────────
+async def _ensure_column(conn, table: str, column: str, definition: str) -> None:
+    """确保表中有指定的列，如果不存在则添加"""
+    result = await conn.execute(text(
+        "SELECT COUNT(*) FROM information_schema.columns "
+        "WHERE table_name = :table AND column_name = :column"
+    ), {"table": table, "column": column})
+    exists = result.scalar() > 0
+    if not exists:
+        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}"))
+        logger.info("column_added", table=table, column=column)
+
+
+async def _check_and_fix_config_history_table(conn) -> None:
+    """检查并修复 sys_config_history 表结构"""
+    # 检查表是否存在
+    result = await conn.execute(text(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'sys_config_history'"
+    ))
+    table_exists = result.scalar() > 0
+    
+    if not table_exists:
+        return  # 表不存在，让 create_all 创建
+    
+    # 检查表结构是否完整
+    required_columns = {
+        'id': 'BIGSERIAL PRIMARY KEY',
+        'config_key': 'VARCHAR(256) NOT NULL',
+        'scope_type': 'VARCHAR(20) NOT NULL',
+        'scope_id': 'BIGINT',
+        'old_value': 'TEXT',
+        'new_value': 'TEXT',
+        'changed_by': 'BIGINT',
+        'remark': 'TEXT',
+        'created_at': 'TIMESTAMPTZ DEFAULT NOW()',
+        'updated_at': 'TIMESTAMPTZ DEFAULT NOW()',
+        'is_deleted': 'BOOLEAN DEFAULT FALSE',
+        'tenant_id': 'BIGINT',
+        'created_by': 'BIGINT',
+        'updated_by': 'BIGINT',
+    }
+    
+    for column, definition in required_columns.items():
+        await _ensure_column(conn, 'sys_config_history', column, definition)
+
+
 # ── 数据库初始化（启动时调用）────────────────────────────────────────────────
 async def init_db() -> None:
     """创建所有表（开发/测试环境使用，生产用 Alembic）"""
@@ -175,27 +221,24 @@ async def init_db() -> None:
     async with _write_engine.begin() as conn:
         # 确保 pgvector 扩展已安装
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        
+        # 检查 sys_config_history 表结构是否完整
+        await _check_and_fix_config_history_table(conn)
+        
         await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS sys_config_history (
-                id          BIGSERIAL PRIMARY KEY,
-                config_key  VARCHAR(256) NOT NULL,
-                scope_type  VARCHAR(20) NOT NULL,
-                scope_id    BIGINT,
-                old_value   TEXT,
-                new_value   TEXT,
-                changed_by  BIGINT,
-                changed_at  TIMESTAMPTZ DEFAULT NOW(),
-                remark      TEXT
-            )
-        """))
+        # sys_config_history 表由 Base.metadata.create_all 创建（见 models.py）
+        # 此处仅确保索引存在
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_sys_config_history_config_key "
             "ON sys_config_history (config_key)"
         ))
         await conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_sys_config_history_changed_at "
-            "ON sys_config_history (changed_at)"
+            "CREATE INDEX IF NOT EXISTS ix_sys_config_history_tenant_id "
+            "ON sys_config_history (tenant_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_sys_config_history_created_at "
+            "ON sys_config_history (created_at)"
         ))
     logger.info("database_initialized")
 

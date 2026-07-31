@@ -184,6 +184,17 @@
           </el-select>
           <div class="form-hint">不选则使用系统默认向量模型</div>
         </el-form-item>
+        <el-form-item label="排序模型">
+          <el-select v-model="kbForm.rerank_model_id" placeholder="不使用重排序" clearable style="width:100%">
+            <el-option
+              v-for="m in rerankModels"
+              :key="m.id"
+              :label="`${m.name}（${m.provider}）`"
+              :value="m.id"
+            />
+          </el-select>
+          <div class="form-hint">混合检索时对候选结果重排序，提升精度（可选）</div>
+        </el-form-item>
         <el-form-item label="分块大小">
           <el-input-number v-model="kbForm.chunk_size" :min="128" :max="4096" :step="128" />
           <span class="text-gray text-sm ml-2">字符数</span>
@@ -362,6 +373,7 @@ const taskStatusLabel: Record<string, string> = { pending: '待执行', running:
 const kbList = ref<KnowledgeBase[]>([])
 const currentKb = ref<KnowledgeBase | null>(null)
 const embedModels = ref<AiModelConfig[]>([])
+const rerankModels = ref<AiModelConfig[]>([])
 
 async function fetchKbList() {
   const res = await kbApi.list({ page_size: 100 })
@@ -371,6 +383,11 @@ async function fetchKbList() {
 async function fetchEmbedModels() {
   const res = await modelApi.list({ model_type: 'embed', page_size: 200 })
   embedModels.value = res.data.items
+}
+
+async function fetchRerankModels() {
+  const res = await modelApi.list({ model_type: 'rerank', page_size: 200 })
+  rerankModels.value = res.data.items
 }
 
 function selectKb(kb: KnowledgeBase) {
@@ -631,8 +648,8 @@ const kbEditId = ref<number | null>(null)
 const kbSubmitting = ref(false)
 const kbFormRef = ref<FormInstance>()
 const kbForm = reactive<{
-  name: string; description: string; chunk_size: number; chunk_overlap: number; embed_model_id: number | undefined
-}>({ name: '', description: '', chunk_size: 512, chunk_overlap: 64, embed_model_id: undefined })
+  name: string; description: string; chunk_size: number; chunk_overlap: number; embed_model_id: number | undefined; rerank_model_id: number | undefined
+}>({ name: '', description: '', chunk_size: 512, chunk_overlap: 64, embed_model_id: undefined, rerank_model_id: undefined })
 const kbRules: FormRules = { name: [{ required: true, message: '请输入知识库名称' }] }
 
 function openKbDialog(kb?: KnowledgeBase) {
@@ -643,6 +660,7 @@ function openKbDialog(kb?: KnowledgeBase) {
     chunk_size: kb?.chunk_size ?? 512,
     chunk_overlap: kb?.chunk_overlap ?? 64,
     embed_model_id: kb?.embed_model_id ?? undefined,
+    rerank_model_id: kb?.rerank_model_id ?? undefined,
   })
   kbDialogVisible.value = true
 }
@@ -782,6 +800,7 @@ async function submitApiSource() {
 onMounted(() => {
   fetchKbList()
   fetchEmbedModels()
+  fetchRerankModels()
 })
 onUnmounted(() => {
   stopStatusPolling()

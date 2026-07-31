@@ -40,3 +40,8 @@ class MessageInfo(BaseModel):
 
     # 前端兼容字段
     token_count: int | None = None
+
+
+class BatchDeleteRequest(BaseModel):
+    """批量删除对话请求"""
+    conversation_ids: list[int] = Field(..., min_length=1, max_length=100)

@@ -31,6 +31,8 @@ async def init_data(reset: bool = False) -> None:
     from app.modules.tenant.models import SysTenant
     from app.modules.user.models import SysUser
     from app.modules.system.models import SysInitVersion
+    from app.ai.agent.models import AiAgent
+    from app.ai.llm.models import AiModelConfig
     from sqlalchemy import select, delete
 
     setup_logging()
@@ -61,6 +63,7 @@ async def init_data(reset: bool = False) -> None:
             await db.execute(delete(SysRole))
             await db.execute(delete(SysTenant))
             await db.execute(delete(SysUser))
+            await db.execute(delete(AiAgent))
             await db.flush()
             logger.info("data_cleared", msg="现有数据已清理")
 
@@ -234,6 +237,11 @@ async def init_data(reset: bool = False) -> None:
         for _task_data in _builtin_tasks:
             db.add(SysScheduledTask(**_task_data))
         await db.flush()
+
+        # ── 9. 初始化默认 Agent 种子数据 ──────────────────────────────
+        await _init_default_agents(db, admin.id, default_tenant.id)
+        await db.flush()
+
         await clear_permission_cache()
 
         for version_info in INIT_VERSIONS:
@@ -472,6 +480,7 @@ def _get_default_permissions() -> list[dict]:
             "perm_type": "menu", "path": "/ai/conversations",
             "component": "ai/conversation/index", "icon": "ChatDotRound", "sort": 240, "is_visible": True,
         },
+        {"parent_id": 0, "parent_code": "ai:conversation:menu", "name": "删除对话", "code": "ai:conversation:delete", "perm_type": "button", "sort": 1},
         {
             "parent_id": 0, "parent_code": "ai", "name": "Prompt 模板", "code": "ai:prompt:menu",
             "perm_type": "menu", "path": "/ai/prompts",
@@ -490,6 +499,16 @@ def _get_default_permissions() -> list[dict]:
         {"parent_id": 0, "parent_code": "ai:tool:menu", "name": "新建工具", "code": "ai:tool:create", "perm_type": "button", "sort": 2},
         {"parent_id": 0, "parent_code": "ai:tool:menu", "name": "编辑工具", "code": "ai:tool:update", "perm_type": "button", "sort": 3},
         {"parent_id": 0, "parent_code": "ai:tool:menu", "name": "删除工具", "code": "ai:tool:delete", "perm_type": "button", "sort": 4},
+
+        # ── AI 反馈管理 ──────────────────────────────────────────────
+        {
+            "parent_id": 0, "parent_code": "ai", "name": "反馈管理", "code": "ai:feedback:menu",
+            "perm_type": "menu", "path": "/ai/feedback",
+            "component": "ai/feedback/index", "icon": "ChatDotRound", "sort": 480, "is_visible": True,
+        },
+        {"parent_id": 0, "parent_code": "ai:feedback:menu", "name": "查看反馈", "code": "ai:feedback:view", "perm_type": "button", "sort": 1},
+        {"parent_id": 0, "parent_code": "ai:feedback:menu", "name": "处理反馈", "code": "ai:feedback:reply", "perm_type": "button", "sort": 2},
+        {"parent_id": 0, "parent_code": "ai:feedback:menu", "name": "删除反馈", "code": "ai:feedback:delete", "perm_type": "button", "sort": 3},
 
         # ── 系统监控（根菜单）────────────────────────────────────────
         {
@@ -930,8 +949,190 @@ async def init_runtime_configs(db, settings) -> None:
         },
     ]
 
+    created = 0
+    skipped = 0
     for item in configs:
-        await svc.set(scope="global", status=1, **item)
+        config_key = str(item.get("config_key", ""))
+        if not config_key:
+            continue
+        
+        # 检查配置是否已存在
+        existing_val = await svc.get(config_key=config_key, scope="global")
+        
+        if existing_val is not None:
+            # 配置已存在，跳过（保留用户的修改）
+            skipped += 1
+        else:
+            # 配置不存在，创建默认值
+            config_val = str(item.get("config_val", ""))
+            val_type = str(item.get("val_type", "string"))
+            category = item.get("category")
+            config_type = str(item.get("config_type", "input"))
+            label = item.get("label")
+            description = item.get("description")
+            is_public = bool(item.get("is_public", False))
+            sort = int(item.get("sort", 0))
+            
+            await svc.set(
+                config_key=config_key,
+                config_val=config_val,
+                scope="global",
+                val_type=val_type,
+                category=str(category) if category is not None else None,
+                config_type=config_type,
+                label=str(label) if label is not None else None,
+                description=str(description) if description is not None else None,
+                is_public=is_public,
+                sort=sort,
+                status=1,
+            )
+            created += 1
+    
+    print(f"  ✅ 运行时配置: 创建 {created} 项，跳过 {skipped} 项（已存在）")
+
+
+# ── 默认 Agent 种子数据 ──────────────────────────────────────────────────
+_AGENT_TEMPLATES = [
+    {
+        "name": "闲聊助手",
+        "description": "日常闲聊、问候、情感陪伴，适用于客服、问候等场景",
+        "default_scene": "chitchat",
+        "temperature": 0.9,
+        "system_prompt": (
+            "你是一个友好、活泼的闲聊助手，名字叫「小茗」。\n"
+            "职责：\n"
+            "1. 用轻松自然的语气与用户聊天\n"
+            "2. 适当表达关心和幽默\n"
+            "3. 涉及专业问题时，礼貌引导到专业 Agent\n"
+            "风格：亲切、口语化、避免长篇大论。"
+        ),
+        "max_tokens": 1024,
+        "memory_type": "buffer",
+    },
+    {
+        "name": "专业分析师",
+        "description": "专业问答、数据分析、报告撰写，逻辑严谨、回答准确",
+        "default_scene": "professional",
+        "temperature": 0.2,
+        "system_prompt": (
+            "你是一位资深行业分析师，具备严谨的逻辑思维和广博的专业知识。\n"
+            "职责：\n"
+            "1. 对专业问题给出准确、有依据的回答\n"
+            "2. 必要时拆解问题、列出关键要点\n"
+            "3. 涉及数据时给出明确的推理过程\n"
+            "风格：客观、严谨、结构化（多用列表/小标题）。\n"
+            "如不确定，请明确指出并说明需要哪些额外信息。"
+        ),
+        "max_tokens": 4096,
+        "memory_type": "summary",
+    },
+    {
+        "name": "编程助理",
+        "description": "代码生成、Bug 排查、技术实现，支持多语言",
+        "default_scene": "task",
+        "temperature": 0.3,
+        "system_prompt": (
+            "你是一位经验丰富的全栈工程师，擅长 Python / TypeScript / Go / Java 等主流语言。\n"
+            "职责：\n"
+            "1. 根据需求生成高质量、可运行的代码\n"
+            "2. 排查 Bug 并给出修复方案\n"
+            "3. 解释技术方案时给出代码示例\n"
+            "风格：先给结论，再给实现，最后说明关键点。\n"
+            "代码必须：可运行、关键处有注释、命名规范。"
+        ),
+        "max_tokens": 4096,
+        "memory_type": "buffer",
+    },
+    {
+        "name": "知识库问答",
+        "description": "基于企业知识库的文档问答，自动检索相关内容并引用出处",
+        "default_scene": "rag",
+        "temperature": 0.1,
+        "system_prompt": (
+            "你是企业知识库助手，严格基于检索到的文档内容回答问题。\n"
+            "职责：\n"
+            "1. 仅使用【知识库检索】返回的内容作答\n"
+            "2. 回答时引用具体的来源文档和片段\n"
+            "3. 文档中找不到答案时，明确告知用户「知识库中未找到相关信息」\n"
+            "4. 禁止凭空编造数据\n"
+            "风格：精准、可溯源、简明扼要。"
+        ),
+        "max_tokens": 2048,
+        "memory_type": "vector",
+    },
+    {
+        "name": "创意写手",
+        "description": "文案创作、头脑风暴、营销策划，富有想象力和感染力",
+        "default_scene": "creative",
+        "temperature": 1.0,
+        "system_prompt": (
+            "你是一位富有想象力的创意写手，擅长文案、营销、故事和品牌策划。\n"
+            "职责：\n"
+            "1. 提供多个角度的创意方案\n"
+            "2. 文案有感染力、有画面感\n"
+            "3. 头脑风暴时不设限，鼓励发散\n"
+            "风格：生动、跳跃、富有诗意。\n"
+            "如需收敛，明确告知用户后会切回理性输出。"
+        ),
+        "max_tokens": 4096,
+        "memory_type": "buffer",
+    },
+]
+
+
+async def _init_default_agents(db, creator_id: int, tenant_id: int) -> None:
+    """初始化默认 Agent 种子数据"""
+    import structlog
+    from sqlalchemy import select
+    from app.ai.agent.models import AiAgent
+    from app.ai.llm.models import AiModelConfig
+    
+    logger = structlog.get_logger(__name__)
+    
+    # 查找可用的模型配置
+    model_result = await db.execute(
+        select(AiModelConfig)
+        .where(AiModelConfig.status == 1)
+        .order_by(AiModelConfig.id.asc())
+        .limit(1)
+    )
+    model = model_result.scalar_one_or_none()
+    model_id = model.id if model else None
+    
+    created = 0
+    for tpl in _AGENT_TEMPLATES:
+        # 检查是否已存在同名 Agent
+        exists_result = await db.execute(
+            select(AiAgent).where(AiAgent.name == tpl["name"])
+        )
+        existing = exists_result.scalar_one_or_none()
+        
+        if existing:
+            logger.info("agent_skip", name=tpl["name"], reason="已存在")
+            continue
+        
+        agent = AiAgent(
+            name=tpl["name"],
+            description=tpl["description"],
+            model_config_id=model_id,
+            system_prompt=tpl["system_prompt"],
+            default_scene=tpl["default_scene"],
+            max_rounds=10,
+            temperature=tpl["temperature"],
+            max_tokens=tpl["max_tokens"],
+            node_timeout_sec=60,
+            memory_type=tpl["memory_type"],
+            tool_ids=[],
+            kb_ids=[],
+            status=1,
+            tenant_id=tenant_id,
+            created_by=creator_id,
+        )
+        db.add(agent)
+        created += 1
+        logger.info("agent_created", name=tpl["name"], scene=tpl["default_scene"])
+    
+    print(f"  ✅ 默认 Agent: 创建 {created} 个")
 
 
 if __name__ == "__main__":

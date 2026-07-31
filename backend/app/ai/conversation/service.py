@@ -2,6 +2,8 @@
 若茗 PaaS - 对话历史服务层
 Author: ruoming
 """
+from datetime import UTC, datetime
+
 from sqlalchemy import select, update, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -102,6 +104,7 @@ class ConversationService:
             latency_ms=latency_ms,
             tool_calls=tool_calls,
             tool_results=tool_results,
+            created_at=datetime.now(UTC),
         )
         self.db.add(msg)
 
@@ -125,6 +128,23 @@ class ConversationService:
         conv.is_deleted = True
         await self.db.commit()
         return True
+
+    async def batch_delete_conversations(self, conversation_ids: list[int], user_id: int) -> int:
+        """批量软删除对话（仅删除属于当前用户的对话），返回实际删除数量"""
+        if not conversation_ids:
+            return 0
+        stmt = (
+            update(AiConversation)
+            .where(
+                AiConversation.id.in_(conversation_ids),
+                AiConversation.user_id == user_id,
+                AiConversation.is_deleted == False,  # noqa: E712
+            )
+            .values(is_deleted=True)
+        )
+        result = await self.db.execute(stmt)
+        await self.db.commit()
+        return result.rowcount  # type: ignore[return-value]
 
     async def cleanup_old_messages(self, conversation_id: int, max_messages: int = 500) -> int:
         """

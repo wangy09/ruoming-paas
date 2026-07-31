@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 10
     DATABASE_POOL_RECYCLE: int = 3600
+    DATABASE_ECHO: bool = False  # SQL Echo 独立控制（默认关闭，避免 I/O 瓶颈）
     # 只读副本（可选）：配置后自动启用读写分离，不配置则读写同库
     DATABASE_REPLICA_URL: str = ""
 

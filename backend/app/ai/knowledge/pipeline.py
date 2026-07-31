@@ -327,31 +327,66 @@ class RAGPipeline:
     async def _rerank(
         self, query: str, chunks: list[RetrievedChunk], top_k: int
     ) -> list[RetrievedChunk]:
-        """使用 Rerank 模型对候选结果重排序（降低噪音，提升精度）"""
+        """
+        使用 Rerank 模型对候选结果重排序（Cross-Encoder）。
+        调用厂商 Rerank API（Cohere / Jina / SiliconFlow 的 /rerank 端点），
+        将 query + document 拼接输入模型计算相关性分数，精度远高于向量余弦相似度。
+        若 API 不可用则降级为 RRF 融合分数排序。
+        """
         try:
             from app.ai.llm.service import LLMService
             llm_svc = LLMService()
-            provider = await llm_svc.get_provider(self.rerank_model_config_id, self.db)
 
-            # 构建 Rerank 请求（通常 Rerank 模型接受 query + 候选文档列表）
+            # _rerank 仅在 rerank_model_config_id 非空时被调用，此处做类型收窄
+            model_config_id = self.rerank_model_config_id
+            if not model_config_id:
+                return chunks[:top_k]
+
+            provider = await llm_svc.get_provider(model_config_id, self.db)
+
+            # 获取模型配置以拿到 model_id（调用 API 时需要传给厂商）
+            config = await llm_svc._load_config(model_config_id, self.db)
+
             texts = [c.content for c in chunks]
-            # 注意：不同 Rerank 模型 API 格式不同，此处抽象为 embed（余弦重排）
-            # 真实 Rerank API（如 Cohere、BGE）可在此定制
-            query_emb = (await provider.embed([query], ""))[0]
-            doc_embs = await provider.embed(texts, "")
 
-            import numpy as np
+            # 调用真正的 Rerank API（Cross-Encoder）
+            reranked: list[tuple[int, float]] = await provider.rerank(
+                query=query,
+                documents=texts,
+                model=config.model_id,
+                top_n=top_k,
+            )
 
-            q = np.array(query_emb)
-            for chunk, emb in zip(chunks, doc_embs):
-                d = np.array(emb)
-                score = float(np.dot(q, d) / (np.linalg.norm(q) * np.linalg.norm(d) + 1e-8))
-                chunk.score = score
+            if not reranked:
+                logger.warning("rerank_empty_result", query=query, doc_count=len(texts))
+                return chunks[:top_k]
 
-            chunks.sort(key=lambda c: c.score, reverse=True)
-            return chunks[:top_k]
+            # 根据 Rerank 返回的 (索引, 分数) 重新排列 chunks
+            result_chunks: list[RetrievedChunk] = []
+            ranked_indices: set[int] = set()
+            for idx, score in reranked:
+                if 0 <= idx < len(chunks):
+                    chunk = chunks[idx]
+                    chunk.score = score
+                    result_chunks.append(chunk)
+                    ranked_indices.add(idx)
+
+            # 补充未被 Rerank 返回的候选（兜底，防止结果不足）
+            for i, chunk in enumerate(chunks):
+                if i not in ranked_indices and len(result_chunks) < top_k:
+                    result_chunks.append(chunk)
+
+            logger.info(
+                "rerank_done",
+                query=query,
+                input_count=len(chunks),
+                output_count=len(result_chunks),
+                top_score=reranked[0][1] if reranked else 0,
+            )
+            return result_chunks[:top_k]
         except Exception as e:
             logger.warning("rerank_failed", error=str(e))
+            # Rerank API 不可用时降级为 RRF 融合分数排序（chunks 已按 RRF 分数降序）
             return chunks[:top_k]
 
     # ── 私有：向量化 ──────────────────────────────────────────────────────────

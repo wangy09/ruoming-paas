@@ -214,7 +214,7 @@ async def run_agent(
                     full_output += event.get("text", "")
                     yield f"data: {json.dumps({'type': 'content', 'text': event['text']})}\n\n"
                 elif event["type"] == "done":
-                    # 保存 assistant 消息
+                    # 保存 assistant 消息（含 token 统计）
                     try:
                         from app.database import AsyncSessionFactory
                         async with AsyncSessionFactory() as save_db:
@@ -223,6 +223,10 @@ async def run_agent(
                                 conversation_id=conv_id,
                                 role="assistant",
                                 content=full_output or event.get("output", ""),
+                                model_config_id=event.get("model_config_id"),
+                                prompt_tokens=event.get("prompt_tokens", 0),
+                                completion_tokens=event.get("completion_tokens", 0),
+                                total_tokens=event.get("total_tokens", 0),
                             )
                             await save_db.commit()
                     except Exception as e:

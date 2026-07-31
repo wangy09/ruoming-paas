@@ -56,6 +56,10 @@ class BaseLLMProvider(ABC):
     - list_models()：列出可用模型
     """
 
+    def __init__(self) -> None:
+        # 最近一次流式对话的 token usage（由 stream_chat 填充）
+        self.last_stream_usage: dict = {}
+
     @abstractmethod
     async def chat(
         self,
@@ -84,6 +88,31 @@ class BaseLLMProvider(ABC):
     async def embed(self, texts: list[str], model: str) -> list[list[float]]:
         """文本向量化，返回 [[float, ...], ...]"""
         ...
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        model: str,
+        top_n: int | None = None,
+    ) -> list[tuple[int, float]]:
+        """
+        使用 Rerank 模型对文档重排序（Cross-Encoder）。
+        子类应调用厂商 Rerank API（如 Cohere / Jina / SiliconFlow 的 /rerank 端点）。
+
+        Args:
+            query: 查询文本
+            documents: 候选文档文本列表
+            model: Rerank 模型 ID
+            top_n: 返回前 N 条结果，None 表示返回全部
+
+        Returns:
+            [(文档在原列表中的索引, 相关性分数), ...] 按相关性降序排列
+
+        Raises:
+            NotImplementedError: Provider 不支持 Rerank API
+        """
+        raise NotImplementedError(f"{self.__class__.__name__} 不支持 Rerank")
 
     @abstractmethod
     async def list_models(self) -> list[ModelInfo]:

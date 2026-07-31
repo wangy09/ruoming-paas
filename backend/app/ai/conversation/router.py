@@ -10,12 +10,12 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.conversation.schemas import ConversationInfo, MessageInfo
+from app.ai.conversation.schemas import BatchDeleteRequest, ConversationInfo, MessageInfo
 from app.ai.conversation.service import ConversationService
 from app.ai.llm.providers.base import ChatMessage
 from app.ai.llm.schemas import ChatRequest
 from app.ai.llm.service import LLMService
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_permissions
 from app.core.exceptions import NotFoundException
 from app.core.rate_limit import limiter, get_user_key
 from app.core.response import ApiResponse, PageData, ok, paged
@@ -57,13 +57,25 @@ async def list_messages(
 async def delete_conversation(
     conversation_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permissions("ai:conversation:delete")),
 ):
     svc = ConversationService(db)
     ok_flag = await svc.delete_conversation(conversation_id, current_user.id)
     if not ok_flag:
         raise NotFoundException("对话不存在或无权操作")
     return ok(message="删除成功")
+
+
+@router.post("/batch/delete", response_model=ApiResponse, summary="批量删除对话")
+async def batch_delete_conversations(
+    data: BatchDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: SysUser = Depends(require_permissions("ai:conversation:delete")),
+):
+    """批量软删除对话（仅删除属于当前用户的对话）"""
+    svc = ConversationService(db)
+    deleted = await svc.batch_delete_conversations(data.conversation_ids, current_user.id)
+    return ok(message=f"成功删除 {deleted} 条对话", data={"deleted": deleted})
 
 
 @router.post("/chat", summary="AI 对话（支持流式 SSE）")
@@ -108,7 +120,7 @@ async def chat(
             start_ms = int(time.time() * 1000)
             full_content = ""
             try:
-                gen = await llm_svc.stream_chat(
+                gen = llm_svc.stream_chat(
                     messages=messages,
                     model_config_id=data.model_config_id,
                     db=db,
@@ -121,20 +133,30 @@ async def chat(
                 yield "data: [DONE]\n\n"
             finally:
                 latency_ms = int(time.time() * 1000) - start_ms
-                # 保存消息记录（非阻塞，允许失败不影响响应）
+                # 获取 token usage + model_config_id（流式结束后可用）
+                usage = llm_svc.get_last_stream_usage()
+                model_cfg_id = llm_svc.get_last_stream_model_config_id()
+                # 用独立 session 保存（请求级 db 可能已关闭）
                 try:
-                    await conv_svc.add_message(
-                        conversation_id=conv.id,
-                        role="user",
-                        content=messages[-1].content if messages else "",
-                    )
-                    await conv_svc.add_message(
-                        conversation_id=conv.id,
-                        role="assistant",
-                        content=full_content,
-                        latency_ms=latency_ms,
-                    )
-                    await db.commit()
+                    from app.database import AsyncSessionFactory
+                    async with AsyncSessionFactory() as save_db:
+                        save_svc = ConversationService(save_db)
+                        await save_svc.add_message(
+                            conversation_id=conv.id,
+                            role="user",
+                            content=messages[-1].content if messages else "",
+                        )
+                        await save_svc.add_message(
+                            conversation_id=conv.id,
+                            role="assistant",
+                            content=full_content,
+                            model_config_id=model_cfg_id,
+                            prompt_tokens=usage.get("prompt_tokens", 0) or 0,
+                            completion_tokens=usage.get("completion_tokens", 0) or 0,
+                            total_tokens=usage.get("total_tokens", 0) or 0,
+                            latency_ms=latency_ms,
+                        )
+                        await save_db.commit()
                 except Exception as e:
                     logger.warning("conversation_save_failed", error=str(e))
 

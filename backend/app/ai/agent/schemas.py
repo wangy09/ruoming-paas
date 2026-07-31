@@ -24,7 +24,7 @@ class AgentCreate(BaseModel):
     max_tokens: int = Field(2048, ge=128, le=131072)
     node_timeout_sec: int = Field(60, ge=5, le=600)
     memory_type: str = Field("buffer", description="buffer / summary / vector / entity / kv")
-    tool_ids: list[int] = Field(default_factory=list)
+    tool_ids: list[str | int] = Field(default_factory=list)
     kb_ids: list[int] = Field(default_factory=list)
 
     @field_validator("memory_type")
@@ -44,7 +44,7 @@ class AgentUpdate(BaseModel):
     prompt_version: int | None = None
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(None, ge=128, le=131072)
-    tool_ids: list[int] | None = None
+    tool_ids: list[str | int] | None = None
     kb_ids: list[int] | None = None
     status: int | None = Field(None, ge=0, le=1)
     default_scene: str | None = None
@@ -66,8 +66,8 @@ class AgentInfo(BaseModel):
     temperature: float
     max_tokens: int
     memory_type: str
-    tool_ids: list
-    kb_ids: list
+    tool_ids: list[str | int]
+    kb_ids: list[int]
     status: int
     tenant_id: int | None
     created_at: datetime

@@ -11,6 +11,7 @@ Author: ruoming
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import time
@@ -66,6 +67,16 @@ _SEMANTIC_CACHE_TTL_DEFAULT = 3600  # 默认 1 小时
 
 # Redis Pub/Sub 频道：模型配置变更通知
 _PROVIDER_CACHE_CHANNEL = "ruoming:llm:config:invalidate"
+
+# ── 请求级上下文变量（替代实例变量，避免并发请求数据竞争）──────────────────────
+# 每个 asyncio Task 拥有独立的 Context，contextvars 天然隔离并发请求，
+# 确保 stream_chat() 写入的 provider/model_config_id 仅对当前请求可见。
+_current_provider_var: contextvars.ContextVar[BaseLLMProvider | None] = contextvars.ContextVar(
+    "llm_current_provider", default=None
+)
+_current_model_config_id_var: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "llm_current_model_config_id", default=None
+)
 
 
 class LLMService:
@@ -477,13 +488,18 @@ class LLMService:
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> AsyncGenerator[str, None]:
-        """流式对话，yield 每个文本 chunk"""
+        """流式对话，yield 每个文本 chunk。结束后可通过 get_last_stream_usage() 获取 token"""
         if model_config_id:
             config = await self._load_config(model_config_id, db)
             provider = await self.get_provider(model_config_id, db)
         else:
             provider, config = await self.get_default_provider(db)
             model_config_id = config.id
+
+        # 保存 provider 引用到请求级上下文，供流式结束后读取 token usage
+        # 使用 contextvars 而非实例变量，避免并发请求互相覆盖
+        _current_provider_var.set(provider)
+        _current_model_config_id_var.set(model_config_id)
 
         # ── 熔断器检查 ────────────────────────────────────────────────────────
         circuit_state = await self._get_circuit_state(model_config_id)
@@ -498,6 +514,8 @@ class LLMService:
                 provider = self._build_provider(fallback)
                 config = fallback
                 model_config_id = fallback.id
+                _current_provider_var.set(provider)
+                _current_model_config_id_var.set(model_config_id)
             else:
                 raise RuntimeError(
                     f"模型 [{config.name}] 当前不可用（熔断中），请稍后重试"
@@ -534,6 +552,17 @@ class LLMService:
         except Exception as e:
             await self._on_call_failure(model_config_id)
             raise
+
+    def get_last_stream_usage(self) -> dict:
+        """获取最近一次流式对话的 token usage（prompt_tokens / completion_tokens / total_tokens）"""
+        provider = _current_provider_var.get()
+        if provider:
+            return getattr(provider, "last_stream_usage", {}) or {}
+        return {}
+
+    def get_last_stream_model_config_id(self) -> int | None:
+        """获取最近一次流式对话的模型配置 ID（供写调用日志用）"""
+        return _current_model_config_id_var.get()
 
     # ── 向量化 ────────────────────────────────────────────────────────────────
 

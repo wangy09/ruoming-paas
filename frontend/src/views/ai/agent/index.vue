@@ -304,7 +304,7 @@ const form = reactive({
   temperature: 0.7, max_rounds: 10, max_tokens: 2048, node_timeout_sec: 60,
   memory_type: 'buffer' as string,
   kb_ids: [] as number[],
-  tool_ids: [] as string[],
+  tool_ids: [] as (string | number)[],
   prompt_template_id: undefined as number | undefined,
 })
 
@@ -323,8 +323,9 @@ async function openDialog(row?: AgentInfo) {
     max_tokens: row?.max_tokens ?? 2048,
     node_timeout_sec: row?.node_timeout_sec ?? 60,
     memory_type: row?.memory_type ?? 'buffer',
-    kb_ids: row?.kb_ids ?? [],
-    tool_ids: (row?.tool_ids ?? []) as any,
+    kb_ids: (row?.kb_ids ?? []).map((id: any) => Number(id)).filter((id: number) => !isNaN(id)),
+    // tool_ids 保持原样（可能是字符串或数字），过滤掉 null/undefined
+    tool_ids: (row?.tool_ids ?? []).filter((id: any) => id != null),
     prompt_template_id: row?.prompt_template_id,
   })
 
@@ -343,11 +344,17 @@ async function handleSubmit() {
   await formRef.value?.validate()
   submitting.value = true
   try {
+    // 提交前清洗数据：过滤掉 null/undefined
+    const payload = {
+      ...form,
+      tool_ids: form.tool_ids.filter(id => id != null && id !== ''),
+      kb_ids: form.kb_ids.filter(id => id != null && !isNaN(Number(id))).map(id => Number(id)),
+    }
     if (editId.value) {
-      await agentApi.update(editId.value, form)
+      await agentApi.update(editId.value, payload)
       ElMessage.success('更新成功')
     } else {
-      await agentApi.create(form)
+      await agentApi.create(payload)
       ElMessage.success('创建成功')
     }
     dialogVisible.value = false

@@ -59,12 +59,19 @@ async def lifespan(app: FastAPI):
 
     # 注册内置工具（确保 ToolRegistry 单例初始化）
     import app.ai.tool.registry  # noqa: F401
+    import app.ai.tool.builtin  # noqa: F401  # 触发 code_generate / code_check 等内置工具注册
 
     # 从数据库加载自定义工具到注册中心
     from app.ai.tool.router import load_custom_tools_from_db
     async with AsyncSessionFactory() as _db:
         await load_custom_tools_from_db(_db)
     logger.info("custom_tools_loaded")
+
+    # 初始化运行时配置（确保新配置项在数据库中存在）
+    from app.modules.config_center.runtime import ensure_runtime_configs
+    async with AsyncSessionFactory() as _db:
+        await ensure_runtime_configs(_db)
+    logger.info("runtime_configs_initialized")
 
     yield
 
@@ -115,6 +122,7 @@ app = FastAPI(
         {"name": "AI-知识库", "description": "知识库管理、文档上传与混合检索"},
         {"name": "AI-Prompt模板", "description": "Prompt 版本管理、发布与回滚"},
         {"name": "AI-工具管理", "description": "工具注册与调用"},
+        {"name": "AI-反馈管理", "description": "AI 消息反馈记录与统计"},
         {"name": "系统", "description": "健康检查、监控"},
     ],
 )
@@ -261,6 +269,7 @@ from app.ai.agent.router import router as agent_router
 from app.ai.knowledge.router import router as knowledge_router
 from app.ai.prompt.router import router as prompt_router
 from app.ai.tool.router import router as tool_router
+from app.ai.feedback.router import router as feedback_router
 
 app.include_router(llm_router, prefix="/api/v1")
 app.include_router(conversation_router, prefix="/api/v1")
@@ -268,6 +277,7 @@ app.include_router(agent_router, prefix="/api/v1")
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(prompt_router, prefix="/api/v1")
 app.include_router(tool_router, prefix="/api/v1")
+app.include_router(feedback_router, prefix="/api/v1")
 
 
 # ── 健康检查 ──────────────────────────────────────────────────────────────────

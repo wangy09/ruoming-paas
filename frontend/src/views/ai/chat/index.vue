@@ -102,11 +102,12 @@
                     <div class="msg-content" v-html="renderMarkdown(msg.content)" />
                     <div v-if="msg.token_count" class="msg-tokens">{{ msg.token_count }} tokens</div>
                   </div>
+
                 </div>
 
                 <div v-if="isLoading" class="message-wrapper assistant">
                   <div class="message-role">
-                    <el-avatar size="32" class="avatar-assistant">AI</el-avatar>
+                    <el-avatar :size="32" class="avatar-assistant">AI</el-avatar>
                     <span class="role-label">AI</span>
                   </div>
                   <div class="message-bubble bubble-assistant">
@@ -145,6 +146,7 @@
         </div>
       </div>
     </div>
+
   </div>
 </template>
 
@@ -152,18 +154,20 @@
 import { ref, reactive, nextTick, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { List, Message, Plus, MoreFilled, MagicStick, Refresh, Setting, Box, Collection } from '@element-plus/icons-vue'
-import MarkdownIt from 'markdown-it'
+import { createEnhancedMd, setupCodeBlockHandlers } from '@/utils/markdown'
 import { agentApi, conversationApi } from '@/api/ai'
 import { formatDate, fromNow } from '@/utils/format'
 import { tokenStorage } from '@/utils/token'
 import type { AgentInfo, Conversation, ChatMessage } from '@/types'
 
-const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+const md = createEnhancedMd()
 const roleLabel: Record<string, string> = { user: '用户', assistant: 'AI', system: '系统' }
 
-function getSceneTagType(scene: string | undefined): string {
-  const map: Record<string, string> = { chitchat: 'warning', professional: 'primary', task: 'success', rag: 'danger', creative: 'info' }
-  return map[scene || ''] || 'default'
+type SceneTagType = 'success' | 'warning' | 'info' | 'danger' | 'primary'
+
+function getSceneTagType(scene: string | undefined): SceneTagType | undefined {
+  const map: Record<string, SceneTagType> = { chitchat: 'warning', professional: 'primary', task: 'success', rag: 'danger', creative: 'info' }
+  return map[scene || '']
 }
 
 function getSceneIcon(scene: string | undefined) {
@@ -282,6 +286,8 @@ async function sendMessage() {
     const aiMsgId = Date.now() + 1
     let aiContent = ''
     let aiMsgCreated = false
+    // 后端真实消息 ID（流式 meta 回填，用于反馈功能）
+    let aiRealMessageId: number | undefined
 
     while (true) {
       const { done, value } = await reader.read()
@@ -307,6 +313,8 @@ async function sendMessage() {
                 created_at: new Date().toISOString(),
               } as Conversation
             }
+            // 保存后端真实消息 ID，用于反馈
+            if (event.message_id) aiRealMessageId = event.message_id
           } else if (event.type === 'content') {
             aiContent += event.text || ''
             if (!aiMsgCreated) {
@@ -336,6 +344,14 @@ async function sendMessage() {
       }
     }
 
+    // 流式结束后，回写后端真实消息 ID（用于反馈功能）
+    if (aiRealMessageId) {
+      const msgIdx = messages.value.findIndex(m => m.id === aiMsgId)
+      if (msgIdx !== -1) {
+        messages.value[msgIdx].id = aiRealMessageId
+      }
+    }
+
     fetchConvList()
   } catch (err: any) {
     ElMessage.error(err.message || '对话失败')
@@ -354,6 +370,8 @@ function renderMarkdown(content: string) {
 }
 
 onMounted(async () => {
+  // 初始化代码块工具栏（复制/下载）事件委托
+  setupCodeBlockHandlers('.chat-messages')
   await fetchAgents()
   await fetchConvList()
 })
@@ -416,6 +434,64 @@ onMounted(async () => {
     :deep(pre) { background: #f0f0f0; padding: 8px; border-radius: 4px; overflow: auto; font-size: 12px; }
     :deep(code) { background: #f0f0f0; padding: 2px 4px; border-radius: 3px; font-size: 12px; }
     :deep(p) { margin-bottom: 6px; &:last-child { margin-bottom: 0; } }
+
+    // 代码块工具栏（复制 / 下载）
+    :deep(.code-block-wrapper) {
+      margin: 6px 0;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #1e1e1e;
+
+      .code-block-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 10px;
+        background: #2d2d2d;
+        border-bottom: 1px solid #3a3a3a;
+
+        .code-lang {
+          font-size: 11px;
+          color: #bbb;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .code-btn {
+          padding: 2px 8px;
+          font-size: 11px;
+          color: #ddd;
+          background: #3a3a3a;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: background 0.2s;
+
+          &:hover {
+            background: #4a4a4a;
+            color: #fff;
+          }
+
+          &.code-download {
+            margin-left: auto;
+          }
+        }
+      }
+
+      pre {
+        margin: 0;
+        background: #1e1e1e;
+        padding: 10px;
+        border-radius: 0;
+
+        code {
+          background: transparent;
+          color: #d4d4d4;
+          padding: 0;
+        }
+      }
+    }
   }
   .msg-tokens { font-size: 11px; color: $text-secondary; margin-top: 6px; text-align: right; }
   &.assistant .message-bubble { margin-left: 0; }

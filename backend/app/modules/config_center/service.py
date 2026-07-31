@@ -689,23 +689,20 @@ class ConfigCenterService:
     ) -> None:
         """写入配置变更历史（fire-and-forget，失败不影响主流程）"""
         try:
-            from sqlalchemy import text
-            await self.db.execute(
-                text("""
-                    INSERT INTO sys_config_history
-                        (config_key, scope_type, scope_id, old_value, new_value, changed_by)
-                    VALUES
-                        (:config_key, :scope_type, :scope_id, :old_value, :new_value, :changed_by)
-                """),
-                {
-                    "config_key": config_key,
-                    "scope_type": scope_type,
-                    "scope_id": scope_id,
-                    "old_value": old_value,
-                    "new_value": new_value,
-                    "changed_by": changed_by,
-                },
+            from datetime import datetime, timezone
+            from app.modules.config_center.models import SysConfigHistory
+            
+            history = SysConfigHistory(
+                config_key=config_key,
+                scope_type=scope_type,
+                scope_id=scope_id,
+                old_value=old_value,
+                new_value=new_value,
+                changed_by=changed_by,
+                created_at=datetime.now(timezone.utc),
             )
+            self.db.add(history)
+            await self.db.flush()
         except Exception as e:
             # 表不存在或其他异常，不影响主流程
             logger.debug("config_history_write_failed", error=str(e))

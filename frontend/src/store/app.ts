@@ -15,6 +15,9 @@ const PUBLIC_CONFIG_KEYS = [
   'site.login_subtitle',
   'site.logo_url',
   'ui.primary_color',
+  'ai.assistant.enabled',
+  'ai.assistant.welcome',
+  'ai.assistant.agent_id',
 ]
 
 type PublicConfigMap = Partial<Record<string, string>>
@@ -137,6 +140,9 @@ export const useAppStore = defineStore('app', () => {
   const locale = ref<'zh-CN' | 'en-US'>('zh-CN')
 
   const isDemoMode = ref(false)
+  const aiAssistantEnabled = ref(true)
+  const aiAssistantWelcome = ref('你好！我是 AI 助手，可以帮您导航页面、回答问题。')
+  const aiAssistantAgentId = ref<number | null>(null)
 
   async function loadDemoMode() {
     try {
@@ -345,6 +351,10 @@ export const useAppStore = defineStore('app', () => {
         loginSubtitle.value = configs['site.login_subtitle'] || DEFAULT_LOGIN_SUBTITLE
         logoUrl.value = configs['site.logo_url'] || DEFAULT_LOGO_URL
         applyPrimaryColor(configs['ui.primary_color'] || primaryColor.value)
+        aiAssistantEnabled.value = configs['ai.assistant.enabled'] !== 'false'
+        aiAssistantWelcome.value = configs['ai.assistant.welcome'] || aiAssistantWelcome.value
+        const agentId = configs['ai.assistant.agent_id']
+        aiAssistantAgentId.value = agentId ? Number(agentId) : null
         publicConfigLoaded.value = true
       })
       .catch(() => {
@@ -401,7 +411,10 @@ export const useAppStore = defineStore('app', () => {
     closeLeftViews,
     closeRightViews,
     locale,
-  isDemoMode,
-  loadDemoMode,
+    isDemoMode,
+    loadDemoMode,
+    aiAssistantEnabled,
+    aiAssistantWelcome,
+    aiAssistantAgentId,
   }
 })

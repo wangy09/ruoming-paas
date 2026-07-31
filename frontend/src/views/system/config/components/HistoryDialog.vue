@@ -6,7 +6,7 @@
     </div>
     <el-table v-loading="loading" :data="rows" border stripe>
       <el-table-column label="变更时间" width="180" show-overflow-tooltip>
-        <template #default="{ row }">{{ formatChangedAt(row.changed_at) }}</template>
+        <template #default="{ row }">{{ formatChangedAt(row.created_at) }}</template>
       </el-table-column>
       <el-table-column prop="old_value" label="旧值" min-width="180" show-overflow-tooltip />
       <el-table-column prop="new_value" label="新值" min-width="180" show-overflow-tooltip />

@@ -172,6 +172,36 @@ async def download_code(
     )
 
 
+@router.post("/download-by-spec", summary="按生成规格下载 ZIP（无需保存配置）")
+async def download_by_spec(
+    body: GeneratePreviewRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[SysUser, Depends(require_permissions("dev:codegen:write"))],
+) -> StreamingResponse:
+    """根据 table_name / module_name 等参数直接生成并下载 ZIP，无需先保存配置。
+    供 AI 助手 code_generate_crud 工具使用。"""
+    import io
+    import zipfile
+
+    tenant_id = None if current_user.is_superplatform else current_user.tenant_id
+    svc = CodegenService(db, tenant_id=tenant_id)
+    preview = await svc.preview(body)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in preview.get("files", []):
+            content = f.get("content", "")
+            if content:
+                zf.writestr(f["path"], content)
+    buf.seek(0)
+
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={body.module_name}_codegen.zip"},
+    )
+
+
 @router.get("/field-types", response_model=ApiResponse, summary="获取支持的字段类型")
 async def get_field_types() -> ApiResponse:
     return ok(CodegenService._get_supported_field_types())
