@@ -42,10 +42,15 @@
 **/.vscode/
 **/*.swp
 **/*.swo
+**/.trae/
 
 # macOS
 .DS_Store
 **/.DS_Store
+
+# 截图文件夹（公众号/演示用图片，不纳入版本管理）
+**/screenshots/
+**/截图/
 
 # Docker
 **/postgres-backup/
