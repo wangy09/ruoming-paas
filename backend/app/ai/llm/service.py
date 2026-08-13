@@ -27,6 +27,8 @@ from app.ai.llm.models import AiModelConfig
 from app.ai.llm.providers.base import BaseLLMProvider, ChatMessage, ChatResult
 from app.ai.llm.providers.openai_compat import OpenAICompatProvider
 from app.ai.llm.providers.zhuilu import ZhuiluProvider
+from app.ai.llm.providers.anthropic import AnthropicProvider
+from app.ai.llm.providers.gemini import GeminiProvider
 from app.config import settings
 from app.core.security import decrypt_value
 from app.modules.config_center.runtime import cfg_float, cfg_int, get_runtime_config
@@ -203,6 +205,8 @@ class LLMService:
             "zhipu":    "https://open.bigmodel.cn/api/paas/v4",
             "minimax":  "https://api.minimax.chat/v1",
             "baidu":    "https://qianfan.baidubce.com/v2",
+            "anthropic": "https://api.anthropic.com/v1",
+            "gemini":    "https://generativelanguage.googleapis.com/v1beta",
         }
 
         fallback_url = _VENDOR_BASE_URLS.get(config.provider, "")
@@ -220,13 +224,24 @@ class LLMService:
                     base_url=base_url,
                     provider_name=config.provider,
                 )
+            case "anthropic":
+                return AnthropicProvider(
+                    api_key=raw_key,
+                    base_url=base_url,
+                    provider_name=config.provider,
+                )
+            case "gemini":
+                return GeminiProvider(
+                    api_key=raw_key,
+                    base_url=base_url,
+                    provider_name=config.provider,
+                )
             case _:
-                # anthropic / gemini 等协议暂未实现，降级到 openai_compat 并记录警告
                 logger.warning(
                     "unsupported_protocol_fallback",
                     provider=config.provider,
                     protocol=protocol,
-                    note="协议暂未实现，降级为 openai_compat",
+                    note="协议未识别，降级为 openai_compat",
                 )
                 return OpenAICompatProvider(
                     api_key=raw_key,

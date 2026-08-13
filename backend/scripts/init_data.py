@@ -64,6 +64,7 @@ async def init_data(reset: bool = False) -> None:
             await db.execute(delete(SysTenant))
             await db.execute(delete(SysUser))
             await db.execute(delete(AiAgent))
+            await db.execute(delete(SysInitVersion))
             await db.flush()
             logger.info("data_cleared", msg="现有数据已清理")
 
@@ -538,7 +539,7 @@ def _get_default_permissions() -> list[dict]:
         {
             "parent_id": 0, "parent_code": "monitor", "name": "熔断器监控", "code": "monitor:circuit:menu",
             "perm_type": "menu", "path": "/monitor/circuit",
-            "component": "monitor/circuit/index", "icon": "Shield", "sort": 430, "is_visible": True,
+            "component": "monitor/circuit/index", "icon": "Lightning", "sort": 430, "is_visible": True,
         },
         {"parent_id": 0, "parent_code": "monitor:circuit:menu", "name": "查看熔断器", "code": "monitor:circuit:view", "perm_type": "button", "sort": 1},
         {"parent_id": 0, "parent_code": "monitor:circuit:menu", "name": "重置熔断器", "code": "monitor:circuit:reset", "perm_type": "button", "sort": 2},

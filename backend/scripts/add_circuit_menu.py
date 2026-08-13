@@ -42,7 +42,7 @@ async def add_menu():
                 perm_type="menu",
                 path="/monitor/circuit",
                 component="monitor/circuit/index",
-                icon="Shield",
+                icon="Lightning",
                 sort=430,
                 is_visible=True,
                 is_deleted=False,

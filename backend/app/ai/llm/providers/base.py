@@ -73,7 +73,7 @@ class BaseLLMProvider(ABC):
         ...
 
     @abstractmethod
-    async def stream_chat(
+    def stream_chat(
         self,
         messages: list[ChatMessage],
         model: str,
@@ -81,7 +81,11 @@ class BaseLLMProvider(ABC):
         max_tokens: int | None = None,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
-        """流式对话推理，逐 token yield 内容片段"""
+        """流式对话推理，逐 token yield 内容片段
+
+        注意：抽象方法用 def 声明（而非 async def），因为 async generator function
+        的返回类型是 AsyncGenerator，不是 Coroutine。具体实现仍使用 async def + yield。
+        """
         ...
 
     @abstractmethod

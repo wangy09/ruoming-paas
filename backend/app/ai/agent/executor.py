@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.agent.models import AiAgent, AiSceneConfig
 from app.ai.agent.schemas import AgentRunResult
 from app.ai.scene.router import SceneRouter, SceneRouteResult
+from app.core.error_codes import AIErrCode, SysErrCode
 from app.core.exceptions import AppException
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ logger = structlog.get_logger(__name__)
 
 class AgentTimeoutError(AppException):
     def __init__(self, message: str = "Agent 执行超时"):
-        super().__init__(status_code=504, message=message)
+        super().__init__(code=AIErrCode.AGENT_TIMEOUT, message=message, http_status=504)
 
 
 class AgentRunner:
@@ -55,7 +56,6 @@ class AgentRunner:
         *,
         session_id: str | None = None,
         conversation_history: list[dict] | None = None,
-        stream: bool = False,
         scene_type: str | None = None,
         has_attachment: bool = False,
         timeout_sec: int | None = None,
@@ -65,7 +65,7 @@ class AgentRunner:
     ) -> AgentRunResult:
         """
         执行 Agent，支持场景路由 + RAG + 超时控制。
-        stream=True 时请使用 stream_run()。
+        流式输出请使用 stream_run()。
         """
         sid = session_id or str(uuid.uuid4())
         timeout = timeout_sec or self.agent.node_timeout_sec or 60
@@ -111,18 +111,19 @@ class AgentRunner:
         timeout = timeout_sec or self.agent.node_timeout_sec or 60
 
         try:
-            async for event in self._do_stream_run(
-                user_message=user_message,
-                session_id=sid,
-                history=conversation_history or [],
-                explicit_scene=scene_type,
-                has_attachment=has_attachment,
-                tenant_id=tenant_id,
-                user_id=user_id,
-            ):
-                event["session_id"] = sid
-                event["conversation_id"] = conversation_id or 0
-                yield event
+            async with asyncio.timeout(timeout):
+                async for event in self._do_stream_run(
+                    user_message=user_message,
+                    history=conversation_history or [],
+                    explicit_scene=scene_type,
+                    has_attachment=has_attachment,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                ):
+                    event["session_id"] = sid
+                    event["conversation_id"] = conversation_id or 0
+                    yield event
         except asyncio.TimeoutError:
             yield {"type": "error", "message": f"Agent [{self.agent.name}] 执行超时（{timeout}s）"}
         except Exception as e:
@@ -131,12 +132,12 @@ class AgentRunner:
     async def _do_stream_run(
         self,
         user_message: str,
-        session_id: str,
         history: list[dict],
         explicit_scene: str | None,
         has_attachment: bool,
         tenant_id: int | None,
         user_id: int | None,
+        conversation_id: int | None = None,
     ) -> AsyncGenerator[dict, None]:
         """内部流式执行逻辑"""
         # 1. 场景路由（纯内存操作，不涉及 DB 查询）
@@ -146,7 +147,7 @@ class AgentRunner:
         yield {"type": "meta", "scene": scene.scene_type, "scene_source": scene.source}
 
         # 2. 加载场景配置（合并参数）- 使用独立事务
-        effective = await self._safe_get_effective_config(scene.scene_type, tenant_id, user_id)
+        effective = await self._safe_get_effective_config(scene.scene_type)
 
         # 3. RAG 检索（如果有知识库绑定则自动启用）- 使用独立事务
         rag_context = ""
@@ -184,7 +185,7 @@ class AgentRunner:
         llm_svc = LLMService()
 
         # 根据 memory_type 获取记忆
-        memories = await self._get_memories(history)
+        memories = await self._get_memories(history, conversation_id)
 
         messages: list[ChatMessage] = []
         if system_prompt:
@@ -235,7 +236,7 @@ class AgentRunner:
         )
 
         # 2. 加载场景配置（合并参数）- 使用独立事务
-        effective = await self._safe_get_effective_config(scene.scene_type, tenant_id, user_id)
+        effective = await self._safe_get_effective_config(scene.scene_type)
 
         # 3. RAG 检索（如果有知识库绑定则自动启用）- 使用独立事务
         rag_context = ""
@@ -322,8 +323,6 @@ class AgentRunner:
     async def _safe_get_effective_config(
         self,
         scene_type: str,
-        tenant_id: int | None,
-        user_id: int | None,
     ) -> dict:
         """使用独立 session 获取配置，防止事务失败影响主流程"""
         from sqlalchemy import select
@@ -454,8 +453,6 @@ class AgentRunner:
     async def _merge_effective_config(
         self,
         scene_type: str,
-        tenant_id: int | None,
-        user_id: int | None,
     ) -> dict:
         """场景配置 > Agent 配置 > Prompt 模板，返回最终生效参数（保留原方法用于其他场景）"""
         from sqlalchemy import select
@@ -693,8 +690,8 @@ class AgentRunner:
                 return history[-top_k * 2:]
 
             texts = [p[0].get("content", "") for p in pairs]
-            embeddings = []
-            need_embed_indices = []
+            embeddings: list[list[float] | None] = []
+            need_embed_indices: list[int] = []
 
             if conversation_id:
                 from sqlalchemy import select
@@ -929,7 +926,7 @@ class AgentRunner:
             tools = self.tool_registry.get_tools(self.agent.tool_ids) if self.tool_registry else []
 
             # 从 messages 中分离 system / history / current
-            lc_messages = []
+            lc_messages: list[SystemMessage | HumanMessage | AIMessage] = []
             for m in messages[:-1]:  # 最后一条（user）在 {input} 里
                 if m.role == "system":
                     lc_messages.append(SystemMessage(content=m.content))
@@ -988,7 +985,7 @@ class AgentRunner:
 
 class WorkflowLoopError(AppException):
     def __init__(self, message: str):
-        super().__init__(status_code=422, message=message)
+        super().__init__(code=SysErrCode.VALIDATION_FAIL, message=message, http_status=422)
 
 
 class WorkflowOrchestrator:
@@ -1094,7 +1091,6 @@ class WorkflowOrchestrator:
             )
 
         condition_result = None
-        iteration = self._node_exec_count[node_id]
 
         match node_type:
             case "start":
@@ -1286,10 +1282,6 @@ class WorkflowOrchestrator:
                 return n.value
             if isinstance(n, ast.NameConstant):  # Python 3.7
                 return n.value
-            if isinstance(n, ast.Num):  # Python 3.7
-                return n.n
-            if isinstance(n, ast.Str):  # Python 3.7
-                return n.s
             if isinstance(n, ast.Name):
                 return safe_name(n)
             if isinstance(n, ast.Attribute):
