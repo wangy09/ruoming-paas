@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
 import { tokenStorage } from '@/utils/token'
+import { useAppStore } from '@/store/app'
+import { usePermissionStore } from '@/store/permission'
 import type { UserInfo, LoginRequest } from '@/types'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -74,6 +76,14 @@ export const useAuthStore = defineStore('auth', () => {
     tenantCode.value = ''
     userInfo.value = null
     tokenStorage.clearAll()
+
+    // 清空上一个用户残留的标签页（内存状态 + 本地缓存）
+    const appStore = useAppStore()
+    appStore.clearTabs()
+
+    // 重置权限加载状态，下次登录时重新请求当前用户的权限和菜单
+    const permStore = usePermissionStore()
+    permStore.reset()
   }
 
   return {

@@ -185,8 +185,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ref, reactive, onMounted, h } from 'vue'
+import { ElMessage, ElMessageBox, ElButton } from 'element-plus'
 import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { userApi } from '@/api/user'
 import { permissionApi } from '@/api/permission'
@@ -318,11 +318,37 @@ async function handleResetPwd(row: UserListItem) {
     { type: 'warning' },
   )
   await userApi.resetPassword(row.id, newPwd)
-  await ElMessageBox.alert(
-    `用户「${row.username}」密码已重置：\n\n${newPwd}\n\n请将此密码安全地告知用户，并要求其首次登录后立即修改。`,
-    '密码已重置',
-    { confirmButtonText: '我已保存', dangerouslyUseHTMLString: false },
-  )
+  await ElMessageBox({
+    title: '密码已重置',
+    message: () =>
+      h('div', { style: 'line-height: 1.8' }, [
+        h('p', null, `用户「${row.username}」密码已重置：`),
+        h(
+          'div',
+          { style: 'display: flex; align-items: center; gap: 8px; margin: 12px 0' },
+          [
+            h('code', { style: 'font-size: 16px; font-weight: 600; padding: 4px 12px; background: var(--el-fill-color-light); border-radius: 4px' }, newPwd),
+            h(
+              ElButton,
+              {
+                size: 'small',
+                type: 'primary',
+                plain: true,
+                onClick: async () => {
+                  await navigator.clipboard.writeText(newPwd)
+                  ElMessage.success('密码已复制到剪贴板')
+                },
+              },
+              () => '复制密码',
+            ),
+          ],
+        ),
+        h('p', { style: 'color: var(--el-text-color-secondary); font-size: 13px' }, '请将此密码安全地告知用户，并要求其首次登录后立即修改。'),
+      ]),
+    confirmButtonText: '我已保存',
+    showCancelButton: false,
+    closeOnClickModal: false,
+  })
   fetchList()
 }
 
