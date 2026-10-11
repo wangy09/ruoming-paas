@@ -1,10 +1,12 @@
 # ================================================================
 # 若茗 PaaS - 本地开发 Docker Compose
 # Author: ruoming
-# 使用：cd deploy && docker-compose up -d
+# 使用：cd deploy && docker compose up -d
+# 注意：compose 项目名固定为 ruoming，数据卷独立前缀 ruoming_*，
+#       与施封平台（sealhub_*）物理隔离，互不影响。
 # ================================================================
 
-version: "3.9"
+name: ruoming
 
 services:
   # ── PostgreSQL ──────────────────────────────────────────────────
@@ -18,7 +20,7 @@ services:
       POSTGRES_DB: ruoming_dev
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ruoming_postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "5432:5432"
@@ -41,7 +43,7 @@ services:
       --maxmemory-policy allkeys-lru
       --appendonly yes
     volumes:
-      - redis_data:/data
+      - ruoming_redis_data:/data
     ports:
       - "6379:6379"
     healthcheck:
@@ -67,7 +69,7 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/1
     volumes:
       - ../backend:/app           # 开发时热重载
-      - uploads_data:/app/uploads
+      - ruoming_uploads_data:/app/uploads
       - ../backend/logs:/app/logs  # 日志文件持久化到宿主机
     ports:
       - "8000:8000"
@@ -101,7 +103,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
     volumes:
       - ../backend:/app
-      - uploads_data:/app/uploads
+      - ruoming_uploads_data:/app/uploads
       - ../backend/logs:/app/logs  # 与 backend 共享日志目录
     depends_on:
       - redis
@@ -134,7 +136,7 @@ services:
       TASK_SCHEDULER_POLL_INTERVAL: 10
     volumes:
       - ../backend:/app
-      - uploads_data:/app/uploads
+      - ruoming_uploads_data:/app/uploads
       - ../backend/logs:/app/logs
     depends_on:
       - redis
@@ -162,7 +164,7 @@ services:
     working_dir: /app
     volumes:
       - ../frontend:/app
-      - frontend_node_modules:/app/node_modules
+      - ruoming_frontend_node_modules:/app/node_modules
     ports:
       - "3000:3000"
     command: >
@@ -177,10 +179,14 @@ services:
       - ruoming_net
 
 volumes:
-  postgres_data:
-  redis_data:
-  uploads_data:
-  frontend_node_modules:
+  ruoming_postgres_data:
+    name: ruoming_postgres_data
+  ruoming_redis_data:
+    name: ruoming_redis_data
+  ruoming_uploads_data:
+    name: ruoming_uploads_data
+  ruoming_frontend_node_modules:
+    name: ruoming_frontend_node_modules
 
 networks:
   ruoming_net:
