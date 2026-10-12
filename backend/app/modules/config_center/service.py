@@ -30,20 +30,8 @@ logger = structlog.get_logger(__name__)
 # 配置缓存 TTL（秒）
 _CACHE_TTL = 300  # 5 分钟
 
-# 配置历史表创建 SQL（Alembic 迁移前的临时建表）
-_CONFIG_HISTORY_SQL = """
-CREATE TABLE IF NOT EXISTS sys_config_history (
-    id          BIGSERIAL PRIMARY KEY,
-    config_key  VARCHAR(256) NOT NULL,
-    scope_type  VARCHAR(20) NOT NULL,
-    scope_id    BIGINT,
-    old_value   TEXT,
-    new_value   TEXT,
-    changed_by  BIGINT,
-    changed_at  TIMESTAMPTZ DEFAULT NOW(),
-    remark      TEXT
-);
-"""
+# 说明：sys_config_history 表由 init_db() 的 Base.metadata.create_all 创建，
+# 旧表结构由 database.py 的 _check_and_fix_config_history_table 自动补列，此处不再手写 DDL。
 
 
 def _merged_cache_key(

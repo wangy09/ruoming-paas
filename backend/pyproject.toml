@@ -15,7 +15,7 @@ dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.29.0",
     # 数据库
-    "sqlalchemy>=2.0.30",
+    "sqlalchemy[asyncio]>=2.0.30,<2.1",
     "alembic>=1.13.0",
     "asyncpg>=0.29.0",
     "psycopg2-binary>=2.9.9",

@@ -6,6 +6,10 @@
   python scripts/update_rate_limit_db.py
 """
 import asyncio
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 async def main():
